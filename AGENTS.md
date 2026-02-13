@@ -14,4 +14,12 @@ Where to look next
 - For feature-specific guidance: open the README in the component you'll
   modify (each component directory may contain a README).
 
-That's it — run the component README(s) for details relevant to your task.
+Guidance on adding documentation
+
+Whenever the user corrects your code, besides fixing the code, if there
+is a general lesson to document, add prose to the lowest-level possible `README.md` file. 
+For example, if you learn something related only to the webnn implementation, then
+add docs to `components/script/dom/webnn/README.md`, but if the lesson is relevant 
+to any web api, then add docs to `components/script/README.md`. You can also add `README.md` files; ensure those are reffered-to from the `README.md` file at the level above. For example: `components/script/README.md` should refer to the `README.md` files found in `components/script/dom/`.
+
+That's it — find and run the component README(s) for details relevant to your task.
