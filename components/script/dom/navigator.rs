@@ -58,6 +58,7 @@ use crate::dom::servointernals::ServoInternals;
 use crate::dom::types::UserActivation;
 #[cfg(feature = "webgpu")]
 use crate::dom::webgpu::gpu::GPU;
+use crate::dom::webnn::ml::ML;
 use crate::dom::window::Window;
 #[cfg(feature = "webxr")]
 use crate::dom::xrsystem::XRSystem;
@@ -127,6 +128,7 @@ pub(crate) struct Navigator {
     clipboard: MutNullableDom<Clipboard>,
     #[cfg(feature = "webgpu")]
     gpu: MutNullableDom<GPU>,
+    ml: MutNullableDom<ML>,
     /// <https://www.w3.org/TR/gamepad/#dfn-hasgamepadgesture>
     #[cfg(feature = "gamepad")]
     has_gamepad_gesture: Cell<bool>,
@@ -154,6 +156,7 @@ impl Navigator {
             clipboard: Default::default(),
             #[cfg(feature = "webgpu")]
             gpu: Default::default(),
+            ml: Default::default(),
             #[cfg(feature = "gamepad")]
             has_gamepad_gesture: Cell::new(false),
             servo_internals: Default::default(),
@@ -460,6 +463,12 @@ impl NavigatorMethods<crate::DomTypeHolder> for Navigator {
     #[cfg(feature = "webgpu")]
     fn Gpu(&self) -> DomRoot<GPU> {
         self.gpu.or_init(|| GPU::new(&self.global(), CanGc::note()))
+    }
+
+    // https://w3c.github.io/webnn/
+    fn Ml(&self) -> DomRoot<ML> {
+        // Lazily create the `ML` object exposed at `navigator.ml`.
+        self.ml.or_init(|| ML::new(&self.global(), CanGc::note()))
     }
 
     /// <https://html.spec.whatwg.org/multipage/#dom-navigator-hardwareconcurrency>

@@ -429,6 +429,9 @@ pub(crate) use self::webxr::*;
 pub(crate) mod webgpu;
 #[cfg(feature = "webgpu")]
 pub(crate) use self::webgpu::*;
+
+pub(crate) mod webnn;
+pub(crate) use self::webnn::*;
 #[cfg(not(feature = "webgpu"))]
 pub(crate) mod gpucanvascontext;
 pub(crate) mod webrtc;
