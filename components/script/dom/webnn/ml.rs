@@ -3,11 +3,11 @@ use std::rc::Rc;
 use dom_struct::dom_struct;
 
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{MLContextOptions, MLMethods};
-use crate::dom::webnn::mlcontext::MLContext;
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
 use crate::dom::bindings::root::DomRoot;
 use crate::dom::globalscope::GlobalScope;
 use crate::dom::promise::Promise;
+use crate::dom::webnn::mlcontext::MLContext;
 use crate::script_runtime::CanGc;
 
 #[dom_struct]
@@ -28,10 +28,7 @@ impl ML {
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-ml-createcontext>
-    pub(crate) fn create_context(
-        &self,
-        options: &MLContextOptions,
-    ) -> DomRoot<MLContext> {
+    pub(crate) fn create_context(&self, options: &MLContextOptions) -> DomRoot<MLContext> {
         MLContext::new(
             &self.global(),
             options.accelerated,

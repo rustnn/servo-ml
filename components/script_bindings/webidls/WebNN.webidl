@@ -15,7 +15,23 @@ interface ML {
 
 [SecureContext, Exposed=(Window, Worker)]
 interface MLContext {
+  Promise<MLTensor> createTensor(MLTensorDescriptor descriptor);
+
   readonly attribute boolean accelerated;
+};
+
+// Minimal MLTensor descriptor and interface needed for createTensor()
+// `dataType` and `shape` are required per the spec's expectations.
+dictionary MLTensorDescriptor {
+  required DOMString dataType;
+  required sequence<long long> shape;
+  boolean readable = false;
+  boolean writable = false;
+};
+
+[SecureContext, Exposed=(Window, Worker)]
+interface MLTensor {
+  // Minimal placeholder; more members will be implemented later.
 };
 
 enum MLPowerPreference {

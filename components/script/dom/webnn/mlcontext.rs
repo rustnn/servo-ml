@@ -2,13 +2,15 @@ use std::rc::Rc;
 
 use dom_struct::dom_struct;
 
-use crate::dom::bindings::codegen::Bindings::WebNNBinding::{MLContextMethods, MLPowerPreference};
-use crate::dom::bindings::reflector::{Reflector, reflect_dom_object};
+use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
+    MLContextMethods, MLPowerPreference, MLTensorDescriptor,
+};
+use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
 use crate::dom::bindings::root::DomRoot;
 use crate::dom::globalscope::GlobalScope;
 use crate::dom::promise::Promise;
+use crate::dom::webnn::mltensor::MLTensor;
 use crate::script_runtime::CanGc;
-
 #[dom_struct]
 /// <https://webmachinelearning.github.io/webnn/#api-mlcontext>
 pub(crate) struct MLContext {
@@ -78,5 +80,40 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
     fn Accelerated(&self) -> bool {
         // Step 1: Return this.[[accelerated]].
         self.accelerated
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#api-mlcontext-createtensor>
+    fn CreateTensor(&self, descriptor: &MLTensorDescriptor) -> Rc<Promise> {
+        // Step 1: Let |global| be this's relevant global object.
+        let global = &self.global();
+
+        // Step 2: Let |realm| be this's relevant realm.
+        // Note: the realm is represented by `global` in this implementation.
+
+        // Step 3: If |this| is lost, return a new promise in |realm| rejected with an InvalidStateError.
+        if self.lost.is_fulfilled() {
+            // Step 3: create and return the rejected promise in |realm|.
+            let p = Promise::new(global, CanGc::note());
+            p.reject_error(
+                crate::dom::bindings::error::Error::InvalidState(None),
+                CanGc::note(),
+            );
+
+            return p;
+        }
+
+        // Step 4: Let |tensor| be the result of creating an MLTensor given |this| and |descriptor|.
+        let tensor = MLTensor::new(self, global, descriptor, CanGc::note());
+
+        // Step 5: Let |promise| be a new promise in |realm|.
+        let p = Promise::new(global, CanGc::note());
+
+        // Step 6: TODO — enqueue timeline steps to allocate and zero-initialize |tensor|.[[data]].
+        // TODO (spec: #api-mlcontext-createtensor): implement ML timeline task queuing and
+        // the zero-initialization/allocation of tensor.[[data]]; that task must resolve or
+        // reject |promise| asynchronously. Do NOT resolve |promise| here.
+
+        // Step 7: Return |promise|.
+        p
     }
 }
