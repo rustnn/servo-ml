@@ -18,12 +18,92 @@ components/script — README
    ask the user).
 3. Use the corresponding `index.bs` file under `specs/` as authoritative
    guidance for algorithms and internal-slot definitions.
-4. Document code by copy pasting the prose from the spec it implements. 
+4. Document code by linking the generated method to the canonical spec anchor in the top-level doc-comment and add per-line `Step N:` comments inside the function body (see **Documenting your work** below for the exact format).
 5. Add a `#[dom_struct]` with `Dom` members and implement the generated
    trait methods: start with `todo!()` bodies.
 6. Sub-directories (e.g. `dom/webgpu`, `dom/xr`) often include their own
-   README with subsystem-specific guidance.
+   README with subsystem-specific guidance. Always read the README chain for
+   the area you're changing: start with `components/script/README.md`, then
+   read any `components/script/dom/<subdir>/README.md` for subsystem rules,
+   and finally consult the authoritative `specs/<spec_name>/index.bs` for
+   algorithm and internal-slot details.
 7. Good quality examples of implementation and documentation patterns are found in `components/script/dom/stream`.
+
+**Documenting your work:**
+Follow these exact conventions so code <-> spec mapping is clear and reviewable.
+
+- Method- & type-level doc
+  - Method-level: the method's top doc-comment must contain *only* the canonical spec anchor (e.g. `/// <https://webmachinelearning.github.io/webnn/#api-ml-createcontext>`).
+  - Type-level (DOM struct): the struct's top doc-comment must contain *only* the WebIDL/interface anchor — use the `dom-` (WebIDL) anchor when available (e.g. `/// <https://webmachinelearning.github.io/webnn/#dom-mlcontext>`).
+
+- In-body per-line spec mapping
+  - Inside the function body annotate *each relevant line of code* with a
+    single comment of the exact form `Step N: <spec prose>` (use `Step 5.1`,
+    `Step 5.2` for sub-steps). Avoid pasting entire algorithm blocks.
+  - If the spec step does not map 1:1 to code, add `// Note: ...` explaining
+    the divergence and reference the spec anchor. If the spec's preliminary
+    steps (for example `Step 1`/`Step 2` that establish `global`/`realm`) are
+    implicit in Rust (e.g. via `self.global()`), still include `Step 1:` and
+    `Step 2:` comments and follow them with a `// Note:` explaining the
+    implicit mapping.
+  - Internal slots / struct members: document the field with a single-line
+    doc-comment that contains *only* the canonical spec anchor in angle
+    brackets. Prefer an *internal-slot* anchor when the spec provides one
+    (e.g. `#dom-foo-xyz-slot`). If no `-slot` anchor exists, link the field
+    to the attribute getter or the interface/internal-slots section that
+    documents the internal slot (for `MLContext.[[accelerated]]` prefer
+    `#dom-mlcontext-accelerated-slot`; fall back to `#dom-mlcontext-accelerated`
+    only when a `-slot` anchor is not present). Example:
+
+      ```rust
+      /// <https://webmachinelearning.github.io/webnn/#dom-mlcontext-accelerated-slot>
+      accelerated: Cell<bool>,
+      ```
+
+    - Distinction: generated trait *methods/attributes* map to WebIDL anchors
+      like `#dom-mlcontext-accelerated` (the attribute getter); struct fields
+      that back *internal slots* should link to the internal-slot anchor where
+      available, otherwise link to the attribute/getter or interface anchor.
+    - Do not add additional prose when documenting internal-slot fields.
+
+- TODOs and in-parallel steps
+  - For any unimplemented spec step, add a `Step N: TODO — <short reason>`
+    immediately above the code or `todo!()` placeholder. Also add a second
+    comment with the TODO tag including the spec anchor, e.g.
+    `// TODO (spec: #api-ml-createcontext): implement ML task queuing`.
+  - IMPORTANT: if the TODO corresponds to an *in-parallel* step that would
+    resolve a Promise, do *not* resolve the Promise in the stub — return
+    the Promise unresolved and leave resolution to the future queued task.
+
+- Formatting rules
+  - Always leave a blank line after a `Step + code` or `Step + TODO` block.
+    (Exception: you do not need to add an extra blank line before the method's
+    closing brace solely to satisfy this rule.)
+  - Keep comments short and place them on their own line above the code they
+    document.
+
+- Tests
+  - Do **not** add tests inside `components/script`. All Web API behavior must be validated in Web Platform Tests (WPT); add new tests to the appropriate WPT tree instead.
+
+- Examples & references
+  - See `components/script/dom/readablestream.rs` for good examples of these
+    conventions.
+
+Correct example:
+```rust
+/// <https://example.spec/#api-foo-doThing>
+fn do_thing(&self, options: &FooOptions) -> Rc<Promise> {
+    // Step 1: Let |promise| be a new promise in |realm|.
+    let p = Promise::new(&self.global(), CanGc::note());
+
+    // Step 2: TODO — queue the backend work on the Foo task queue (do NOT resolve here).
+    // TODO (spec: #api-foo-doThing): implement Foo task queuing and routing.
+
+    // Step 3: Return |promise|.
+    p
+}
+```
+```
 
 **Note in finding good examples of code patterns:**
 If you struggle with implementing a concept from the spec, it can be useful to find existing code not by searching for code, but by searching for spec prose. 
@@ -58,15 +138,7 @@ generated trait in `crate::dom::bindings::codegen::Bindings::{Interface}Binding`
 see the final method signature.
 
 **Refcell re-borrow hazard**
-Whenever the JS engine is called into, the GC could trace any member of a dom_struct, therefore, never hold a borrow when making a call to anything with a `CanGC` argument. 
-
-**General Notes**
-- When implementing algorithms, prefer small, testable steps and document the
-  spec text in comments as you go.
-- Each piece of Rust code should be documented with the prose from the spec it implements. If the mapping between spec and implementation is not clear, add a note to explain. 
-- If you add new WebIDL, the codegen will generate the trait that you must
-  implement in this crate.
-- As you implement a WebAPI, you can track TODO in the api specific `README.md`. 
+Whenever the JS engine is called into, the GC could trace any member of a dom_struct, therefore, never hold a borrow when making a call to anything with a `CanGC` argument.  
 
 **Helpful files**
 - `specs/` — check the spec `index.bs` files for API algorithms.
