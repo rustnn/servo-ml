@@ -6,8 +6,9 @@ use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLContextMethods, MLPowerPreference, MLTensorDescriptor,
 };
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
-use crate::dom::bindings::root::DomRoot;
+use crate::dom::bindings::root::{Dom, DomRoot};
 use crate::dom::globalscope::GlobalScope;
+use script_bindings::codegen::GenericUnionTypes::ArrayBufferViewOrArrayBuffer;
 use crate::dom::promise::Promise;
 use crate::dom::webnn::mltensor::MLTensor;
 use crate::script_runtime::CanGc;
@@ -114,6 +115,113 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // reject |promise| asynchronously. Do NOT resolve |promise| here.
 
         // Step 7: Return |promise|.
+        p
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#api-mlcontext-readtensor>
+    fn ReadTensor(&self, tensor: &MLTensor) -> Rc<Promise> {
+        // Step 1: Let |global| be this's relevant global object.
+        let global = &self.global();
+
+        // Step 2: Let |realm| be this's relevant realm (represented by `global`).
+
+        // Step 3: If |tensor|.[[context]] is not |this|, return a rejected promise with a TypeError.
+        if tensor.context() != Dom::from_ref(self) {
+            let p = Promise::new(global, CanGc::note());
+            p.reject_error(
+                crate::dom::bindings::error::Error::Type("tensor is not owned by this context".to_owned()),
+                CanGc::note(),
+            );
+            return p;
+        }
+
+        // Step 4: If |tensor|.[[isDestroyed]] is true, return a rejected promise with a TypeError.
+        if tensor.is_destroyed() {
+            let p = Promise::new(global, CanGc::note());
+            p.reject_error(
+                crate::dom::bindings::error::Error::Type("MLTensor is destroyed".to_owned()),
+                CanGc::note(),
+            );
+            return p;
+        }
+
+        // Step 5: If |tensor|.[[descriptor]]..readable is false, return a rejected promise with a TypeError.
+        if !tensor.readable() {
+            let p = Promise::new(global, CanGc::note());
+            p.reject_error(
+                crate::dom::bindings::error::Error::Type("tensor is not readable".to_owned()),
+                CanGc::note(),
+            );
+            return p;
+        }
+
+        // Step 6: Let |promise| be a new promise in |realm| and append it to tensor.[[pendingPromises]].
+        let p = Promise::new(global, CanGc::note());
+        tensor.append_pending_promise(p.clone());
+
+        // Step 7: TODO — enqueue ML timeline task to copy tensor.[[data]] and resolve/reject |promise|.
+        // TODO (spec: #api-mlcontext-readtensor): implement ML timeline task queuing, copying
+        // of tensor.[[data]], and the subsequent ArrayBuffer creation / promise resolution.
+        // Do NOT resolve |promise| here.
+
+        // Step 8: Return |promise|.
+        p
+    }
+
+    /// BYOB overload: readTensor(tensor, outputData)
+    fn ReadTensor_(&self, tensor: &MLTensor, output_data: ArrayBufferViewOrArrayBuffer) -> Rc<Promise> {
+        // Step 1: Let |global| be this's relevant global object.
+        let global = &self.global();
+
+        // Step 2: Let |realm| be this's relevant realm (represented by `global`).
+
+        // Step 3: If |tensor|.[[context]] is not |this|, then return a new promise in |realm| rejected with a TypeError.
+        if tensor.context() != Dom::from_ref(self) {
+            let p = Promise::new(global, CanGc::note());
+            p.reject_error(
+                crate::dom::bindings::error::Error::Type("tensor is not owned by this context".to_owned()),
+                CanGc::note(),
+            );
+            return p;
+        }
+
+        // Step 4: If |tensor|.[[isDestroyed]] is true, then return a new promise in |realm| rejected with a TypeError.
+        if tensor.is_destroyed() {
+            let p = Promise::new(global, CanGc::note());
+            p.reject_error(
+                crate::dom::bindings::error::Error::Type("MLTensor is destroyed".to_owned()),
+                CanGc::note(),
+            );
+            return p;
+        }
+
+        // Step 5: If |tensor|.[[descriptor]].{{MLTensorDescriptor/readable}} is false, then return a new promise in |realm| rejected with a TypeError.
+        if !tensor.readable() {
+            let p = Promise::new(global, CanGc::note());
+            p.reject_error(
+                crate::dom::bindings::error::Error::Type("tensor is not readable".to_owned()),
+                CanGc::note(),
+            );
+            return p;
+        }
+
+        // Step 6: If validating buffer with descriptor given |outputData| and |tensor|.[[descriptor]] returns false,
+        // then return a new promise in |realm| rejected with a TypeError.
+        // TODO (spec: #api-mlcontext-readtensor-byob): implement `validating buffer with descriptor` and reject when invalid.
+        // For now we *do not* perform validation here — the BYOB validation and timeline copy are TODOs.
+        let _ = output_data; // keep variable referenced until validation/usage is implemented
+
+        // Step 7: Let |promise| be a new promise in |realm|.
+        let p = Promise::new(global, CanGc::note());
+
+        // Step 8: Append |promise| to |tensor|.[[pendingPromises]].
+        tensor.append_pending_promise(p.clone());
+
+        // Step 9: Enqueue the ML timeline steps to copy |tensor|.[[data]] into |outputData| and resolve/reject |promise|.
+        // TODO (spec: #api-mlcontext-readtensor-byob): queue ML timeline task that performs the copy, handles detached buffers,
+        // removes |promise| from tensor.[[pendingPromises]], and resolves or rejects |promise| appropriately.
+
+        // Step 10: Return |promise|.
         p
     }
 }

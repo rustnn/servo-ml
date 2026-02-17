@@ -17,6 +17,9 @@ interface ML {
 interface MLContext {
   Promise<MLTensor> createTensor(MLTensorDescriptor descriptor);
 
+  Promise<ArrayBuffer> readTensor(MLTensor tensor);
+  Promise<undefined> readTensor(MLTensor tensor, /*[AllowShared]*/ BufferSource outputData);
+
   readonly attribute boolean accelerated;
 };
 

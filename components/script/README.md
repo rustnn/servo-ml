@@ -51,7 +51,11 @@ Follow these exact conventions so code <-> spec mapping is clear and reviewable.
     implicit in Rust (e.g. via `self.global()`), still include `Step 1:` and
     `Step 2:` comments and follow them with a `// Note:` explaining the
     implicit mapping.
-  - Internal slots / struct members: document the field with a single-line
+  - Do *not* use shorthand/aggregation comments such as `Steps 1-5: same precondition
+    checks as the non-BYOB variant.` — every algorithm step referenced in the
+    spec must appear explicitly (Step N) in the implementation, even when the
+    code is identical to another overload. This makes reviewer-to-spec
+    mapping unambiguous and prevents accidental divergence.  - Internal slots / struct members: document the field with a single-line
     doc-comment that contains *only* the canonical spec anchor in angle
     brackets. Prefer an *internal-slot* anchor when the spec provides one
     (e.g. `#dom-foo-xyz-slot`). If no `-slot` anchor exists, link the field
@@ -70,6 +74,17 @@ Follow these exact conventions so code <-> spec mapping is clear and reviewable.
       that back *internal slots* should link to the internal-slot anchor where
       available, otherwise link to the attribute/getter or interface anchor.
     - Do not add additional prose when documenting internal-slot fields.
+
+    - DOM struct fields must remain private. Always add `pub(crate)` accessor
+      methods (getters/setters) on the `#[dom_struct]` type for other code to
+      read or modify internal-slot values. Consumers outside the defining
+      module must call these accessors — do *not* access struct fields
+      directly from other modules.
+
+    - When a stored value comes from a WebIDL dictionary (for example
+      `MLTensorDescriptor`), link the field to the specific dictionary-member
+      anchor (for example `#api-mltensordescriptor` / `{{MLTensorDescriptor/readable}}`) so
+      the source of truth is obvious.
 
 - TODOs and in-parallel steps
   - For any unimplemented spec step, add a `Step N: TODO — <short reason>`
