@@ -99,3 +99,28 @@ dictionary MLContextOptions {
   MLPowerPreference powerPreference = "default";
   boolean accelerated = true;
 };
+
+// Minimal graph/builder/operand interfaces (implementation is intentionally
+// minimal in this repository; timeline/compilation steps are TODOs).
+
+[SecureContext, Exposed=(Window, Worker)]
+interface MLOperand {
+  readonly attribute MLOperandDataType dataType;
+  /* FrozenArray<unsigned long> */ readonly attribute any shape;
+};
+
+[SecureContext, Exposed=(Window, Worker)]
+interface MLGraphBuilder {
+  constructor(MLContext context);
+
+  MLOperand input(DOMString name, MLOperandDescriptor descriptor);
+  MLOperand constant(MLOperandDescriptor descriptor, /*[AllowShared]*/ BufferSource buffer);
+  MLOperand constant(MLTensor tensor);
+
+  Promise<MLGraph> build(sequence<MLOperand> outputs);
+};
+
+[SecureContext, Exposed=(Window, Worker)]
+interface MLGraph {
+  undefined destroy();
+};

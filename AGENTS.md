@@ -41,5 +41,6 @@ add docs to `components/script/dom/webnn/README.md`, but if the lesson is releva
 to any web api, then add docs to `components/script/README.md`. You can also add `README.md` files; ensure those are reffered-to from the `README.md` file at the level above. For example: `components/script/README.md` should refer to the `README.md` files found in `components/script/dom/`.
 
 - Always double-check your work with `./mach check`(without additional arguments). 
+- Do not do anything with Git.
 
 That's it — find and run the component README(s) for details relevant to your task.

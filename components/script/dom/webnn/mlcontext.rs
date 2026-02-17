@@ -7,6 +7,7 @@ use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLContextLostInfo, MLContextMethods, MLOpSupportLimits, MLOperandDescriptor, MLPowerPreference,
     MLTensorDescriptor,
 };
+use crate::dom::bindings::error::{Error, throw_dom_exception};
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
 use crate::dom::bindings::root::{Dom, DomRoot};
 use crate::dom::bindings::str::DOMString;
@@ -36,13 +37,13 @@ pub(crate) struct MLContext {
 
 impl MLContext {
     /// <https://webmachinelearning.github.io/webnn/#api-ml-createcontext>
-    /// Note: implements the ML "To create a context" constructor steps that initialize
-    /// the context's internal slots; mapping is not 1:1 with the spec algorithm.
     pub(crate) fn new_inherited(
         accelerated: bool,
         power_preference: MLPowerPreference,
         lost: Rc<Promise>,
     ) -> MLContext {
+        // Note: implements the ML "To create a context" constructor steps that initialize
+        // the context's internal slots; mapping is not 1:1 with the spec algorithm.
         // Step 1.1: Let |context| be a new MLContext in |realm| (constructor value).
         // Step 1.2: Set |context|.[[contextType]] to "default".
         // Step 1.3: Set |context|.[[powerPreference]] to the provided value.
@@ -127,10 +128,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         if self.is_lost() {
             // Step 3: create and return the rejected promise in |realm|.
             let p = Promise::new(global, CanGc::note());
-            p.reject_error(
-                crate::dom::bindings::error::Error::InvalidState(None),
-                CanGc::note(),
-            );
+            p.reject_error(Error::InvalidState(None), CanGc::note());
 
             return p;
         }
@@ -165,9 +163,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         if tensor.context() != Dom::from_ref(self) {
             let p = Promise::new(global, CanGc::note());
             p.reject_error(
-                crate::dom::bindings::error::Error::Type(
-                    "tensor is not owned by this context".to_owned(),
-                ),
+                Error::Type("tensor is not owned by this context".to_owned()),
                 CanGc::note(),
             );
             return p;
@@ -177,7 +173,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         if tensor.is_destroyed() {
             let p = Promise::new(global, CanGc::note());
             p.reject_error(
-                crate::dom::bindings::error::Error::Type("MLTensor is destroyed".to_owned()),
+                Error::Type("MLTensor is destroyed".to_owned()),
                 CanGc::note(),
             );
             return p;
@@ -187,7 +183,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         if !tensor.readable() {
             let p = Promise::new(global, CanGc::note());
             p.reject_error(
-                crate::dom::bindings::error::Error::Type("tensor is not readable".to_owned()),
+                Error::Type("tensor is not readable".to_owned()),
                 CanGc::note(),
             );
             return p;
@@ -229,7 +225,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         if tensor.context() != Dom::from_ref(self) {
             let p = Promise::new(global, CanGc::note());
             p.reject_error(
-                crate::dom::bindings::error::Error::Type(
+                Error::Type(
                     "tensor is not owned by this context".to_owned(),
                 ),
                 CanGc::note(),
@@ -241,7 +237,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         if tensor.is_destroyed() {
             let p = Promise::new(global, CanGc::note());
             p.reject_error(
-                crate::dom::bindings::error::Error::Type("MLTensor is destroyed".to_owned()),
+                Error::Type("MLTensor is destroyed".to_owned()),
                 CanGc::note(),
             );
             return p;
@@ -251,7 +247,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         if !tensor.readable() {
             let p = Promise::new(global, CanGc::note());
             p.reject_error(
-                crate::dom::bindings::error::Error::Type("tensor is not readable".to_owned()),
+                Error::Type("tensor is not readable".to_owned()),
                 CanGc::note(),
             );
             return p;
@@ -302,10 +298,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 3: If |this| is lost, return a new promise in |realm| rejected with an InvalidStateError.
         if self.is_lost() {
             let p = Promise::new(global, CanGc::note());
-            p.reject_error(
-                crate::dom::bindings::error::Error::InvalidState(None),
-                CanGc::note(),
-            );
+            p.reject_error(Error::InvalidState(None), CanGc::note());
             return p;
         }
 
@@ -344,13 +337,11 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
 
         // Step 3: If |tensor|.[[context]] is not |this|, then throw a TypeError.
         if tensor.context() != Dom::from_ref(self) {
-            let cx = crate::dom::globalscope::GlobalScope::get_cx();
-            crate::dom::bindings::error::throw_dom_exception(
+            let cx = GlobalScope::get_cx();
+            throw_dom_exception(
                 cx,
                 &self.global(),
-                crate::dom::bindings::error::Error::Type(
-                    "tensor is not owned by this context".to_owned(),
-                ),
+                Error::Type("tensor is not owned by this context".to_owned()),
                 CanGc::note(),
             );
             return;
@@ -358,11 +349,11 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
 
         // Step 4: If |tensor|.[[isDestroyed]] is true, then throw a TypeError.
         if tensor.is_destroyed() {
-            let cx = crate::dom::globalscope::GlobalScope::get_cx();
-            crate::dom::bindings::error::throw_dom_exception(
+            let cx = GlobalScope::get_cx();
+            throw_dom_exception(
                 cx,
                 &self.global(),
-                crate::dom::bindings::error::Error::Type("MLTensor is destroyed".to_owned()),
+                Error::Type("MLTensor is destroyed".to_owned()),
                 CanGc::note(),
             );
             return;
@@ -370,11 +361,11 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
 
         // Step 5: If |tensor|.[[descriptor]].{{MLTensorDescriptor/writable}} is false, then throw a TypeError.
         if !tensor.writable() {
-            let cx = crate::dom::globalscope::GlobalScope::get_cx();
-            crate::dom::bindings::error::throw_dom_exception(
+            let cx = GlobalScope::get_cx();
+            throw_dom_exception(
                 cx,
                 &self.global(),
-                crate::dom::bindings::error::Error::Type("tensor is not writable".to_owned()),
+                Error::Type("tensor is not writable".to_owned()),
                 CanGc::note(),
             );
             return;
