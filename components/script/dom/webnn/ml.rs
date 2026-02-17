@@ -3,6 +3,7 @@ use std::rc::Rc;
 use dom_struct::dom_struct;
 
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{MLContextOptions, MLMethods};
+use crate::dom::webnn::mlcontext::MLContext;
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
 use crate::dom::bindings::root::DomRoot;
 use crate::dom::globalscope::GlobalScope;
@@ -25,6 +26,19 @@ impl ML {
     pub(crate) fn new(global: &GlobalScope, can_gc: CanGc) -> DomRoot<ML> {
         reflect_dom_object(Box::new(ML::new_inherited()), global, can_gc)
     }
+
+    /// <https://webmachinelearning.github.io/webnn/#api-ml-createcontext>
+    pub(crate) fn create_context(
+        &self,
+        options: &MLContextOptions,
+    ) -> DomRoot<MLContext> {
+        MLContext::new(
+            &self.global(),
+            options.accelerated,
+            options.powerPreference,
+            CanGc::note(),
+        )
+    }
 }
 
 impl MLMethods<crate::DomTypeHolder> for ML {
@@ -41,8 +55,18 @@ impl MLMethods<crate::DomTypeHolder> for ML {
         let p = Promise::new(&self.global(), CanGc::note());
 
         // Step 5.1: Let |context| be the result of creating a context given |realm| and |options|.
-        // Step 5.2: Queue an ML task with |global| to resolve |promise| with |context|.
-        // TODO: implement ML task queuing, backend/device-selection and promise rendezvous (spec: #api-ml-createcontext).
+        // Note: the spec runs the context-creation and promise-resolution in-parallel. This
+        // helper implements the context-creation steps synchronously on the event loop; the
+        // timeline start remains an implementation-defined, in-parallel operation (TODO).
+        let context = self.create_context(options);
+
+        // Step 5.1 (cont): the constructor already set [[lost]] to a new Promise in the realm.
+
+        // Step 5.2: Resolve |promise| with |context| immediately (synchronous rendezvous).
+        p.resolve_native(&context, CanGc::note());
+
+        // Step 5.3: TODO — start the MLContext's timeline in an implementation-defined manner
+        // TODO (spec: #api-ml-createcontext): queue ML task to start timeline / select backend.
 
         // Step 6: Return |promise|.
         p

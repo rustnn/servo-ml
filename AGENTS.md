@@ -11,9 +11,20 @@ Repo structure (high level)
 
 Where to look next
 - For DOM / Web API work: see `components/script/README.md`.
-- For feature-specific guidance: also open the README in the component you'll
-  modify (each component directory may contain a README).
-- Note: the `README.md` files form a nested architecture: ensure you read the entire chain all the way down to the lowest-level. So for example if working on webnn, read the readmes of `script`, and then `script/webnn`. Your guidance is the concentation of all relevant readmes and this agent file. 
+- For feature-specific guidance: open the README in the component you'll modify (each component directory may contain a README).
+
+README chain (read in order)
+- `AGENTS.md` — top-level agent orientation and cross-cutting rules (this file).
+- `components/<component>/README.md` — component-level guidance and the consolidation point for component-wide lessons (for example `components/script/README.md`).
+- `components/<component>/dom/<subdir>/README.md` — subsystem-level guidance (keep *very* minimal; include only subsystem-specific notes, spec anchors, and TODOs).
+- `specs/<spec_name>/index.bs` — the authoritative spec for algorithms and internal-slot definitions.
+
+Principle: add lessons to the *lowest* README that makes sense. Do **not** duplicate or copy the same prose across multiple README files — put the short lesson where it belongs and, if broadly applicable, add a one-line pointer in the parent README.
+
+Example — working on WebNN (in `script`)
+- Read in order: `AGENTS.md` → `components/script/README.md` → `components/script/dom/webnn/README.md`.
+- Implement code under `components/script/dom/webnn/` and add WebNN-specific lessons to `components/script/dom/webnn/README.md`.
+- If a lesson applies to many Web APIs, add a single short line to `components/script/README.md` (do not copy the full prose into the subsystem README).
 
 Guidance on adding documentation
 

@@ -28,14 +28,19 @@ components/script — README
    and finally consult the authoritative `specs/<spec_name>/index.bs` for
    algorithm and internal-slot details.
 7. Good quality examples of implementation and documentation patterns are found in `components/script/dom/stream`.
+8. Prefer top-level `use` imports for types that appear in the file (for
+   example `use crate::dom::webnn::mlcontext::MLContext;`) instead of using
+   fully-qualified `crate::...` paths inside signatures or bodies.
+   - Use short type names in method signatures and code; add the `use` at the
+     top of the file. This improves readability and makes future refactors
+     and reviews simpler.
 
 **Documenting your work:**
 Follow these exact conventions so code <-> spec mapping is clear and reviewable.
 
 - Method- & type-level doc
   - Method-level: the method's top doc-comment must contain *only* the canonical spec anchor (e.g. `/// <https://webmachinelearning.github.io/webnn/#api-ml-createcontext>`).
-  - Type-level (DOM struct): the struct's top doc-comment must contain *only* the WebIDL/interface anchor — use the `dom-` (WebIDL) anchor when available (e.g. `/// <https://webmachinelearning.github.io/webnn/#dom-mlcontext>`).
-
+    - Do NOT add parenthetical notes or extra prose in top doc-comments (for example, `(internal helper)`) — these add noise and are disallowed. Keep top-level doc-comments anchor-only.
 - In-body per-line spec mapping
   - Inside the function body annotate *each relevant line of code* with a
     single comment of the exact form `Step N: <spec prose>` (use `Step 5.1`,
