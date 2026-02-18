@@ -1,6 +1,7 @@
 use dom_struct::dom_struct;
 use js::rust::MutableHandleValue;
 
+use crate::dom::MLTensor;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLOperandDataType, MLOperandDescriptor, MLOperandMethods,
 };
@@ -9,7 +10,6 @@ use crate::dom::bindings::root::{Dom, DomRoot};
 use crate::dom::bindings::str::DOMString;
 use crate::dom::bindings::utils::to_frozen_array;
 use crate::dom::globalscope::GlobalScope;
-use crate::dom::MLTensor; 
 use crate::dom::webnn::mlgraphbuilder::MLGraphBuilder;
 use crate::script_runtime::{CanGc, JSContext};
 

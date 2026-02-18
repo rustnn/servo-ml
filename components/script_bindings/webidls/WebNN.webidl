@@ -53,6 +53,17 @@ dictionary MLOperandDescriptor {
   required sequence<[EnforceRange] unsigned long> shape;
 };
 
+// Generic operator options used by several ops (label etc.)
+dictionary MLOperatorOptions {
+  USVString label = "";
+};
+
+// Options for argMin/argMax
+dictionary MLArgMinMaxOptions : MLOperatorOptions {
+  boolean keepDimensions = false;
+  MLOperandDataType outputDataType = "int32";
+};
+
 dictionary MLRankRange {
   unsigned long min;
   unsigned long max;
@@ -118,6 +129,17 @@ interface MLGraphBuilder {
   [Throws] MLOperand constant(MLTensor tensor);
 
   Promise<MLGraph> build(sequence<MLOperand> outputs);
+};
+
+partial interface MLGraphBuilder {
+  [Throws] MLOperand argMin(MLOperand input, [EnforceRange] unsigned long axis,
+                   optional MLArgMinMaxOptions options = {});
+  [Throws] MLOperand argMax(MLOperand input, [EnforceRange] unsigned long axis,
+                   optional MLArgMinMaxOptions options = {});
+  [Throws] MLOperand where(MLOperand condition,
+                  MLOperand trueValue,
+                  MLOperand falseValue,
+                  optional MLOperatorOptions options = {});
 };
 
 [SecureContext, Exposed=(Window, Worker)]

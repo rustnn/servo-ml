@@ -1,16 +1,15 @@
 use std::cell::Cell;
 
 use dom_struct::dom_struct;
+use rustnn::graph::GraphInfo;
 
+use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::MLGraphMethods;
 use crate::dom::bindings::reflector::{Reflector, reflect_dom_object};
 use crate::dom::bindings::root::{Dom, DomRoot};
-use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::globalscope::GlobalScope;
 use crate::dom::webnn::mlcontext::MLContext;
 use crate::script_runtime::CanGc;
-
-use rustnn::graph::GraphInfo;
 
 #[dom_struct]
 /// <https://webmachinelearning.github.io/webnn/#api-mlgraph>
@@ -56,7 +55,11 @@ impl MLGraph {
         global: &GlobalScope,
         can_gc: CanGc,
     ) -> DomRoot<MLGraph> {
-        reflect_dom_object(Box::new(MLGraph::new_inherited_with_info(context, graph_info)), global, can_gc)
+        reflect_dom_object(
+            Box::new(MLGraph::new_inherited_with_info(context, graph_info)),
+            global,
+            can_gc,
+        )
     }
 
     fn new_inherited_with_info(context: &MLContext, graph_info: GraphInfo) -> MLGraph {

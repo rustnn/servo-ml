@@ -225,9 +225,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         if tensor.context() != Dom::from_ref(self) {
             let p = Promise::new(global, CanGc::note());
             p.reject_error(
-                Error::Type(
-                    "tensor is not owned by this context".to_owned(),
-                ),
+                Error::Type("tensor is not owned by this context".to_owned()),
                 CanGc::note(),
             );
             return p;
@@ -305,7 +303,10 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 4: If MLOperandDescriptor/checking dimensions given |descriptor| returns false, then return a new promise in |realm| rejected with a {{TypeError}}.
         if !crate::dom::webnn::check_dimensions(descriptor) {
             let p = Promise::new(global, CanGc::note());
-            p.reject_error(Error::Type("invalid operand descriptor".to_owned()), CanGc::note());
+            p.reject_error(
+                Error::Type("invalid operand descriptor".to_owned()),
+                CanGc::note(),
+            );
             return p;
         }
 

@@ -1,29 +1,26 @@
-use std::rc::Rc;
 use std::cell::Cell;
+use std::collections::HashMap;
+use std::rc::Rc;
 
 use dom_struct::dom_struct;
 use js::rust::HandleObject;
+use rustnn::graph::{DataType, GraphInfo, Operand, OperandDescriptor, OperandKind, Operation};
 use script_bindings::codegen::GenericUnionTypes::ArrayBufferViewOrArrayBuffer;
 
 use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
-    MLGraphBuilderMethods, MLOperandDescriptor,
+    MLArgMinMaxOptions, MLGraphBuilderMethods, MLOperandDataType, MLOperandDescriptor,
+    MLOperatorOptions,
 };
 use crate::dom::bindings::error::{Error, Fallible};
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
 use crate::dom::bindings::root::{Dom, DomRoot};
 use crate::dom::bindings::str::DOMString;
 use crate::dom::globalscope::GlobalScope;
-use std::collections::HashMap;
-use rustnn::graph::{
-    GraphInfo, Operand, OperandDescriptor, OperandKind,
-    DataType,
-};
 use crate::dom::promise::Promise;
-use crate::dom::MLContext;
 use crate::dom::webnn::mlgraph::MLGraph;
-use crate::dom::MLTensor;
 use crate::dom::webnn::mloperand::MLOperand;
+use crate::dom::{MLContext, MLTensor};
 use crate::script_runtime::CanGc;
 
 #[dom_struct]
@@ -96,6 +93,12 @@ impl MLGraphBuilder {
         operand.builder() == Dom::from_ref(self)
     }
 
+    /// Internal helper accepting a reference to an MLOperand (used by generated bindings
+    /// that pass `&MLOperand` directly).
+    fn validate_operand_ref(&self, operand: &MLOperand) -> bool {
+        operand.builder() == Dom::from_ref(self)
+    }
+
     /// Allocate an operand id, append `operand` into `graph_info.operands`,
     /// optionally record the id in `graph_info.input_operands`, and return the id.
     ///
@@ -137,10 +140,145 @@ impl MLGraphBuilder {
             shape,
             pending_permutation: Vec::new(),
         };
-        Operand { descriptor: desc, kind, name }
+        Operand {
+            descriptor: desc,
+            kind,
+            name,
+        }
     }
 
+    /// <https://webmachinelearning.github.io/webnn/#mlgraphbuilder-argminmax-op>
+    fn mlgraphbuilder_argminmax_op(
+        &self,
+        _op_name: &str,
+        input: &MLOperand,
+        axis: u32,
+        options: &MLArgMinMaxOptions,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1 (Assert): |op| is one of "argMin", "argMax".
+        debug_assert!(_op_name == "argMin" || _op_name == "argMax");
+
+        // Step 2: If this can not build, then throw an InvalidStateError.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 3: If MLGraphBuilder/validating operand with this and |input| returns false, then throw a TypeError.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 4: If |axis| is greater than or equal to |input|'s rank, then throw a TypeError.
+        let in_shape = input.descriptor_shape();
+        if (axis as usize) >= in_shape.len() {
+            return Err(Error::Type("axis out of range".to_owned()));
+        }
+
+        // Step 5: Validate |options|.outputDataType is allowed (int32 or int64 for argMin/argMax).
+        let out_dtype_str = options.outputDataType.as_str();
+        if out_dtype_str != "int32" && out_dtype_str != "int64" {
+            return Err(Error::Type(
+                "outputDataType must be 'int32' or 'int64'".to_owned(),
+            ));
+        }
+
+        // Step 6: If input.shape[axis] is greater than outputDataType's max value, then throw.
+        let axis_dim = in_shape[axis as usize] as u128;
+        match out_dtype_str {
+            "int32" => {
+                if axis_dim > (i32::MAX as u128) {
+                    return Err(Error::Type("dimension too large for int32".to_owned()));
+                }
+            },
+            "int64" => {
+                if axis_dim > (i64::MAX as u128) {
+                    return Err(Error::Type("dimension too large for int64".to_owned()));
+                }
+            },
+            _ => {},
+        }
+
+        // Step 7: Let |outputShape| be the result of calculating reduction output sizes.
+        let output_shape = match rustnn::shape_inference::infer_arg_reduce_shape(
+            in_shape,
+            axis,
+            options.keepDimensions,
+        ) {
+            Ok(s) => s,
+            Err(e) => return Err(Error::Type(e.to_string())),
+        };
+
+        // Step 8: Let |desc| be the result of creating an MLOperandDescriptor given
+        // |options.outputDataType| and |outputShape|.
+        let desc = MLOperandDescriptor {
+            dataType: if out_dtype_str == "int32" {
+                MLOperandDataType::Int32
+            } else {
+                MLOperandDataType::Int64
+            },
+            shape: output_shape.clone(),
+        };
+
+        // Step 9: *Make graph connections:* (record an operator in GraphInfo.operations)
+        // Implementation note: the DOM MLOperand object does not store an [[operator]] slot
+        // in this binding; we reflect the operator by recording it in the implementation
+        // GraphInfo (rustnn::GraphInfo.operations).
+
+        // Ensure the input has a backend operand id.
+        let input_id = match input.id() {
+            Some(i) => i,
+            None => return Err(Error::Type("input operand has no backend id".to_owned())),
+        };
+
+        // Create backend operand for the output now (implementation detail: backend id is needed
+        // to record the operator). The spec's conceptual order is preserved (we create a
+        // descriptor/operator relationship), but the concrete backend id must exist first.
+        let rust_operand = self.create_rust_operand(
+            out_dtype_str,
+            output_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Build operation attributes per the README/spec.
+        let mut attributes = serde_json::json!({
+            "axis": axis,
+            "keepDimensions": options.keepDimensions,
+        });
+        // Record the explicit outputDataType when present.
+        attributes["outputDataType"] = serde_json::json!(out_dtype_str);
+
+        // Optional label (MLOperatorOptions.label). Use empty => none.
+        let label = {
+            let l = options.parent.label.clone();
+            if l.is_empty() {
+                None
+            } else {
+                Some(l.clone().to_string())
+            }
+        };
+
+        // Push an Operation record into the builder's GraphInfo.operations so the
+        // backend has the operator + connectivity metadata available at Build().
+        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
+            gi.operations.push(Operation {
+                op_type: _op_name.to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes,
+                label,
+            });
+        }
+
+        // Step 9.2: Let |output| be the result of creating an MLOperand given this and |desc|.
+        // (Also return it per Step 10.)
+        let operand =
+            create_an_mloperand(self, Some(&desc), None, None, false, false, Some(output_id));
+        Ok(operand)
     }
+}
 
 /// <https://webmachinelearning.github.io/webnn/#mloperanddescriptor-check-dimensions>
 pub(crate) fn check_dimensions(descriptor: &MLOperandDescriptor) -> bool {
@@ -207,9 +345,27 @@ fn create_an_mloperand(
     // Step 2: Let |operand| be a new MLOperand in |realm|.
     let global = &builder.global();
     let operand = if let Some(t) = tensor {
-        MLOperand::new_from_tensor(builder, global, t, name, is_input, is_constant, operand_id, CanGc::note())
+        MLOperand::new_from_tensor(
+            builder,
+            global,
+            t,
+            name,
+            is_input,
+            is_constant,
+            operand_id,
+            CanGc::note(),
+        )
     } else if let Some(desc) = descriptor {
-        MLOperand::new(builder, global, desc, name, is_input, is_constant, operand_id, CanGc::note())
+        MLOperand::new(
+            builder,
+            global,
+            desc,
+            name,
+            is_input,
+            is_constant,
+            operand_id,
+            CanGc::note(),
+        )
     } else {
         // Internal invariant: caller must provide either a descriptor or a tensor.
         // Use `debug_assert!` (not `panic!`) for internal invariants so release builds
@@ -249,7 +405,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-input>
-    fn Input(&self, name: DOMString, descriptor: &MLOperandDescriptor) -> Fallible<DomRoot<MLOperand>> {
+    fn Input(
+        &self,
+        name: DOMString,
+        descriptor: &MLOperandDescriptor,
+    ) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If this can not build, then throw an InvalidStateError.
         if !self.can_build() {
             return Err(Error::InvalidState(None));
@@ -284,7 +444,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 5.3: Add |operand| to this graph's computational graph/inputs and record backend operand id
         //          in the implementation-defined `GraphInfo` (append to `GraphInfo.operands` and `GraphInfo.input_operands`).
         // Note: this implements "Add operand to this's graph's inputs" — append the operand to the
-        // implementation-defined `GraphInfo.operands` vector and record its id in `GraphInfo.input_operands`. 
+        // implementation-defined `GraphInfo.operands` vector and record its id in `GraphInfo.input_operands`.
         let rust_operand = self.create_rust_operand(
             descriptor.dataType.as_str(),
             descriptor.shape.clone(),
@@ -294,7 +454,15 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let id = self.push_operand_to_graph(rust_operand, true);
 
         // Step 5.1: Let |operand| be the result of creating an MLOperand given this and |descriptor|.
-        let operand = create_an_mloperand(self, Some(descriptor), None, Some(name.clone()), true, false, Some(id));
+        let operand = create_an_mloperand(
+            self,
+            Some(descriptor),
+            None,
+            Some(name.clone()),
+            true,
+            false,
+            Some(id),
+        );
 
         // Step 5.2: Set |operand|.[[name]] to |name| (already supplied to the constructor above).
         // Step 5.3: DOM operands are no longer stored on the builder; backend bookkeeping
@@ -350,7 +518,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // `graph_info.id_to_constant_tensor_operand_map`.
 
         // Step 4.1: Let |operand| be the result of creating an MLOperand given this and |descriptor|.
-        let operand = create_an_mloperand(self, Some(descriptor), None, None, false, true, Some(id));
+        let operand =
+            create_an_mloperand(self, Some(descriptor), None, None, false, true, Some(id));
         // Step 4.2: DOM operands are no longer kept by the builder; backend bookkeeping
         // for the operand (id and bytes) must be persisted in `graph_info`.
         // Step 5: Return |operand|.
@@ -361,7 +530,9 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
     fn Constant_(&self, tensor: &MLTensor) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If tensor.[[context]] is not this.[[context]], throw a TypeError.
         if tensor.context() != self.context() {
-            return Err(Error::Type("tensor is not owned by this builder's context".to_owned()));
+            return Err(Error::Type(
+                "tensor is not owned by this builder's context".to_owned(),
+            ));
         }
 
         // Step 2: If |tensor|.[[isDestroyed]] is true, then throw a TypeError.
@@ -393,7 +564,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 5.3: TODO — persist the bytes of |tensor| in the builder's GraphInfo so the
         // runtime can materialize the constant during Build().
         // TODO (spec: #api-mlgraphbuilder-constant-tensor): record tensor bytes in
-        // `graph_info.constant_operand_ids_to_handles` and `id_to_constant_tensor_operand_map`. 
+        // `graph_info.constant_operand_ids_to_handles` and `id_to_constant_tensor_operand_map`.
 
         // Step 5.1: Let |operand| be the result of creating an MLOperand given this and |tensor|.[[descriptor]].
         let operand = create_an_mloperand(self, None, Some(tensor), None, false, true, Some(id));
@@ -401,6 +572,107 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 5.3: DOM operands are not stored on the builder; persist tensor bytes in `graph_info`
         // so that Build() can materialize the constant.
         // Step 6: Return |operand|.
+        Ok(operand)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-argminmax>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-argmin>
+    fn ArgMin(
+        &self,
+        input: &MLOperand,
+        axis: u32,
+        options: &MLArgMinMaxOptions,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Delegate to the shared helper that implements
+        // `#mlgraphbuilder-argminmax-op` per the spec.
+        self.mlgraphbuilder_argminmax_op("argMin", input, axis, options)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-argminmax>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-argmax>
+    fn ArgMax(
+        &self,
+        input: &MLOperand,
+        axis: u32,
+        options: &MLArgMinMaxOptions,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Delegate to the shared helper that implements
+        // `#mlgraphbuilder-argminmax-op` per the spec.
+        self.mlgraphbuilder_argminmax_op("argMax", input, axis, options)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-where>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-where>
+    fn Where(
+        &self,
+        condition: &MLOperand,
+        true_value: &MLOperand,
+        false_value: &MLOperand,
+        _options: &MLOperatorOptions,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If this can not build, then throw an InvalidStateError.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: Validate operands belong to this builder.
+        if !self.validate_operand_ref(condition) ||
+            !self.validate_operand_ref(true_value) ||
+            !self.validate_operand_ref(false_value)
+        {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: Validate data types per spec
+        if condition.descriptor_data_type() != "uint8" {
+            return Err(Error::Type(
+                "condition must have dataType 'uint8'".to_owned(),
+            ));
+        }
+        if true_value.descriptor_data_type() != false_value.descriptor_data_type() {
+            return Err(Error::Type(
+                "trueValue and falseValue must have the same dataType".to_owned(),
+            ));
+        }
+
+        // Infer output shape using rustnn shape inference helper
+        let output_shape = match rustnn::shape_inference::infer_where_shape(
+            condition.descriptor_shape(),
+            true_value.descriptor_shape(),
+            false_value.descriptor_shape(),
+        ) {
+            Ok(s) => s,
+            Err(e) => return Err(Error::Type(e.to_string())),
+        };
+
+        // Create output descriptor using trueValue's data type
+        let out_dtype_str = true_value.descriptor_data_type();
+        let out_dtype_enum = match out_dtype_str {
+            "float32" => MLOperandDataType::Float32,
+            "float16" => MLOperandDataType::Float16,
+            "int32" => MLOperandDataType::Int32,
+            "uint32" => MLOperandDataType::Uint32,
+            "int64" => MLOperandDataType::Int64,
+            "uint64" => MLOperandDataType::Uint64,
+            "int8" => MLOperandDataType::Int8,
+            "uint8" => MLOperandDataType::Uint8,
+            _ => MLOperandDataType::Float32,
+        };
+
+        let desc = MLOperandDescriptor {
+            dataType: out_dtype_enum,
+            shape: output_shape.clone(),
+        };
+
+        // Create backend operand and DOM operand
+        let rust_operand = self.create_rust_operand(
+            out_dtype_str,
+            output_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let id = self.push_operand_to_graph(rust_operand, false);
+        let operand = create_an_mloperand(self, Some(&desc), None, None, false, false, Some(id));
         Ok(operand)
     }
 
