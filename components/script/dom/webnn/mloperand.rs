@@ -168,8 +168,8 @@ impl MLOperandMethods<crate::DomTypeHolder> for MLOperand {
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mloperand>
-    fn Shape(&self, cx: JSContext, retval: MutableHandleValue) {
+    fn Shape(&self, cx: JSContext, can_gc: CanGc, retval: MutableHandleValue) {
         // Return the descriptor shape as a FrozenArray-like JS array per WebIDL.
-        to_frozen_array(self.descriptor_shape.as_slice(), cx, retval, CanGc::note());
+        to_frozen_array(self.descriptor_shape.as_slice(), cx, retval, can_gc);
     }
 }

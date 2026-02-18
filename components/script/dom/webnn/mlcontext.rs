@@ -94,12 +94,12 @@ impl MLContext {
     ///
     /// Per the user's instruction we implement the promise-resolution portion
     /// now and leave the object-destruction loops as TODOs.
-    pub(crate) fn lose(&self, message: Option<DOMString>) {
+    pub(crate) fn lose(&self, message: Option<DOMString>, can_gc: CanGc) {
         // Step 1: Let |info| be a new MLContextLostInfo.
         let info = MLContextLostInfo { message };
 
         // Step 2: Resolve this.[[lost]] with |info|.
-        (&*self.lost).resolve_native(&info, CanGc::note());
+        (&*self.lost).resolve_native(&info, can_gc);
 
         // Step 3: For each MLGraph where graph.[[context]] == this, run MLGraph/destroy() steps.
         // TODO: enumerate and destroy associated MLGraph objects (not yet implemented).
@@ -117,7 +117,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlcontext-createtensor>
-    fn CreateTensor(&self, descriptor: &MLTensorDescriptor) -> Rc<Promise> {
+    fn CreateTensor(&self, descriptor: &MLTensorDescriptor, can_gc: CanGc) -> Rc<Promise> {
         // Step 1: Let |global| be this's relevant global object.
         let global = &self.global();
 
@@ -127,17 +127,17 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 3: If |this| is lost, return a new promise in |realm| rejected with an InvalidStateError.
         if self.is_lost() {
             // Step 3: create and return the rejected promise in |realm|.
-            let p = Promise::new(global, CanGc::note());
-            p.reject_error(Error::InvalidState(None), CanGc::note());
+            let p = Promise::new(global, can_gc);
+            p.reject_error(Error::InvalidState(None), can_gc);
 
             return p;
         }
 
         // Step 4: Let |tensor| be the result of creating an MLTensor given |this| and |descriptor|.
-        let tensor = MLTensor::new(self, global, descriptor, CanGc::note());
+        let tensor = MLTensor::new(self, global, descriptor, can_gc);
 
         // Step 5: Let |promise| be a new promise in |realm|.
-        let p = Promise::new(global, CanGc::note());
+        let p = Promise::new(global, can_gc);
 
         // Step 6: Enqueue the following steps to this.[[timeline]]:
         //     1. Run these steps, but abort when this is lost:
@@ -153,7 +153,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlcontext-readtensor>
-    fn ReadTensor(&self, tensor: &MLTensor) -> Rc<Promise> {
+    fn ReadTensor(&self, tensor: &MLTensor, can_gc: CanGc) -> Rc<Promise> {
         // Step 1: Let |global| be this's relevant global object.
         let global = &self.global();
 
@@ -161,36 +161,30 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
 
         // Step 3: If |tensor|.[[context]] is not |this|, return a rejected promise with a TypeError.
         if tensor.context() != Dom::from_ref(self) {
-            let p = Promise::new(global, CanGc::note());
+            let p = Promise::new(global, can_gc);
             p.reject_error(
                 Error::Type("tensor is not owned by this context".to_owned()),
-                CanGc::note(),
+                can_gc,
             );
             return p;
         }
 
         // Step 4: If |tensor|.[[isDestroyed]] is true, return a rejected promise with a TypeError.
         if tensor.is_destroyed() {
-            let p = Promise::new(global, CanGc::note());
-            p.reject_error(
-                Error::Type("MLTensor is destroyed".to_owned()),
-                CanGc::note(),
-            );
+            let p = Promise::new(global, can_gc);
+            p.reject_error(Error::Type("MLTensor is destroyed".to_owned()), can_gc);
             return p;
         }
 
         // Step 5: If |tensor|.[[descriptor]]..readable is false, return a rejected promise with a TypeError.
         if !tensor.readable() {
-            let p = Promise::new(global, CanGc::note());
-            p.reject_error(
-                Error::Type("tensor is not readable".to_owned()),
-                CanGc::note(),
-            );
+            let p = Promise::new(global, can_gc);
+            p.reject_error(Error::Type("tensor is not readable".to_owned()), can_gc);
             return p;
         }
 
         // Step 6: Let |promise| be a new promise in |realm| and append it to tensor.[[pendingPromises]].
-        let p = Promise::new(global, CanGc::note());
+        let p = Promise::new(global, can_gc);
         tensor.append_pending_promise(p.clone());
 
         // Step 7: Enqueue the following steps to |tensor|.[[context]]'s [[timeline]]:
@@ -215,6 +209,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         &self,
         tensor: &MLTensor,
         output_data: ArrayBufferViewOrArrayBuffer,
+        can_gc: CanGc,
     ) -> Rc<Promise> {
         // Step 1: Let |global| be this's relevant global object.
         let global = &self.global();
@@ -223,31 +218,25 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
 
         // Step 3: If |tensor|.[[context]] is not |this|, then return a new promise in |realm| rejected with a TypeError.
         if tensor.context() != Dom::from_ref(self) {
-            let p = Promise::new(global, CanGc::note());
+            let p = Promise::new(global, can_gc);
             p.reject_error(
                 Error::Type("tensor is not owned by this context".to_owned()),
-                CanGc::note(),
+                can_gc,
             );
             return p;
         }
 
         // Step 4: If |tensor|.[[isDestroyed]] is true, then return a new promise in |realm| rejected with a TypeError.
         if tensor.is_destroyed() {
-            let p = Promise::new(global, CanGc::note());
-            p.reject_error(
-                Error::Type("MLTensor is destroyed".to_owned()),
-                CanGc::note(),
-            );
+            let p = Promise::new(global, can_gc);
+            p.reject_error(Error::Type("MLTensor is destroyed".to_owned()), can_gc);
             return p;
         }
 
         // Step 5: If |tensor|.[[descriptor]].{{MLTensorDescriptor/readable}} is false, then return a new promise in |realm| rejected with a TypeError.
         if !tensor.readable() {
-            let p = Promise::new(global, CanGc::note());
-            p.reject_error(
-                Error::Type("tensor is not readable".to_owned()),
-                CanGc::note(),
-            );
+            let p = Promise::new(global, can_gc);
+            p.reject_error(Error::Type("tensor is not readable".to_owned()), can_gc);
             return p;
         }
 
@@ -258,7 +247,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         let _ = output_data; // keep variable referenced until validation/usage is implemented
 
         // Step 7: Let |promise| be a new promise in |realm|.
-        let p = Promise::new(global, CanGc::note());
+        let p = Promise::new(global, can_gc);
 
         // Step 8: Append |promise| to |tensor|.[[pendingPromises]].
         tensor.append_pending_promise(p.clone());
@@ -287,6 +276,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         &self,
         descriptor: &MLOperandDescriptor,
         input_data: ArrayBufferViewOrArrayBuffer,
+        can_gc: CanGc,
     ) -> Rc<Promise> {
         // Step 1: Let |global| be this's relevant global object.
         let global = &self.global();
@@ -295,18 +285,15 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
 
         // Step 3: If |this| is lost, return a new promise in |realm| rejected with an InvalidStateError.
         if self.is_lost() {
-            let p = Promise::new(global, CanGc::note());
-            p.reject_error(Error::InvalidState(None), CanGc::note());
+            let p = Promise::new(global, can_gc);
+            p.reject_error(Error::InvalidState(None), can_gc);
             return p;
         }
 
         // Step 4: If MLOperandDescriptor/checking dimensions given |descriptor| returns false, then return a new promise in |realm| rejected with a {{TypeError}}.
         if !crate::dom::webnn::check_dimensions(descriptor) {
-            let p = Promise::new(global, CanGc::note());
-            p.reject_error(
-                Error::Type("invalid operand descriptor".to_owned()),
-                CanGc::note(),
-            );
+            let p = Promise::new(global, can_gc);
+            p.reject_error(Error::Type("invalid operand descriptor".to_owned()), can_gc);
             return p;
         }
 
@@ -317,10 +304,10 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         let _ = input_data; // buffer validation + timeline copy are TODOs.
 
         // Step 8: Let |tensor| be the result of creating a constant MLTensor given |this| and |descriptor|.
-        let tensor = MLTensor::new_constant(self, global, descriptor, CanGc::note());
+        let tensor = MLTensor::new_constant(self, global, descriptor, can_gc);
 
         // Step 9: Let |promise| be a new promise in |realm|.
-        let p = Promise::new(global, CanGc::note());
+        let p = Promise::new(global, can_gc);
 
         // Step 10: Enqueue the following steps to this.[[timeline]]:
         //     1. Run these steps, but abort when this is lost:
@@ -337,7 +324,12 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlcontext-writetensor>
-    fn WriteTensor(&self, tensor: &MLTensor, input_data: ArrayBufferViewOrArrayBuffer) {
+    fn WriteTensor(
+        &self,
+        tensor: &MLTensor,
+        input_data: ArrayBufferViewOrArrayBuffer,
+        can_gc: CanGc,
+    ) {
         // Step 1: Let |global| be this's relevant global object.
 
         // Step 2: Let |realm| be this's relevant realm.
@@ -349,7 +341,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
                 cx,
                 &self.global(),
                 Error::Type("tensor is not owned by this context".to_owned()),
-                CanGc::note(),
+                can_gc,
             );
             return;
         }
@@ -361,7 +353,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
                 cx,
                 &self.global(),
                 Error::Type("MLTensor is destroyed".to_owned()),
-                CanGc::note(),
+                can_gc,
             );
             return;
         }
@@ -373,7 +365,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
                 cx,
                 &self.global(),
                 Error::Type("tensor is not writable".to_owned()),
-                CanGc::note(),
+                can_gc,
             );
             return;
         }
@@ -397,7 +389,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlcontext-destroy>
-    fn Destroy(&self) {
+    fn Destroy(&self, can_gc: CanGc) {
         // Step 1: If this is lost, then abort these steps.
         if self.is_lost() {
             return;
@@ -406,7 +398,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 2: Run the steps to MLContext/lose this with an implementation-defined message.
         // Per spec this is a direct call into the MLContext/lose abstract operation.
         // The remaining destroy-of-associated-objects logic is TODO.
-        self.lose(Some(DOMString::from("destroyed")));
+        self.lose(Some(DOMString::from("destroyed")), can_gc);
 
         // TODO: queue or perform any additional destroy bookkeeping required by the implementation.
     }

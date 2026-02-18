@@ -155,6 +155,7 @@ impl MLGraphBuilder {
         input: &MLOperand,
         axis: u32,
         options: &MLArgMinMaxOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // Step 1 (Assert): |op| is one of "argMin", "argMax".
         debug_assert!(_op_name == "argMin" || _op_name == "argMax");
@@ -275,8 +276,16 @@ impl MLGraphBuilder {
 
         // Step 9.2: Let |output| be the result of creating an MLOperand given this and |desc|.
         // (Also return it per Step 10.)
-        let operand =
-            create_an_mloperand(self, Some(&desc), None, None, false, false, Some(output_id));
+        let operand = create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        );
         Ok(operand)
     }
 }
@@ -341,6 +350,7 @@ fn create_an_mloperand(
     is_input: bool,
     is_constant: bool,
     operand_id: Option<u32>,
+    can_gc: CanGc,
 ) -> DomRoot<MLOperand> {
     // Step 1: Let |realm| be |builder|'s relevant realm.
     // Step 2: Let |operand| be a new MLOperand in |realm|.
@@ -354,7 +364,7 @@ fn create_an_mloperand(
             is_input,
             is_constant,
             operand_id,
-            CanGc::note(),
+            can_gc,
         )
     } else if let Some(desc) = descriptor {
         MLOperand::new(
@@ -365,7 +375,7 @@ fn create_an_mloperand(
             is_input,
             is_constant,
             operand_id,
-            CanGc::note(),
+            can_gc,
         )
     } else {
         // Internal invariant: caller must provide either a descriptor or a tensor.
@@ -384,7 +394,7 @@ fn create_an_mloperand(
                 false,
             )),
             &builder.global(),
-            CanGc::note(),
+            can_gc,
         );
     };
 
@@ -404,6 +414,7 @@ impl MLGraphBuilder {
         a: &MLOperand,
         b: &MLOperand,
         options_label: Option<String>,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: [Assert]: |op| is one of "add", "sub", "mul", "div", "max", "min", "pow".
         // Step 2: If this can not build, then throw an InvalidStateError.
@@ -479,8 +490,16 @@ impl MLGraphBuilder {
             });
         }
 
-        let operand =
-            create_an_mloperand(self, Some(&desc), None, None, false, false, Some(output_id));
+        let operand = create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        );
         Ok(operand)
     }
 }
@@ -500,6 +519,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         &self,
         name: DOMString,
         descriptor: &MLOperandDescriptor,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If this can not build, then throw an InvalidStateError.
         if !self.can_build() {
@@ -553,6 +573,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             true,
             false,
             Some(id),
+            can_gc,
         );
 
         // Step 5.2: Set |operand|.[[name]] to |name| (already supplied to the constructor above).
@@ -568,6 +589,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         &self,
         descriptor: &MLOperandDescriptor,
         buffer: ArrayBufferViewOrArrayBuffer,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If this can not build, then return an InvalidStateError.
         if !self.can_build() {
@@ -609,8 +631,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // `graph_info.id_to_constant_tensor_operand_map`.
 
         // Step 4.1: Let |operand| be the result of creating an MLOperand given this and |descriptor|.
-        let operand =
-            create_an_mloperand(self, Some(descriptor), None, None, false, true, Some(id));
+        let operand = create_an_mloperand(
+            self,
+            Some(descriptor),
+            None,
+            None,
+            false,
+            true,
+            Some(id),
+            can_gc,
+        );
         // Step 4.2: DOM operands are no longer kept by the builder; backend bookkeeping
         // for the operand (id and bytes) must be persisted in `graph_info`.
         // Step 5: Return |operand|.
@@ -618,7 +648,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-constant-tensor>
-    fn Constant_(&self, tensor: &MLTensor) -> Fallible<DomRoot<MLOperand>> {
+    fn Constant_(&self, tensor: &MLTensor, can_gc: CanGc) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If tensor.[[context]] is not this.[[context]], throw a TypeError.
         if tensor.context() != self.context() {
             return Err(Error::Type(
@@ -658,7 +688,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // `graph_info.constant_operand_ids_to_handles` and `id_to_constant_tensor_operand_map`.
 
         // Step 5.1: Let |operand| be the result of creating an MLOperand given this and |tensor|.[[descriptor]].
-        let operand = create_an_mloperand(self, None, Some(tensor), None, false, true, Some(id));
+        let operand = create_an_mloperand(
+            self,
+            None,
+            Some(tensor),
+            None,
+            false,
+            true,
+            Some(id),
+            can_gc,
+        );
         // Step 5.2: Set |operand|.[[constantTensor]] to |tensor| (TODO: MLOperand currently does not store a reference).
         // Step 5.3: DOM operands are not stored on the builder; persist tensor bytes in `graph_info`
         // so that Build() can materialize the constant.
@@ -667,21 +706,21 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-build>
-    fn Build(&self, outputs: Vec<DomRoot<MLOperand>>) -> Rc<Promise> {
+    fn Build(&self, outputs: Vec<DomRoot<MLOperand>>, can_gc: CanGc) -> Rc<Promise> {
         // Step 1: Let |global| be this's relevant global object.
         let global = &self.global();
 
         // Step 2: If this can not build, then return a new promise in |realm| rejected with an InvalidStateError.
         if !self.can_build() {
-            let p = Promise::new(global, CanGc::note());
-            p.reject_error(Error::InvalidState(None), CanGc::note());
+            let p = Promise::new(global, can_gc);
+            p.reject_error(Error::InvalidState(None), can_gc);
             return p;
         }
 
         // Step 3: If |outputs| is empty, then return a new promise in |realm| rejected with a TypeError.
         if outputs.is_empty() {
-            let p = Promise::new(global, CanGc::note());
-            p.reject_error(Error::Type("outputs is empty".to_owned()), CanGc::note());
+            let p = Promise::new(global, can_gc);
+            p.reject_error(Error::Type("outputs is empty".to_owned()), can_gc);
             return p;
         }
 
@@ -693,17 +732,17 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
             // Step 4.2: If MLGraphBuilder/validating operand given |this| and |operand| returns false, then reject.
             if !self.validate_operand(operand) {
-                let p = Promise::new(global, CanGc::note());
-                p.reject_error(Error::Type("invalid operand".to_owned()), CanGc::note());
+                let p = Promise::new(global, can_gc);
+                p.reject_error(Error::Type("invalid operand".to_owned()), can_gc);
                 return p;
             }
 
             // Step 4.3: If |operand| is in this graph's input operands or constants, then reject.
             if operand.is_input() || operand.is_constant() {
-                let p = Promise::new(global, CanGc::note());
+                let p = Promise::new(global, can_gc);
                 p.reject_error(
                     Error::Type("operand cannot be an input or constant".to_owned()),
-                    CanGc::note(),
+                    can_gc,
                 );
                 return p;
             }
@@ -722,7 +761,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             .borrow_mut()
             .take()
             .expect("can_build() ensured graph_info is Some");
-        let graph = MLGraph::new_with_info(&self.context(), graph_info, global, CanGc::note());
+        let graph = MLGraph::new_with_info(&self.context(), graph_info, global, can_gc);
 
         // Step 7: Convert the builder's computational graph into an implementation-defined format
         // and enqueue initialization on the ML timeline. This is an async timeline task per the spec.
@@ -731,7 +770,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // must perform preprocessing on the MLContext/[[timeline]] and resolve/reject the promise.
 
         // Step 8: Return |promise| (timeline task will resolve/reject it asynchronously).
-        let p = Promise::new(global, CanGc::note());
+        let p = Promise::new(global, can_gc);
         p
     }
 
@@ -742,10 +781,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         input: &MLOperand,
         axis: u32,
         options: &MLArgMinMaxOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // Delegate to the shared helper that implements
         // `#mlgraphbuilder-argminmax-op` per the spec.
-        self.mlgraphbuilder_argminmax_op("argMin", input, axis, options)
+        self.mlgraphbuilder_argminmax_op("argMin", input, axis, options, can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-argminmax>
@@ -755,10 +795,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         input: &MLOperand,
         axis: u32,
         options: &MLArgMinMaxOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // Delegate to the shared helper that implements
         // `#mlgraphbuilder-argminmax-op` per the spec.
-        self.mlgraphbuilder_argminmax_op("argMax", input, axis, options)
+        self.mlgraphbuilder_argminmax_op("argMax", input, axis, options, can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-where>
@@ -769,6 +810,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         true_value: &MLOperand,
         false_value: &MLOperand,
         _options: &MLOperatorOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If this can not build, then throw an InvalidStateError.
         if !self.can_build() {
@@ -832,7 +874,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             None,
         );
         let id = self.push_operand_to_graph(rust_operand, false);
-        let operand = create_an_mloperand(self, Some(&desc), None, None, false, false, Some(id));
+        let operand = create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(id),
+            can_gc,
+        );
         Ok(operand)
     }
 
@@ -842,6 +893,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         input: &MLOperand,
         dataType: MLOperandDataType,
         options: &MLOperatorOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If this can not build, then throw an "InvalidStateError" DOMException.
         if !self.can_build() {
@@ -916,13 +968,26 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             });
         }
 
-        let operand =
-            create_an_mloperand(self, Some(&desc), None, None, false, false, Some(output_id));
+        let operand = create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        );
         Ok(operand)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-clamp>
-    fn Clamp(&self, input: &MLOperand, options: &MLClampOptions) -> Fallible<DomRoot<MLOperand>> {
+    fn Clamp(
+        &self,
+        input: &MLOperand,
+        options: &MLClampOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If this can not build, then throw an "InvalidStateError" DOMException.
         if !self.can_build() {
             return Err(Error::InvalidState(None));
@@ -1038,8 +1103,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             });
         }
 
-        let operand =
-            create_an_mloperand(self, Some(&desc), None, None, false, false, Some(output_id));
+        let operand = create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        );
         Ok(operand)
     }
 
@@ -1049,6 +1122,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         inputs: Vec<DomRoot<MLOperand>>,
         axis: u32,
         options: &MLOperatorOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If this can not build, then throw an InvalidStateError.
         if !self.can_build() {
@@ -1163,8 +1237,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             });
         }
 
-        let operand =
-            create_an_mloperand(self, Some(&desc), None, None, false, false, Some(output_id));
+        let operand = create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        );
         Ok(operand)
     }
 
@@ -1174,6 +1256,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         input: &MLOperand,
         filter: &MLOperand,
         options: &MLConv2dOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If this can not build, then throw an InvalidStateError.
         if !self.can_build() {
@@ -1401,8 +1484,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             });
         }
 
-        let operand =
-            create_an_mloperand(self, Some(&desc), None, None, false, false, Some(output_id));
+        let operand = create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        );
         Ok(operand)
     }
 
@@ -1413,6 +1504,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         mean: &MLOperand,
         variance: &MLOperand,
         options: &MLBatchNormalizationOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If this can not build, then throw an "InvalidStateError" DOMException.
         if !self.can_build() {
@@ -1614,8 +1706,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // Step 13: Return output.
-        let operand =
-            create_an_mloperand(self, Some(&desc), None, None, false, false, Some(output_id));
+        let operand = create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        );
         Ok(operand)
     }
 
@@ -1625,13 +1725,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         a: &MLOperand,
         b: &MLOperand,
         options: &MLOperatorOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // The <dfn method for=MLGraphBuilder>add(|a|, |b|, |options|)</dfn> method steps are:
         // 1. Let |output| be the result of creating an element-wise binary operation given "add", |a|, |b|, and |options|.
         //    1. If that throws an error, then rethrow the error.
         // 2. Return |output|.
         let label = options.label.clone().to_string();
-        self.binary_elementwise_op("add", a, b, Some(label))
+        self.binary_elementwise_op("add", a, b, Some(label), can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-binary>
@@ -1640,13 +1741,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         a: &MLOperand,
         b: &MLOperand,
         options: &MLOperatorOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // The <dfn method for=MLGraphBuilder>sub(|a|, |b|, |options|)</dfn> method steps are:
         // 1. Let |output| be the result of creating an element-wise binary operation given "sub", |a|, |b|, and |options|.
         //    1. If that throws an error, then rethrow the error.
         // 2. Return |output|.
         let label = options.label.clone().to_string();
-        self.binary_elementwise_op("sub", a, b, Some(label))
+        self.binary_elementwise_op("sub", a, b, Some(label), can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-binary>
@@ -1655,13 +1757,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         a: &MLOperand,
         b: &MLOperand,
         options: &MLOperatorOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // The <dfn method for=MLGraphBuilder>mul(|a|, |b|, |options|)</dfn> method steps are:
         // 1. Let |output| be the result of creating an element-wise binary operation given "mul", |a|, |b|, and |options|.
         //    1. If that throws an error, then rethrow the error.
         // 2. Return |output|.
         let label = options.label.clone().to_string();
-        self.binary_elementwise_op("mul", a, b, Some(label))
+        self.binary_elementwise_op("mul", a, b, Some(label), can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-binary>
@@ -1670,13 +1773,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         a: &MLOperand,
         b: &MLOperand,
         options: &MLOperatorOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // The <dfn method for=MLGraphBuilder>div(|a|, |b|, |options|)</dfn> method steps are:
         // 1. Let |output| be the result of creating an element-wise binary operation given "div", |a|, |b|, and |options|.
         //    1. If that throws an error, then rethrow the error.
         // 2. Return |output|.
         let label = options.label.clone().to_string();
-        self.binary_elementwise_op("div", a, b, Some(label))
+        self.binary_elementwise_op("div", a, b, Some(label), can_gc)
     }
 
     fn Max(
@@ -1684,13 +1788,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         a: &MLOperand,
         b: &MLOperand,
         options: &MLOperatorOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // The <dfn method for=MLGraphBuilder>max(|a|, |b|, |options|)</dfn> method steps are:
         // 1. Let |output| be the result of creating an element-wise binary operation given "max", |a|, |b|, and |options|.
         //    1. If that throws an error, then rethrow the error.
         // 2. Return |output|.
         let label = options.label.clone().to_string();
-        self.binary_elementwise_op("max", a, b, Some(label))
+        self.binary_elementwise_op("max", a, b, Some(label), can_gc)
     }
 
     fn Min(
@@ -1698,13 +1803,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         a: &MLOperand,
         b: &MLOperand,
         options: &MLOperatorOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // The <dfn method for=MLGraphBuilder>min(|a|, |b|, |options|)</dfn> method steps are:
         // 1. Let |output| be the result of creating an element-wise binary operation given "min", |a|, |b|, and |options|.
         //    1. If that throws an error, then rethrow the error.
         // 2. Return |output|.
         let label = options.label.clone().to_string();
-        self.binary_elementwise_op("min", a, b, Some(label))
+        self.binary_elementwise_op("min", a, b, Some(label), can_gc)
     }
 
     fn Pow(
@@ -1712,17 +1818,18 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         a: &MLOperand,
         b: &MLOperand,
         options: &MLOperatorOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // The <dfn method for=MLGraphBuilder>pow(|a|, |b|, |options|)</dfn> method steps are:
         // 1. Let |output| be the result of creating an element-wise binary operation given "pow", |a|, |b|, and |options|.
         //    1. If that throws an error, then rethrow the error.
         // 2. Return |output|.
         let label = options.label.clone().to_string();
-        self.binary_elementwise_op("pow", a, b, Some(label))
+        self.binary_elementwise_op("pow", a, b, Some(label), can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-matmul>
-    fn Matmul(&self, a: &MLOperand, b: &MLOperand) -> Fallible<DomRoot<MLOperand>> {
+    fn Matmul(&self, a: &MLOperand, b: &MLOperand, can_gc: CanGc) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If this can not build, then throw an "InvalidStateError" DOMException.
         if !self.can_build() {
             return Err(Error::InvalidState(None));
@@ -1783,8 +1890,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             });
         }
 
-        let operand =
-            create_an_mloperand(self, Some(&desc), None, None, false, false, Some(output_id));
+        let operand = create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        );
         Ok(operand)
     }
 
@@ -1794,8 +1909,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         a: &MLOperand,
         b: &MLOperand,
         options: &MLGemmOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-
         // Step 1: If this can not build, then throw an "InvalidStateError" DOMException.
         if !self.can_build() {
             return Err(Error::InvalidState(None));
@@ -1845,7 +1960,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // Step 5 & 6 (spec order — casting alpha/beta): Set options.alpha/options.beta to the result of casting
-        // to |a|'s dataType.  
+        // to |a|'s dataType.
         // NOTE: the implementation currently records `*options.alpha`/`*options.beta` in the operator
         // attributes without performing an explicit cast to `a`'s data type. TODO: implement cast per spec.
 
@@ -1892,7 +2007,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Optional label (operator metadata)
         let label = {
             let l = options.parent.label.clone();
-            if l.is_empty() { None } else { Some(l.clone().to_string()) }
+            if l.is_empty() {
+                None
+            } else {
+                Some(l.clone().to_string())
+            }
         };
 
         // 14.2–14.6: create operator record, set inputs and output (operator metadata persisted in GraphInfo.operations).
@@ -1908,7 +2027,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // Step 15: Return |output| — create the DOM-level MLOperand for the output and return it.
-        let operand = create_an_mloperand(self, Some(&desc), None, None, false, false, Some(output_id));
+        let operand = create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        );
         Ok(operand)
     }
 }

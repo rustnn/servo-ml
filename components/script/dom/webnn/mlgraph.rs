@@ -95,7 +95,7 @@ impl MLGraph {
 
 impl MLGraphMethods<crate::DomTypeHolder> for MLGraph {
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraph-destroy>
-    fn Destroy(&self) {
+    fn Destroy(&self, _can_gc: CanGc) {
         // Step 1: If [=this=].[[isDestroyed]] is true, then abort these steps.
         if self.is_destroyed() {
             return;
