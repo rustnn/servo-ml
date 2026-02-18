@@ -113,9 +113,9 @@ interface MLOperand {
 interface MLGraphBuilder {
   constructor(MLContext context);
 
-  MLOperand input(DOMString name, MLOperandDescriptor descriptor);
-  MLOperand constant(MLOperandDescriptor descriptor, /*[AllowShared]*/ BufferSource buffer);
-  MLOperand constant(MLTensor tensor);
+  [Throws] MLOperand input(DOMString name, MLOperandDescriptor descriptor);
+  [Throws] MLOperand constant(MLOperandDescriptor descriptor, /*[AllowShared]*/ BufferSource buffer);
+  [Throws] MLOperand constant(MLTensor tensor);
 
   Promise<MLGraph> build(sequence<MLOperand> outputs);
 };

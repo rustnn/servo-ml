@@ -22,6 +22,8 @@ This example will be useful when implementing our "make graph connections step",
 
 - We'll try to store as little as possible on the builder(unlike the Python code below), and instead create a `rustnn::GraphInfo` from the outputs passed to `build`. In general, it seems like the web api passes data as argument to methods, and keeps as little state on the interface objects themselves.
 
+  Note: `graph_info: Option<GraphInfo>` is used as [[hasBuilt]] (Build() moves it).
+
 ```
 //! Graph builder for constructing WebNN computational graphs
 //!

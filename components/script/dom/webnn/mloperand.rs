@@ -21,6 +21,9 @@ pub(crate) struct MLOperand {
     /// <https://webmachinelearning.github.io/webnn/#dom-mloperand-builder-slot>
     builder: Dom<MLGraphBuilder>,
 
+    /// Backend operand id linking this DOM operand to the rustnn `Operand`.
+    operand_id: Option<u32>,
+
     /// <https://webmachinelearning.github.io/webnn/#dom-mloperand-descriptor-slot>
     descriptor_data_type: String,
     descriptor_shape: Vec<u32>,
@@ -38,6 +41,7 @@ pub(crate) struct MLOperand {
 impl MLOperand {
     pub(crate) fn new_inherited(
         builder: &MLGraphBuilder,
+        operand_id: Option<u32>,
         descriptor_data_type: String,
         descriptor_shape: Vec<u32>,
         name: Option<DOMString>,
@@ -47,6 +51,7 @@ impl MLOperand {
         MLOperand {
             reflector_: Reflector::new(),
             builder: Dom::from_ref(builder),
+            operand_id,
             descriptor_data_type,
             descriptor_shape,
             name,
@@ -62,6 +67,7 @@ impl MLOperand {
         name: Option<DOMString>,
         is_input: bool,
         is_constant: bool,
+        operand_id: Option<u32>,
         can_gc: CanGc,
     ) -> DomRoot<MLOperand> {
         // Extract minimal descriptor fields needed by the DOM-facing attributes.
@@ -71,6 +77,7 @@ impl MLOperand {
         reflect_dom_object(
             Box::new(MLOperand::new_inherited(
                 builder,
+                operand_id,
                 data_type,
                 shape,
                 name,
@@ -90,6 +97,7 @@ impl MLOperand {
         name: Option<DOMString>,
         is_input: bool,
         is_constant: bool,
+        operand_id: Option<u32>,
         can_gc: CanGc,
     ) -> DomRoot<MLOperand> {
         let data_type = tensor.data_type().to_string();
@@ -98,6 +106,7 @@ impl MLOperand {
         reflect_dom_object(
             Box::new(MLOperand::new_inherited(
                 builder,
+                operand_id,
                 data_type,
                 shape,
                 name,
@@ -112,6 +121,11 @@ impl MLOperand {
     // Internal accessor used by MLGraphBuilder algorithms (spec: "validate operand").
     pub(crate) fn builder(&self) -> Dom<MLGraphBuilder> {
         self.builder.clone()
+    }
+
+    /// Return the backend operand id associated with this DOM operand (if any).
+    pub(crate) fn id(&self) -> Option<u32> {
+        self.operand_id
     }
 
     // Minimal internal accessors for descriptor-backed attributes.

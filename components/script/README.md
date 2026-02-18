@@ -13,6 +13,7 @@ components/script — README
 **Working on a Web API (tips)**
 1. Find the WebIDL in `components/script_bindings/webidls/` (or add one if
    implementing a new API).
+   - If your method can throw exceptions at runtime, mark it with `[Throws]` in the WebIDL.  The Servo bindings generator will then produce an implementation signature that returns `ErrorResult` (for void returns) or `Fallible<DomRoot<T>>` / `Result<..., Error>` (for methods that return DOM objects). Implementations should `return Err(Error::...)` instead of calling `throw_dom_exception(...)`. Example: mark `MLGraphBuilder.input` with `[Throws]` so `Input()` can return `Err(Error::Type(...))` and the binding will throw in JS.
 2. Consult the spec for the API you are implementing — see the `specs/`
    directory for checked-out specs (if you don't know which spec to use,
    ask the user).
@@ -41,10 +42,22 @@ Follow these exact conventions so code <-> spec mapping is clear and reviewable.
 - Method- & type-level doc
   - Method-level: the method's top doc-comment must contain *only* the canonical spec anchor (e.g. `/// <https://webmachinelearning.github.io/webnn/#api-ml-createcontext>`).
     - Do NOT add parenthetical notes or extra prose in top doc-comments (for example, `(internal helper)`) — these add noise and are disallowed. Keep top-level doc-comments anchor-only.
+
+  - Functions & spec-algorithms
+    - Use a **module-level free function** when you are implementing a *spec algorithm* (for example `create an MLOperand`) or a small utility that is shared by multiple generated methods and does **not** directly mutate the DOM object's internal slots. Prefer a free function when the spec algorithm is described independently of any single interface implementation.
+    - Use an **impl method** on the `#[dom_struct]` type when the helper needs to access or mutate that struct's private internal slots (i.e. it logically belongs to the type and requires `self`).
+    - Naming & visibility: name the function to reflect the spec algorithm (`create_an_mloperand`), keep it private by default, and move it to a shared module only if genuinely reused across components.
+    - Documentation rules for functions that implement spec algorithms:
+      - The function's top doc-comment must contain *only* the canonical *algorithm* anchor (for example `/// <https://webmachinelearning.github.io/webnn/#create-an-mloperand>`). Do **not** add extra prose in the top doc-comment.
+      - Inside the function body annotate each implementation step with `Step N:` comments that quote the spec step verbatim, exactly as you would for generated methods.
+      - IMPORTANT: if the spec's algorithm does **not** mutate the caller's internal slots, the function must **not** perform those mutations — the caller (e.g. the generated method) must run the spec steps that modify the object's internal state (this preserves 1:1 mapping between spec steps and code locations).
+      - For small, internal utilities that are *not* direct implementations of a spec algorithm, use a brief one-line doc comment describing intent (no spec anchor).
+
 - In-body per-line spec mapping
   - Inside the function body annotate *each relevant line of code* with a
     single comment of the exact form `Step N: <spec prose>` (use `Step 5.1`,
     `Step 5.2` for sub-steps). Avoid pasting entire algorithm blocks.
+    Quote the spec step verbatim in the code comment.
   - If the spec step does not map 1:1 to code, add `// Note: ...` explaining
     the divergence and reference the spec anchor. If the spec's preliminary
     steps (for example `Step 1`/`Step 2` that establish `global`/`realm`) are
@@ -94,6 +107,17 @@ Follow these exact conventions so code <-> spec mapping is clear and reviewable.
   - IMPORTANT: if the TODO corresponds to an *in-parallel* step that would
     resolve a Promise, do *not* resolve the Promise in the stub — return
     the Promise unresolved and leave resolution to the future queued task.
+
+  - Assertions & invariants
+    - Do **not** use `panic!` for runtime checks in `components/script` code. Use
+      `debug_assert!` for internal invariants that should only fire during
+      development (for example `debug_assert!(false, "unexpected state")`).
+    - If an invariant can be reached in release builds, return a `Result`/`Error`
+      or provide a safe fallback rather than panicking. Library code should
+      never abort the process in production.
+    - When a helper function implements a spec algorithm and an impossible
+      branch is present, prefer `debug_assert!` + a safe release fallback (see
+      `mlgraphbuilder::create_an_mloperand` for an example).
 
 - Formatting rules
   - Always leave a blank line after a `Step + code` or `Step + TODO` block.

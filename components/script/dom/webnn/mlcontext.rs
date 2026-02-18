@@ -303,11 +303,17 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         }
 
         // Step 4: If MLOperandDescriptor/checking dimensions given |descriptor| returns false, then return a new promise in |realm| rejected with a {{TypeError}}.
+        if !crate::dom::webnn::check_dimensions(descriptor) {
+            let p = Promise::new(global, CanGc::note());
+            p.reject_error(Error::Type("invalid operand descriptor".to_owned()), CanGc::note());
+            return p;
+        }
+
         // Step 5: If validating buffer with descriptor given |inputData| and |descriptor| returns false, then return a new promise in |realm| rejected with a {{TypeError}}.
         // Step 6: Let |bytes| be the result of getting a copy of the bytes held by the buffer source given |inputData|.
         // Step 7: [=Assert=]: |bytes|'s [=byte sequence/length=] is equal to |descriptor|'s [=MLOperandDescriptor/byte length=].
-        // TODO (spec: #api-mlcontext-createconstanttensor): implement descriptor-dimension checks, buffer validation, copy-to-|bytes| and the length assertion.
-        let _ = input_data; // validation + timeline copy are TODOs.
+        // TODO (spec: #api-mlcontext-createconstanttensor): implement buffer validation, copy-to-|bytes| and the length assertion.
+        let _ = input_data; // buffer validation + timeline copy are TODOs.
 
         // Step 8: Let |tensor| be the result of creating a constant MLTensor given |this| and |descriptor|.
         let tensor = MLTensor::new_constant(self, global, descriptor, CanGc::note());
