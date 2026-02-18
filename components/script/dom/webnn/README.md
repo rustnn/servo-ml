@@ -1,8 +1,10 @@
+https://webmachinelearning.github.io/webnn/
+
 components/script/dom/webnn — implementation notes (minimal)
 
 - Read the README chain before changing WebNN code: start with `AGENTS.md` (top-level agent orientation), then `components/script/README.md` (component guidance), then this file for WebNN-specific notes. Do **not** duplicate content across README files; subsystem READMEs must be concise and only contain subsystem-specific notes, spec anchors, and TODOs.
 
-- Check the normative spec at `specs/webnn/index.bs` before implementing behavior.
+- Check the normative spec at `specs/webnn.html` before implementing behavior.
 
 - The `MLContext` exposes a `timeline` concept in the spec. In this codebase model the timeline should be implemented as steps enqueued to a backend/task queue. This is work-in-progress; keep API implementations minimal and add TODOs for backend messaging. If an in-parallel TODO would resolve a Promise, do not resolve it in the stub — return the promise unresolved.
 

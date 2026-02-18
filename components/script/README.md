@@ -14,11 +14,8 @@ components/script — README
 1. Find the WebIDL in `components/script_bindings/webidls/` (or add one if
    implementing a new API).
    - If your method can throw exceptions at runtime, mark it with `[Throws]` in the WebIDL.  The Servo bindings generator will then produce an implementation signature that returns `ErrorResult` (for void returns) or `Fallible<DomRoot<T>>` / `Result<..., Error>` (for methods that return DOM objects). Implementations should `return Err(Error::...)` instead of calling `throw_dom_exception(...)`. Example: mark `MLGraphBuilder.input` with `[Throws]` so `Input()` can return `Err(Error::Type(...))` and the binding will throw in JS.
-2. Consult the spec for the API you are implementing — see the `specs/`
-   directory for checked-out specs (if you don't know which spec to use,
-   ask the user).
-3. Use the corresponding `index.bs` file under `specs/` as authoritative
-   guidance for algorithms and internal-slot definitions.
+2. Consult the canonical online specification for the API you are implementing — check the component/subsystem README for the canonical spec URL. Before you start work, download the spec and write a copy of the HTML file `specs/{name of subdir containing readme with link}` and read it. 
+3. Use the canonical online spec as the authoritative source for algorithms and internal-slot definitions.
 4. Document code by linking the generated method to the canonical spec anchor in the top-level doc-comment and add per-line `Step N:` comments inside the function body (see **Documenting your work** below for the exact format).
 5. Add a `#[dom_struct]` with `Dom` members and implement the generated
    trait methods: start with `todo!()` bodies.
@@ -26,8 +23,8 @@ components/script — README
    README with subsystem-specific guidance. Always read the README chain for
    the area you're changing: start with `components/script/README.md`, then
    read any `components/script/dom/<subdir>/README.md` for subsystem rules,
-   and finally consult the authoritative `specs/<spec_name>/index.bs` for
-   algorithm and internal-slot details.
+   and finally consult the authoritative canonical online spec for
+   algorithm and internal-slot details (link in the subsystem README).
 7. Good quality examples of implementation and documentation patterns are found in `components/script/dom/stream`.
 8. Prefer top-level `use` imports for types that appear in the file (for
    example `use crate::dom::webnn::mlcontext::MLContext;`) instead of using
@@ -185,7 +182,8 @@ see the final method signature.
 Whenever the JS engine is called into, the GC could trace any member of a dom_struct, therefore, never hold a borrow when making a call to anything with a `CanGC` argument.  
 
 **Helpful files**
-- `specs/` — check the spec `index.bs` files for API algorithms.
+- `specs/` — prefer a local HTML copy of the canonical spec (for example `specs/webnn.html` or `specs/webnn/index.html`) for offline reference; tooling and contributors should use that local HTML when present. If the file isn't found locally, download it from the canonical URL linked in the subsystem README and place it under `specs/`.
+- `tools/fetch_spec.py` — optional helper to fetch the canonical HTML spec into `specs/` (run `./tools/fetch_spec.py webnn`).
 - `components/script_bindings/webidls/` — WebIDL source used by the
   generator.
 - `components/script/dom/` — implementation files you will edit.
