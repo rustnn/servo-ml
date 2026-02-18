@@ -10,6 +10,20 @@ components/script — README
 - bindings/ — the part of generated bindings glue code and helpers that hasn't been moved yet to `components/script_bindings/`.
 - Various files, like the WebIDL files and the config files, are found in the top-level partner component `components/script_bindings/webidls`.
 
+**Searching web specs (use search-bs)**
+- Prefer `search-bs` to query the canonical online Bikeshed (.bs) sources instead of relying on local HTML copies.
+  - Index (one-time): `search-bs index https://github.com/webmachinelearning/webnn/blob/main/index.bs --name webnn`
+  - Find the API/algorithm anchor and preview matches: `search-bs search --name webnn "cast" --around 2`
+    - Look for the anchor id in the result (example: `api-mlgraphbuilder-cast`).
+  - Fetch exact lines for quoting or copying spec steps: `search-bs get --name webnn --line <LINE> --count <N> --json`.
+  - Use the anchor to form a top-level doc-comment: `/// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-cast>`.
+  - Useful flags: `--around` (context), `--json` (machine-readable), `--show-url`.
+
+  Example: to find the `MLGraphBuilder.cast()` anchor and extract the method steps:
+  1. `search-bs search --name webnn "cast" --json` → note `api-mlgraphbuilder-cast` and line number.
+  2. `search-bs get --name webnn --line 2613 --count 40` → copy the algorithm prose you need.
+
+  Tip: use `--json` when scripting or when you need anchor/line metadata programmatically.
 **Working on a Web API (tips)**
 1. Find the WebIDL in `components/script_bindings/webidls/` (or add one if
    implementing a new API).
@@ -182,8 +196,10 @@ see the final method signature.
 Whenever the JS engine is called into, the GC could trace any member of a dom_struct, therefore, never hold a borrow when making a call to anything with a `CanGC` argument.  
 
 **Helpful files**
-- `specs/` — prefer a local HTML copy of the canonical spec (for example `specs/webnn.html` or `specs/webnn/index.html`) for offline reference; tooling and contributors should use that local HTML when present. If the file isn't found locally, download it from the canonical URL linked in the subsystem README and place it under `specs/`.
-- `tools/fetch_spec.py` — optional helper to fetch the canonical HTML spec into `specs/` (run `./tools/fetch_spec.py webnn`).
+- `search-bs` (preferred) — CLI for indexing and searching Bikeshed (.bs) source documents directly from their source URLs; use it to find canonical anchors and exact algorithm prose. See `skills/search-bikeshed/README.md` for full usage.
+  - Index: `search-bs index <blob-or-raw-url> --name <spec-name>`
+  - Search: `search-bs search --name <spec-name> "<query>"` (use `--json` to extract anchors/line numbers)
+  - Get exact lines: `search-bs get --name <spec-name> --line <LINE> --count <N>`
 - `components/script_bindings/webidls/` — WebIDL source used by the
   generator.
 - `components/script/dom/` — implementation files you will edit.

@@ -9,6 +9,8 @@ Repo structure (high level)
   Web APIs, etc.). Check the README inside each component for specifics.
 - third_party/, tools/, docs/, etc. — supporting materials and tooling.
 
+Do not use cargo, use `./mach` commands.
+
 Where to look next
 - For DOM / Web API work: see `components/script/README.md`.
 - For feature-specific guidance: open the README in the component you'll modify (each component directory may contain a README).

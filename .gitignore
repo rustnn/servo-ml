@@ -5,6 +5,7 @@
 /.servobuild
 /.wpt
 /.vs
+/skills
 /android-toolchains
 /target
 /tests/wpt/reftests-report/report.html

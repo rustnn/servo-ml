@@ -4,7 +4,19 @@ components/script/dom/webnn — implementation notes (minimal)
 
 - Read the README chain before changing WebNN code: start with `AGENTS.md` (top-level agent orientation), then `components/script/README.md` (component guidance), then this file for WebNN-specific notes. Do **not** duplicate content across README files; subsystem READMEs must be concise and only contain subsystem-specific notes, spec anchors, and TODOs.
 
-- Check the normative spec at `specs/webnn.html` before implementing behavior.
+- Use the canonical online WebNN spec via `search-bs` (do **not** rely on local `specs/` HTML copies). Recommended workflow for finding anchors and quoting spec prose:
+  1. Index the spec (if not already indexed):
+     `search-bs index https://github.com/webmachinelearning/webnn/blob/main/index.bs --name webnn`
+  2. Locate the API/algorithm anchor and preview matches:
+     `search-bs search --name webnn "cast" --around 2 --json`
+     - Note the returned `anchor` (for example `api-mlgraphbuilder-cast`) and the `line` number.
+  3. Retrieve the exact lines you want to quote or paste into code comments:
+     `search-bs get --name webnn --line <LINE> --count <N> --json`
+  4. Use the anchor in top doc-comments exactly, for example:
+     `/// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-cast>`
+  5. Copy spec step prose with `search-bs get` and annotate code using `Step N:` comments quoting the spec text.
+
+  Tips: use `--around` for context, `--json` for automation, and prefer `search-bs` output over manually opening HTML files.
 
 - The `MLContext` exposes a `timeline` concept in the spec. In this codebase model the timeline should be implemented as steps enqueued to a backend/task queue. This is work-in-progress; keep API implementations minimal and add TODOs for backend messaging. If an in-parallel TODO would resolve a Promise, do not resolve it in the stub — return the promise unresolved.
 
@@ -19,12 +31,6 @@ Important: this README is subsystem-specific — read `components/script/README.
 
 
 Below is an extensive example using rustnn primitives(to implement a Python interface, whereas we are building a web js interface).
-
-This example will be useful when implementing our "make graph connections step", but with some differences:
-
-- We'll try to store as little as possible on the builder(unlike the Python code below), and instead create a `rustnn::GraphInfo` from the outputs passed to `build`. In general, it seems like the web api passes data as argument to methods, and keeps as little state on the interface objects themselves.
-
-  Note: `graph_info: Option<GraphInfo>` is used as [[hasBuilt]] (Build() moves it).
 
 ```
 //! Graph builder for constructing WebNN computational graphs

@@ -64,6 +64,54 @@ dictionary MLArgMinMaxOptions : MLOperatorOptions {
   MLOperandDataType outputDataType = "int32";
 };
 
+// Options for batchNormalization
+dictionary MLBatchNormalizationOptions : MLOperatorOptions {
+  MLOperand scale;
+  MLOperand bias;
+  [EnforceRange] unsigned long axis = 1;
+  double epsilon = 1e-5;
+};
+
+// Options for clamp()
+dictionary MLClampOptions : MLOperatorOptions {
+  double minValue;
+  double maxValue;
+};
+
+// Options for conv2d
+
+// Layout enums used by conv2d options and other ops in the spec.
+enum MLInputOperandLayout {
+  "nchw",
+  "nhwc"
+};
+
+enum MLConv2dFilterOperandLayout {
+  "oihw",
+  "hwio",
+  "ohwi",
+  "ihwo"
+};
+
+dictionary MLConv2dOptions : MLOperatorOptions {
+  sequence<[EnforceRange] unsigned long> padding;
+  sequence<[EnforceRange] unsigned long> strides;
+  sequence<[EnforceRange] unsigned long> dilations;
+  [EnforceRange] unsigned long groups = 1;
+  MLInputOperandLayout inputLayout = "nchw";
+  MLConv2dFilterOperandLayout filterLayout = "oihw";
+  MLOperand bias;
+};
+
+// Options for GEMM (General Matrix Multiplication)
+dictionary MLGemmOptions : MLOperatorOptions {
+  MLOperand c;
+  double alpha = 1.0;
+  double beta = 1.0;
+  boolean aTranspose = false;
+  boolean bTranspose = false;
+};
+
 dictionary MLRankRange {
   unsigned long min;
   unsigned long max;
@@ -140,6 +188,24 @@ partial interface MLGraphBuilder {
                   MLOperand trueValue,
                   MLOperand falseValue,
                   optional MLOperatorOptions options = {});
+  [Throws] MLOperand batchNormalization(MLOperand input, MLOperand mean, MLOperand variance,
+                                       optional MLBatchNormalizationOptions options = {});
+  [Throws] MLOperand cast(MLOperand input, MLOperandDataType dataType, optional MLOperatorOptions options = {});
+  [Throws] MLOperand clamp(MLOperand input, optional MLClampOptions options = {});
+  [Throws] MLOperand concat(sequence<MLOperand> inputs, [EnforceRange] unsigned long axis, optional MLOperatorOptions options = {});
+  [Throws] MLOperand conv2d(MLOperand input, MLOperand filter, optional MLConv2dOptions options = {});
+};
+
+partial interface MLGraphBuilder {
+  [Throws] MLOperand add(MLOperand a, MLOperand b, optional MLOperatorOptions options = {});
+  [Throws] MLOperand sub(MLOperand a, MLOperand b, optional MLOperatorOptions options = {});
+  [Throws] MLOperand mul(MLOperand a, MLOperand b, optional MLOperatorOptions options = {});
+  [Throws] MLOperand div(MLOperand a, MLOperand b, optional MLOperatorOptions options = {});
+  [Throws] MLOperand max(MLOperand a, MLOperand b, optional MLOperatorOptions options = {});
+  [Throws] MLOperand min(MLOperand a, MLOperand b, optional MLOperatorOptions options = {});
+  [Throws] MLOperand pow(MLOperand a, MLOperand b, optional MLOperatorOptions options = {});
+  [Throws] MLOperand matmul(MLOperand a, MLOperand b);
+  [Throws] MLOperand gemm(MLOperand a, MLOperand b, optional MLGemmOptions options = {});
 };
 
 [SecureContext, Exposed=(Window, Worker)]
