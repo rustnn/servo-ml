@@ -6,6 +6,7 @@ use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLOperandDescriptor, MLTensorDescriptor, MLTensorMethods,
 };
+use crate::dom::bindings::codegen::UnionTypes::ArrayBufferViewOrArrayBuffer;
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
 use crate::dom::bindings::root::{Dom, DomRoot};
 use crate::dom::globalscope::GlobalScope;
@@ -40,6 +41,13 @@ pub(crate) struct MLTensor {
     #[conditional_malloc_size_of]
     pending_promises: DomRefCell<Vec<Rc<Promise>>>,
 
+    /// Pending BYOB output `outputData` values corresponding (by FIFO index) to `[[pendingPromises]]`.
+    /// <https://webmachinelearning.github.io/webnn/#api-mlcontext-readtensor-byob>
+    #[ignore_malloc_size_of = "ArrayBufferViewOrArrayBuffer"]
+    pending_out: DomRefCell<
+        Vec<Option<crate::dom::bindings::codegen::UnionTypes::ArrayBufferViewOrArrayBuffer>>,
+    >,
+
     /// <https://webmachinelearning.github.io/webnn/#dom-mltensor-isdestroyed-slot>
     is_destroyed: bool,
 
@@ -54,16 +62,18 @@ impl MLTensor {
         shape: Vec<i64>,
         readable: bool,
         writable: bool,
+        tensor_id: Option<u32>,
     ) -> MLTensor {
         MLTensor {
             reflector_: Reflector::new(),
             context: Dom::from_ref(context),
-            tensor_id: crate::dom::bindings::trace::NoTrace(std::cell::Cell::new(None)),
+            tensor_id: crate::dom::bindings::trace::NoTrace(std::cell::Cell::new(tensor_id)),
             data_type,
             shape,
             readable,
             writable,
             pending_promises: DomRefCell::new(Vec::new()),
+            pending_out: DomRefCell::new(Vec::new()),
             is_destroyed: false,
             is_constant: false,
         }
@@ -109,7 +119,10 @@ impl MLTensor {
     }
 
     pub(crate) fn append_pending_promise(&self, p: Rc<Promise>) {
+        // Keep `pending_promises` and `pending_out` FIFO-aligned by appending
+        // a `None` placeholder for the BYOB slot (filled by the BYOB overload).
         self.pending_promises.borrow_mut().push(p);
+        self.pending_out.borrow_mut().push(None);
     }
 
     // Pop and return the first pending promise (used by callback resolution).
@@ -122,16 +135,42 @@ impl MLTensor {
         }
     }
 
+    // Pop and return the first pending BYOB `outputData` (used by callback resolution).
+    pub(crate) fn take_first_pending_out(&self) -> Option<ArrayBufferViewOrArrayBuffer> {
+        let mut v = self.pending_out.borrow_mut();
+        if v.is_empty() { None } else { v.remove(0) }
+    }
+
+    // Set the last pending_out entry (used by BYOB overload immediately after appending a promise).
+    pub(crate) fn set_last_pending_out(&self, out: ArrayBufferViewOrArrayBuffer) {
+        let mut v = self.pending_out.borrow_mut();
+        if let Some(slot) = v.last_mut() {
+            *slot = Some(out);
+        } else {
+            v.push(Some(out));
+        }
+    }
+
     // Remove a pending promise reference (used by timeline task when resolve/reject).
     pub(crate) fn remove_pending_promise(&self, to_remove: *const Promise) {
-        let mut v = self.pending_promises.borrow_mut();
-        v.retain(|p| Rc::as_ptr(p) != to_remove);
+        let mut promises = self.pending_promises.borrow_mut();
+        if let Some(pos) = promises.iter().position(|p| Rc::as_ptr(p) == to_remove) {
+            promises.remove(pos);
+            let mut outs = self.pending_out.borrow_mut();
+            if pos < outs.len() {
+                outs.remove(pos);
+            }
+        } else {
+            // Fallback behaviour: remove any matching entries.
+            promises.retain(|p| Rc::as_ptr(p) != to_remove);
+        }
     }
 
     pub(crate) fn new(
         context: &MLContext,
         global: &GlobalScope,
         descriptor: &MLTensorDescriptor,
+        tensor_id: u32,
         can_gc: CanGc,
     ) -> DomRoot<MLTensor> {
         let data_type = descriptor.dataType.clone().to_string();
@@ -141,7 +180,12 @@ impl MLTensor {
 
         reflect_dom_object(
             Box::new(MLTensor::new_inherited(
-                context, data_type, shape, readable, writable,
+                context,
+                data_type,
+                shape,
+                readable,
+                writable,
+                Some(tensor_id),
             )),
             global,
             can_gc,
@@ -164,20 +208,11 @@ impl MLTensor {
         let readable = false;
         let writable = false;
 
-        // Use the same reflector construction as `new`, but mark `is_constant`.
+        // Use the same reflector construction as `new_inherited`, but mark `is_constant`.
         reflect_dom_object(
-            Box::new(MLTensor {
-                reflector_: Reflector::new(),
-                context: Dom::from_ref(context),
-                tensor_id: crate::dom::bindings::trace::NoTrace(std::cell::Cell::new(None)),
-                data_type,
-                shape,
-                readable,
-                writable,
-                pending_promises: DomRefCell::new(Vec::new()),
-                is_destroyed: false,
-                is_constant: true,
-            }),
+            Box::new(MLTensor::new_inherited(
+                context, data_type, shape, readable, writable, None,
+            )),
             global,
             can_gc,
         )

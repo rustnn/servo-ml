@@ -27,6 +27,10 @@ use profile_traits::generic_callback::GenericCallback;
 pub enum ContextMessage {
     /// Reply for a CreateTensor request: (context id, tensor id, result).
     CreateTensorResult(ContextId, u32, Result<(), ()>),
+
+    /// Reply for a ReadTensor request: (context id, tensor id, result bytes).
+    /// The Result contains the requested byte vector on success, or an Err(()) on failure.
+    ReadTensorResult(ContextId, u32, Result<Vec<u8>, ()>),
 }
 
 impl malloc_size_of::MallocSizeOf for ContextMessage {
@@ -55,4 +59,10 @@ pub enum WebNNMsg {
     /// success or failure. Using `ContextMessage` lets the same persistent ML-level
     /// callback be reused for other context-level replies in the future.
     CreateTensor(GenericCallback<ContextMessage>, ContextId, u32, usize),
+
+    /// Request the backend to return the bytes for the tensor identified by
+    /// `(context_id, tensor_id)`. The backend should look up its stored buffer
+    /// and invoke `callback` with `ContextMessage::ReadTensorResult` containing
+    /// the copied bytes (or an error).
+    ReadTensor(GenericCallback<ContextMessage>, ContextId, u32),
 }

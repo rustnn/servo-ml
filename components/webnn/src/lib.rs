@@ -2,7 +2,7 @@ use std::collections::HashMap;
 use std::thread;
 
 use base::generic_channel::{GenericReceiver, GenericSender, channel};
-use log::debug;
+use log::{debug, warn};
 use webnn_traits::{ContextId, ContextMessage, WebNNMsg};
 
 #[derive(Debug)]
@@ -56,8 +56,18 @@ fn run_manager(receiver: GenericReceiver<WebNNMsg>) {
                         "webnn manager: CreateTensor ctx={:?} id={} len={}",
                         ctx_id, tensor_id, byte_length
                     );
-                    // Simple stub backend: create a zeroed Vec<u8> and store it.
-                    let buffer = vec![0u8; byte_length];
+                    // Simple stub backend: create a Vec<u8> whose element bytes represent
+                    // IEEE-754 float32 zeros (explicitly treat tensor storage as f32-packed).
+                    // This makes the backing bytes explicitly f32 (4-byte) elements while
+                    // preserving the requested byte length.
+                    let mut buffer: Vec<u8> = Vec::with_capacity(byte_length);
+                    let n_f32 = byte_length / 4;
+                    for _ in 0..n_f32 {
+                        buffer.extend_from_slice(&0.0f32.to_le_bytes());
+                    }
+                    if byte_length % 4 != 0 {
+                        buffer.extend(std::iter::repeat(0u8).take(byte_length % 4));
+                    }
                     tensor_store.insert((ctx_id, tensor_id), buffer);
                     // Send a ContextMessage so the ML-level persistent callback can
                     // route the reply by ContextId.
@@ -66,6 +76,34 @@ fn run_manager(receiver: GenericReceiver<WebNNMsg>) {
                         tensor_id,
                         Ok(()),
                     ));
+                },
+
+                WebNNMsg::ReadTensor(callback, ctx_id, tensor_id) => {
+                    debug!(
+                        "webnn manager: ReadTensor ctx={:?} id={}",
+                        ctx_id, tensor_id
+                    );
+                    match tensor_store.get(&(ctx_id, tensor_id)) {
+                        Some(buf) => {
+                            // Return a copy of the bytes to the caller via callback.
+                            let _ = callback.send(ContextMessage::ReadTensorResult(
+                                ctx_id,
+                                tensor_id,
+                                Ok(buf.clone()),
+                            ));
+                        },
+                        None => {
+                            warn!(
+                                "webnn manager: ReadTensor - missing buffer for {:?}/{}",
+                                ctx_id, tensor_id
+                            );
+                            let _ = callback.send(ContextMessage::ReadTensorResult(
+                                ctx_id,
+                                tensor_id,
+                                Err(()),
+                            ));
+                        },
+                    }
                 },
             },
             Err(_) => break,

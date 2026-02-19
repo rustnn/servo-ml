@@ -74,6 +74,14 @@ impl ML {
                         ml.create_tensor_callback(ctx_id, tensor_id, backend_result, CanGc::note());
                     }));
                 },
+
+                ContextMessage::ReadTensorResult(ctx_id, tensor_id, backend_result) => {
+                    task_source.queue(task!(set_read_result_to_ml: move || {
+                        let ml = trusted_ml.root();
+                        // Route the read-tensor reply to ML which will forward to the correct MLContext.
+                        ml.read_tensor_callback(ctx_id, tensor_id, backend_result, CanGc::note());
+                    }));
+                },
             }
         })
         .expect("Could not create ML context persistent callback");
@@ -103,6 +111,25 @@ impl ML {
             return;
         };
         ctx.create_tensor_callback(tensor_id, result, can_gc);
+    }
+
+    /// Route a read-tensor backend reply to the corresponding MLContext/MLTensor.
+    pub(crate) fn read_tensor_callback(
+        &self,
+        context_id: ContextId,
+        tensor_id: u32,
+        result: Result<Vec<u8>, ()>,
+        can_gc: CanGc,
+    ) {
+        let maybe_ctx = {
+            let contexts = self.contexts.borrow();
+            contexts.get(&context_id).cloned()
+        };
+        let Some(ctx) = maybe_ctx else {
+            warn!("read_tensor_callback: unknown context {:?}", context_id);
+            return;
+        };
+        ctx.read_tensor_callback(tensor_id, result, can_gc);
     }
 
     pub(crate) fn new(global: &GlobalScope, can_gc: CanGc) -> DomRoot<ML> {
