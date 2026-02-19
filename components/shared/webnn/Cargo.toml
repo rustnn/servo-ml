@@ -13,3 +13,4 @@ path = "src/lib.rs"
 serde = { workspace = true }
 base = { workspace = true }
 malloc_size_of = { workspace = true }
+profile_traits = { workspace = true }

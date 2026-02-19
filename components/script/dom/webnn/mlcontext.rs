@@ -10,12 +10,18 @@ use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
 };
 use crate::dom::bindings::error::{Error, throw_dom_exception};
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
+use crate::dom::webnn::ml::ML;
+use script_bindings::codegen::GenericBindings::NavigatorBinding::NavigatorMethods;
+use script_bindings::codegen::GenericBindings::WindowBinding::WindowMethods;
 use crate::dom::bindings::root::{Dom, DomRoot};
 use crate::dom::bindings::str::DOMString;
+use crate::dom::bindings::cell::DomRefCell;
+use crate::dom::bindings::trace::HashMapTracedValues;
 use crate::dom::globalscope::GlobalScope;
 use crate::dom::promise::Promise;
 use crate::dom::webnn::mltensor::MLTensor;
 use crate::script_runtime::CanGc;
+use profile_traits::generic_callback::GenericCallback;
 
 #[dom_struct]
 /// <https://webmachinelearning.github.io/webnn/#api-mlcontext>
@@ -25,6 +31,17 @@ pub(crate) struct MLContext {
     /// Unique identifier for this context (pipeline + counter).
     #[no_trace]
     context_id: ContextId,
+
+    /// Per-context tensor id counter.
+    next_tensor_id: crate::dom::bindings::trace::NoTrace<std::cell::Cell<u32>>,
+
+    /// Map of pending tensors (tensor_id -> MLTensor) waiting for backend allocation.
+    pending_tensors: DomRefCell<HashMapTracedValues<u32, Dom<MLTensor>>>,
+
+    /// Map of promises (tensor_id -> Promise) for create-tensor requests. The create-tensor
+    /// promise belongs to the context per spec.
+    #[conditional_malloc_size_of]
+    pending_tensor_promises: DomRefCell<HashMapTracedValues<u32, Rc<Promise>>>,
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlcontext-contexttype-slot>
     context_type: String,
@@ -57,6 +74,9 @@ impl MLContext {
         MLContext {
             reflector_: Reflector::new(),
             context_id,
+            next_tensor_id: crate::dom::bindings::trace::NoTrace(std::cell::Cell::new(1)),
+            pending_tensors: Default::default(),
+            pending_tensor_promises: Default::default(),
             context_type: "default".into(),
             power_preference,
             accelerated,
@@ -116,6 +136,47 @@ impl MLContext {
         // Step 4: For each MLTensor where tensor.[[context]] == this, run MLTensor/destroy() steps.
         // TODO: enumerate and destroy associated MLTensor objects (not yet implemented).
     }
+
+    /// Called when the backend replies to a create-tensor request.
+    ///
+    /// Implementation / spec-mapped steps:
+    /// 1. Let |tensor| be the `MLTensor` removed from this.[[pendingTensors]] keyed by `tensor_id`.
+    ///    - If no such tensor exists, log a warning and return.
+    /// 2. Let |promise| be the Promise removed from this.[[pendingTensorPromises]] keyed by `tensor_id`.
+    ///    - If no such promise exists, log a warning and return.
+    /// 3. If `result` is success, resolve |promise| with |tensor|. Otherwise reject |promise| with an "Operation" error.
+    ///
+    /// Notes: this operation implements the script-side portion of the WebNN create-tensor
+    /// callback flow (the manager/backend performs allocation and invokes the persisted
+    /// ML callback with a ContextMessage that routes here).
+    pub(crate) fn create_tensor_callback(&self, tensor_id: u32, result: Result<(), ()>, can_gc: CanGc) {
+        let tensor = {
+            let mut pending = self.pending_tensors.borrow_mut();
+            match pending.remove(&tensor_id) {
+                Some(dom_tensor) => dom_tensor.as_rooted(),
+                None => {
+                    warn!("create_tensor_callback: unknown tensor id {}", tensor_id);
+                    return;
+                }
+            }
+        };
+
+        let promise = {
+            let mut pending = self.pending_tensor_promises.borrow_mut();
+            match pending.remove(&tensor_id) {
+                Some(p) => p,
+                None => {
+                    warn!("create_tensor_callback: missing pending promise for tensor {}", tensor_id);
+                    return;
+                }
+            }
+        };
+
+        match result {
+            Ok(()) => promise.resolve_native(&tensor, can_gc),
+            Err(_) => promise.reject_error(Error::Operation(None), can_gc),
+        }
+    }
 }
 
 impl MLContextMethods<crate::DomTypeHolder> for MLContext {
@@ -135,12 +196,50 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
 
         // Step 3: If |this| is lost, return a new promise in |realm| rejected with an InvalidStateError.
         if self.is_lost() {
-            // Step 3: create and return the rejected promise in |realm|.
             let p = Promise::new(global, can_gc);
             p.reject_error(Error::InvalidState(None), can_gc);
-
             return p;
         }
+
+        // Implementation detail (pre‑Step 4): validate |descriptor| and compute element/byte lengths.
+        // The spec's "creating an MLTensor" step implicitly covers descriptor validation; this
+        // implementation performs explicit validation before constructing the DOM `MLTensor`.
+        if descriptor.shape.iter().any(|&d| d == 0) {
+            let p = Promise::new(global, can_gc);
+            p.reject_error(Error::Type("invalid tensor descriptor".to_owned()), can_gc);
+            return p;
+        }
+
+        let mut element_length: u128 = 1;
+        for &dim in descriptor.shape.iter() {
+            element_length = match element_length.checked_mul(dim as u128) {
+                Some(v) => v,
+                None => {
+                    let p = Promise::new(global, can_gc);
+                    p.reject_error(Error::Type("tensor descriptor too large".to_owned()), can_gc);
+                    return p;
+                }
+            };
+        }
+        let element_size: u128 = match &*descriptor.dataType.str() {
+            "float32" => 4,
+            "float16" => 2,
+            "int32" => 4,
+            "uint32" => 4,
+            "int8" => 1,
+            "uint8" => 1,
+            "int64" => 8,
+            "uint64" => 8,
+            _ => 4,
+        };
+        let byte_length = match element_length.checked_mul(element_size) {
+            Some(v) if v <= (usize::MAX as u128) => v as usize,
+            _ => {
+                let p = Promise::new(global, can_gc);
+                p.reject_error(Error::Type("tensor descriptor too large".to_owned()), can_gc);
+                return p;
+            }
+        };
 
         // Step 4: Let |tensor| be the result of creating an MLTensor given |this| and |descriptor|.
         let tensor = MLTensor::new(self, global, descriptor, can_gc);
@@ -148,14 +247,34 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 5: Let |promise| be a new promise in |realm|.
         let p = Promise::new(global, can_gc);
 
-        // Step 6: Enqueue the following steps to this.[[timeline]]:
-        //     1. Run these steps, but abort when this is lost:
-        //         1. Create |tensor|.[[data]] given |descriptor| and initialize all bytes to zeros.
-        //         1. If that fails, then queue an ML task with |global| to reject |promise| with an "UnknownError" {{DOMException}}, and abort these steps.
-        //         1. Otherwise, queue an ML task with |global| to resolve |promise| with |tensor|.
-        //     1. [=/If aborted=], then queue an ML task with |global| to reject |promise| with an "InvalidStateError" {{DOMException}}.
-        // TODO (spec: #api-mlcontext-createtensor): implement ML timeline task queuing and the zero-initialization/allocation
-        // of tensor.[[data]]; that timeline task must resolve or reject |promise| asynchronously. Do NOT resolve |promise| here.
+        // Implementation detail: assign a context-local tensor id and record DOM-side pending state.
+        // (Bookkeeping so the promise can be resolved by `create_tensor_callback` when the backend replies.)
+        let id = self.next_tensor_id.0.get();
+        self.next_tensor_id.0.set(id.wrapping_add(1));
+        tensor.set_tensor_id(id);
+        // Per-spec the create-tensor promise is stored on the context (not on the tensor).
+        self.pending_tensors.borrow_mut().insert(id, Dom::from_ref(&*tensor));
+        self.pending_tensor_promises.borrow_mut().insert(id, p.clone());
+
+        // Implementation detail: ensure ML-level persistent callback exists for manager/backend replies.
+        let ml_dom = global.as_window().Navigator().Ml();
+        let cb = ml_dom.get_or_setup_callback(global);
+
+        // Step 6: Enqueue the following steps to this.[[timeline]] (spec):
+        // 6.1 Create |tensor|.[[data]] given |descriptor| and initialize all bytes to zeros.
+        // 6.2 If that fails -> queue an ML task with |global| to reject |promise| with an "UnknownError" and abort.
+        // 6.3 Otherwise -> queue an ML task with |global| to resolve |promise| with |tensor|.
+        // 6.4 [=/If aborted=] -> queue an ML task with |global| to reject |promise| with an "InvalidStateError".
+        // Discrepancy: timeline enqueue is implemented by sending `WebNNMsg::CreateTensor` to the WebNN manager; the
+        // manager allocates backend storage and invokes the persisted ML callback that routes to `create_tensor_callback`.
+        if let Err(e) = self.global().webnn_sender().send(WebNNMsg::CreateTensor(cb, self.context_id, id, byte_length)) {
+            error!("WebNN CreateTensor send failed ({:?})", e);
+            // If sending fails we must clean up the pending DOM-side state and reject
+            // the promise with an Operation error (implementation-defined behavior).
+            self.pending_tensors.borrow_mut().remove(&id);
+            p.reject_error(Error::Operation(None), can_gc);
+            return p;
+        }
 
         // Step 7: Return |promise|.
         p

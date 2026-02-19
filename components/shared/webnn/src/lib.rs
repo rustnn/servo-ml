@@ -18,6 +18,23 @@ impl malloc_size_of::MallocSizeOf for ContextId {
 }
 
 /// Messages addressed to the WebNN manager.
+use profile_traits::generic_callback::GenericCallback;
+
+/// Messages delivered through the ML-level persistent callback.  Keeping a
+/// small enum here makes it easy to extend the ML callback for other
+/// context-scoped replies (not just CreateTensor results).
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub enum ContextMessage {
+    /// Reply for a CreateTensor request: (context id, tensor id, result).
+    CreateTensorResult(ContextId, u32, Result<(), ()>),
+}
+
+impl malloc_size_of::MallocSizeOf for ContextMessage {
+    fn size_of(&self, _ops: &mut malloc_size_of::MallocSizeOfOps) -> usize {
+        0
+    }
+}
+
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub enum WebNNMsg {
     /// Graceful shutdown.
@@ -28,4 +45,14 @@ pub enum WebNNMsg {
 
     /// Inform the backend that a context was destroyed and may be freed.
     DestroyContext(ContextId),
+
+    /// Request the backend to create a tensor for `context_id`.
+    ///
+    /// Arguments: callback, context id, tensor id (script-side u32), byte length to allocate.
+    /// The backend should allocate a Vec<u8> of the given length, store it keyed by
+    /// (context_id, tensor_id), and invoke `callback` with a `ContextMessage::CreateTensorResult`
+    /// containing the `ContextId` and `tensor_id` and Ok(()) / Err(()) to indicate
+    /// success or failure. Using `ContextMessage` lets the same persistent ML-level
+    /// callback be reused for other context-level replies in the future.
+    CreateTensor(GenericCallback<ContextMessage>, ContextId, u32, usize),
 }

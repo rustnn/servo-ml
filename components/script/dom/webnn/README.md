@@ -20,6 +20,8 @@ components/script/dom/webnn — implementation notes (minimal)
 
 - The `MLContext` exposes a `timeline` concept in the spec. In this codebase model the timeline should be implemented as steps enqueued to a backend/task queue. This is work-in-progress; keep API implementations minimal and add TODOs for backend messaging. If an in-parallel TODO would resolve a Promise, do not resolve it in the stub — return the promise unresolved.
 
+  - Implementation note: `MLContext.createTensor` now implements the spec's "Enqueue the following steps to this.[[timeline]]" by sending `WebNNMsg::CreateTensor` to the WebNN manager. The manager/backend is expected to allocate the tensor's backend storage (initialize `tensor.[[data]]`), handle allocation failures, and invoke the persisted ML callback so that `MLContext::create_tensor_callback` can resolve or reject the promise stored on the context. See `mlcontext.rs` for line-level spec mappings and exact spec quotes.
+
 WebNN-specific expectations (short):
 
 - Method-level doc: top doc-comment = canonical spec anchor only (no parenthetical/top-doc prose).
@@ -29,7 +31,7 @@ WebNN-specific expectations (short):
 
 Important: this README is subsystem-specific — read `components/script/README.md` and `AGENTS.md` first. Keep this file focused on WebNN-specific anchors and TODOs.
 
-- The `pyrustexample.rs` file in this directory contains an extensive example using `rustnn` primitives (it shows algorithmic helpers and usage patterns). Read it when implementing or adapting the graph-builder/backend integration.
+- The `skills/pyrustexample.rs` file contains an extensive example using `rustnn` primitives (it shows algorithmic helpers and usage patterns). Read it when implementing or adapting the graph-builder/backend integration.
 
 Overview — how WebNN is wired in Servo
 

@@ -3,7 +3,7 @@ use std::thread;
 
 use base::generic_channel::{GenericReceiver, GenericSender, channel};
 use log::debug;
-use webnn_traits::{ContextId, WebNNMsg};
+use webnn_traits::{ContextId, WebNNMsg, ContextMessage};
 
 #[derive(Debug)]
 struct ContextInfo {
@@ -31,6 +31,8 @@ fn run_manager(receiver: GenericReceiver<WebNNMsg>) {
     debug!("webnn manager started");
 
     let mut contexts: HashMap<ContextId, ContextInfo> = HashMap::new();
+    // Store backend-side tensor buffers keyed by (context_id, tensor_id).
+    let mut tensor_store: HashMap<(ContextId, u32), Vec<u8>> = HashMap::new();
 
     loop {
         match receiver.recv() {
@@ -45,7 +47,18 @@ fn run_manager(receiver: GenericReceiver<WebNNMsg>) {
                 },
                 WebNNMsg::DestroyContext(id) => {
                     debug!("webnn manager: DestroyContext {:?}", id);
+                    // Remove any stored tensors associated with that context.
+                    tensor_store.retain(|(ctx, _), _| ctx != &id);
                     contexts.remove(&id);
+                },
+                WebNNMsg::CreateTensor(callback, ctx_id, tensor_id, byte_length) => {
+                    debug!("webnn manager: CreateTensor ctx={:?} id={} len={}", ctx_id, tensor_id, byte_length);
+                    // Simple stub backend: create a zeroed Vec<u8> and store it.
+                    let buffer = vec![0u8; byte_length];
+                    tensor_store.insert((ctx_id, tensor_id), buffer);
+                    // Send a ContextMessage so the ML-level persistent callback can
+                    // route the reply by ContextId.
+                    let _ = callback.send(ContextMessage::CreateTensorResult(ctx_id, tensor_id, Ok(())));
                 },
             },
             Err(_) => break,

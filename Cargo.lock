@@ -11668,6 +11668,7 @@ name = "webnn_traits"
 version = "0.0.1"
 dependencies = [
  "base",
+ "profile_traits",
  "serde",
  "servo_malloc_size_of",
 ]

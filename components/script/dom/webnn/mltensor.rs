@@ -21,6 +21,9 @@ pub(crate) struct MLTensor {
     /// <https://webmachinelearning.github.io/webnn/#dom-mltensor-context-slot>
     context: Dom<MLContext>,
 
+    /// Script-visible tensor id (assigned by MLContext). Optional for some tensors.
+    tensor_id: crate::dom::bindings::trace::NoTrace<std::cell::Cell<Option<u32>>>,
+
     /// <https://webmachinelearning.github.io/webnn/#dom-mloperanddescriptor-datatype>
     data_type: String,
 
@@ -55,6 +58,7 @@ impl MLTensor {
         MLTensor {
             reflector_: Reflector::new(),
             context: Dom::from_ref(context),
+            tensor_id: crate::dom::bindings::trace::NoTrace(std::cell::Cell::new(None)),
             data_type,
             shape,
             readable,
@@ -95,8 +99,27 @@ impl MLTensor {
         self.is_constant
     }
 
+    /// Script-visible tensor id assigned by the context (if any).
+    pub(crate) fn tensor_id(&self) -> Option<u32> {
+        self.tensor_id.0.get()
+    }
+
+    pub(crate) fn set_tensor_id(&self, id: u32) {
+        self.tensor_id.0.set(Some(id));
+    }
+
     pub(crate) fn append_pending_promise(&self, p: Rc<Promise>) {
         self.pending_promises.borrow_mut().push(p);
+    }
+
+    // Pop and return the first pending promise (used by callback resolution).
+    pub(crate) fn take_first_pending_promise(&self) -> Option<Rc<Promise>> {
+        let mut v = self.pending_promises.borrow_mut();
+        if v.is_empty() {
+            None
+        } else {
+            Some(v.remove(0))
+        }
     }
 
     // Remove a pending promise reference (used by timeline task when resolve/reject).
@@ -146,6 +169,7 @@ impl MLTensor {
             Box::new(MLTensor {
                 reflector_: Reflector::new(),
                 context: Dom::from_ref(context),
+                tensor_id: crate::dom::bindings::trace::NoTrace(std::cell::Cell::new(None)),
                 data_type,
                 shape,
                 readable,
