@@ -23,7 +23,6 @@ components/script — README
   1. `search-bs search --name webnn "cast" --json` → note `api-mlgraphbuilder-cast` and line number.
   2. `search-bs get --name webnn --line 2613 --count 40` → copy the algorithm prose you need.
 
-  Tip: use `--json` when scripting or when you need anchor/line metadata programmatically.
 **Working on a Web API (tips)**
 1. Find the WebIDL in `components/script_bindings/webidls/` (or add one if
    implementing a new API).
@@ -111,10 +110,8 @@ Follow these exact conventions so code <-> spec mapping is clear and reviewable.
       the source of truth is obvious.
 
 - TODOs and in-parallel steps
-  - For any unimplemented spec step, add a `Step N: TODO — <short reason>`
-    immediately above the code or `todo!()` placeholder. Also add a second
-    comment with the TODO tag including the spec anchor, e.g.
-    `// TODO (spec: #api-ml-createcontext): implement ML task queuing`.
+  - For any unimplemented spec step, add a `TODO: {optional short description}`
+    immediately below the usual `Step N:` comment. 
   - IMPORTANT: if the TODO corresponds to an *in-parallel* step that would
     resolve a Promise, do *not* resolve the Promise in the stub — return
     the Promise unresolved and leave resolution to the future queued task.
