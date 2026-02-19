@@ -11,3 +11,5 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = { workspace = true }
+base = { workspace = true }
+malloc_size_of = { workspace = true }

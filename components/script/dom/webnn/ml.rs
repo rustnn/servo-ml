@@ -1,10 +1,14 @@
+use std::cell::Cell;
 use std::rc::Rc;
 
 use dom_struct::dom_struct;
+use webnn_traits::{ContextId, WebNNMsg};
 
+use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{MLContextOptions, MLMethods};
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
-use crate::dom::bindings::root::DomRoot;
+use crate::dom::bindings::root::{Dom, DomRoot};
+use crate::dom::bindings::trace::HashMapTracedValues;
 use crate::dom::globalscope::GlobalScope;
 use crate::dom::promise::Promise;
 use crate::dom::webnn::mlcontext::MLContext;
@@ -14,12 +18,20 @@ use crate::script_runtime::CanGc;
 /// <https://webmachinelearning.github.io/webnn/#api-ml>
 pub(crate) struct ML {
     reflector_: Reflector,
+
+    /// Map of active contexts created via this ML object.
+    contexts: DomRefCell<HashMapTracedValues<ContextId, Dom<MLContext>>>,
+
+    /// Per-GlobalScope counter used to create ContextId.counter values.
+    next_context_counter: Cell<u32>,
 }
 
 impl ML {
     pub(crate) fn new_inherited() -> ML {
         ML {
             reflector_: Reflector::new(),
+            contexts: Default::default(),
+            next_context_counter: Cell::new(1),
         }
     }
 
@@ -33,12 +45,39 @@ impl ML {
         options: &MLContextOptions,
         can_gc: CanGc,
     ) -> DomRoot<MLContext> {
-        MLContext::new(
+        // Create a new ContextId (pipeline-scoped counter).
+        let pipeline_id = self.global().pipeline_id();
+        let counter = self.next_context_counter.get();
+        self.next_context_counter.set(counter.wrapping_add(1));
+        let ctx_id = ContextId {
+            pipeline_id,
+            counter,
+        };
+
+        // Create the DOM-side MLContext with the new id.
+        let ctx = MLContext::new(
             &self.global(),
+            ctx_id,
             options.accelerated,
             options.powerPreference,
             can_gc,
-        )
+        );
+
+        // Store the context in the ML map.
+        self.contexts
+            .borrow_mut()
+            .insert(ctx_id, Dom::from_ref(&*ctx));
+
+        // Inform the WebNN backend/manager about the new context.
+        if let Err(e) = self
+            .global()
+            .webnn_sender()
+            .send(WebNNMsg::NewContext(ctx_id))
+        {
+            error!("WebNN NewContext send failed ({:?})", e);
+        }
+
+        ctx
     }
 }
 

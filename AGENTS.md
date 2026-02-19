@@ -53,4 +53,6 @@ Prose & README style (for agents)
 - Always double-check your work with `./mach check`(without additional arguments). 
 - Do not do anything with Git.
 
+IMPORTANT: never use fully qualified imports. To check build, always use ./mach check with zero additional arguments
+
 That's it — find and run the component README(s) for details relevant to your task.

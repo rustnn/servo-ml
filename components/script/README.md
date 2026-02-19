@@ -45,6 +45,7 @@ components/script — README
    - Use short type names in method signatures and code; add the `use` at the
      top of the file. This improves readability and makes future refactors
      and reviews simpler.
+9. Consolidate multiple calls to `global()` into one by assigning the global to a variable, and if needed passing it down by reference.
 
 **Adding a backend for a Web API (how-to)**
 Follow this checklist when you need a native/task-queue backend for a Web API (for example a manager thread that processes requests):

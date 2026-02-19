@@ -1,15 +1,14 @@
-//! Minimal WebNN manager component (plumbing only).
-//!
-//! This crate only provides a `WebNNMsg` message type and a tiny
-//! manager factory used to obtain a `GenericSender<WebNNMsg>` that
-//! can be passed through the Constellation → ScriptThread → GlobalScope
-//! plumbing. The manager is a stub (no backend logic yet).
-
+use std::collections::HashMap;
 use std::thread;
 
 use base::generic_channel::{GenericReceiver, GenericSender, channel};
 use log::debug;
-use webnn_traits::WebNNMsg;
+use webnn_traits::{ContextId, WebNNMsg};
+
+#[derive(Debug)]
+struct ContextInfo {
+    // Placeholder for future backend-specific context state.
+}
 
 /// Create a new WebNN manager and return the `GenericSender<WebNNMsg>`
 /// together with the `JoinHandle` for the manager thread.
@@ -30,12 +29,23 @@ pub fn new_webnn_manager() -> (GenericSender<WebNNMsg>, std::thread::JoinHandle<
 
 fn run_manager(receiver: GenericReceiver<WebNNMsg>) {
     debug!("webnn manager started");
+
+    let mut contexts: HashMap<ContextId, ContextInfo> = HashMap::new();
+
     loop {
         match receiver.recv() {
             Ok(msg) => match msg {
                 WebNNMsg::Exit => {
                     debug!("webnn manager exiting");
                     break;
+                },
+                WebNNMsg::NewContext(id) => {
+                    debug!("webnn manager: NewContext {:?}", id);
+                    contexts.insert(id, ContextInfo {});
+                },
+                WebNNMsg::DestroyContext(id) => {
+                    debug!("webnn manager: DestroyContext {:?}", id);
+                    contexts.remove(&id);
                 },
             },
             Err(_) => break,

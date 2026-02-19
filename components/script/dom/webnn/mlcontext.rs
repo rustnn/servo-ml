@@ -2,6 +2,7 @@ use std::rc::Rc;
 
 use dom_struct::dom_struct;
 use script_bindings::codegen::GenericUnionTypes::ArrayBufferViewOrArrayBuffer;
+use webnn_traits::{ContextId, WebNNMsg};
 
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLContextLostInfo, MLContextMethods, MLOpSupportLimits, MLOperandDescriptor, MLPowerPreference,
@@ -21,6 +22,10 @@ use crate::script_runtime::CanGc;
 pub(crate) struct MLContext {
     reflector_: Reflector,
 
+    /// Unique identifier for this context (pipeline + counter).
+    #[no_trace]
+    context_id: ContextId,
+
     /// <https://webmachinelearning.github.io/webnn/#dom-mlcontext-contexttype-slot>
     context_type: String,
 
@@ -38,6 +43,7 @@ pub(crate) struct MLContext {
 impl MLContext {
     /// <https://webmachinelearning.github.io/webnn/#api-ml-createcontext>
     pub(crate) fn new_inherited(
+        context_id: ContextId,
         accelerated: bool,
         power_preference: MLPowerPreference,
         lost: Rc<Promise>,
@@ -50,6 +56,7 @@ impl MLContext {
         // Step 1.4: Set |context|.[[accelerated]] to the provided `accelerated` value.
         MLContext {
             reflector_: Reflector::new(),
+            context_id,
             context_type: "default".into(),
             power_preference,
             accelerated,
@@ -60,6 +67,7 @@ impl MLContext {
     /// <https://webmachinelearning.github.io/webnn/#api-ml-createcontext>
     pub(crate) fn new(
         global: &GlobalScope,
+        context_id: ContextId,
         accelerated: bool,
         power_preference: MLPowerPreference,
         can_gc: CanGc,
@@ -68,6 +76,7 @@ impl MLContext {
         let lost_promise = Promise::new(global, can_gc);
         let ctx = reflect_dom_object(
             Box::new(MLContext::new_inherited(
+                context_id,
                 accelerated,
                 power_preference,
                 lost_promise.clone(),
@@ -393,6 +402,15 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 1: If this is lost, then abort these steps.
         if self.is_lost() {
             return;
+        }
+
+        // Inform backend/manager that this context is being destroyed.
+        if let Err(e) = self
+            .global()
+            .webnn_sender()
+            .send(WebNNMsg::DestroyContext(self.context_id))
+        {
+            error!("WebNN DestroyContext send failed ({:?})", e);
         }
 
         // Step 2: Run the steps to MLContext/lose this with an implementation-defined message.
