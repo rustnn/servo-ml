@@ -1,27 +1,27 @@
 use std::rc::Rc;
 
 use dom_struct::dom_struct;
+use profile_traits::generic_callback::GenericCallback;
+use script_bindings::codegen::GenericBindings::NavigatorBinding::NavigatorMethods;
+use script_bindings::codegen::GenericBindings::WindowBinding::WindowMethods;
 use script_bindings::codegen::GenericUnionTypes::ArrayBufferViewOrArrayBuffer;
 use webnn_traits::{ContextId, WebNNMsg};
 
+use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLContextLostInfo, MLContextMethods, MLOpSupportLimits, MLOperandDescriptor, MLPowerPreference,
     MLTensorDescriptor,
 };
 use crate::dom::bindings::error::{Error, throw_dom_exception};
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
-use crate::dom::webnn::ml::ML;
-use script_bindings::codegen::GenericBindings::NavigatorBinding::NavigatorMethods;
-use script_bindings::codegen::GenericBindings::WindowBinding::WindowMethods;
 use crate::dom::bindings::root::{Dom, DomRoot};
 use crate::dom::bindings::str::DOMString;
-use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::trace::HashMapTracedValues;
 use crate::dom::globalscope::GlobalScope;
 use crate::dom::promise::Promise;
+use crate::dom::webnn::ml::ML;
 use crate::dom::webnn::mltensor::MLTensor;
 use crate::script_runtime::CanGc;
-use profile_traits::generic_callback::GenericCallback;
 
 #[dom_struct]
 /// <https://webmachinelearning.github.io/webnn/#api-mlcontext>
@@ -149,7 +149,12 @@ impl MLContext {
     /// Notes: this operation implements the script-side portion of the WebNN create-tensor
     /// callback flow (the manager/backend performs allocation and invokes the persisted
     /// ML callback with a ContextMessage that routes here).
-    pub(crate) fn create_tensor_callback(&self, tensor_id: u32, result: Result<(), ()>, can_gc: CanGc) {
+    pub(crate) fn create_tensor_callback(
+        &self,
+        tensor_id: u32,
+        result: Result<(), ()>,
+        can_gc: CanGc,
+    ) {
         let tensor = {
             let mut pending = self.pending_tensors.borrow_mut();
             match pending.remove(&tensor_id) {
@@ -157,7 +162,7 @@ impl MLContext {
                 None => {
                     warn!("create_tensor_callback: unknown tensor id {}", tensor_id);
                     return;
-                }
+                },
             }
         };
 
@@ -166,9 +171,12 @@ impl MLContext {
             match pending.remove(&tensor_id) {
                 Some(p) => p,
                 None => {
-                    warn!("create_tensor_callback: missing pending promise for tensor {}", tensor_id);
+                    warn!(
+                        "create_tensor_callback: missing pending promise for tensor {}",
+                        tensor_id
+                    );
                     return;
-                }
+                },
             }
         };
 
@@ -216,9 +224,12 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
                 Some(v) => v,
                 None => {
                     let p = Promise::new(global, can_gc);
-                    p.reject_error(Error::Type("tensor descriptor too large".to_owned()), can_gc);
+                    p.reject_error(
+                        Error::Type("tensor descriptor too large".to_owned()),
+                        can_gc,
+                    );
                     return p;
-                }
+                },
             };
         }
         let element_size: u128 = match &*descriptor.dataType.str() {
@@ -236,9 +247,12 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             Some(v) if v <= (usize::MAX as u128) => v as usize,
             _ => {
                 let p = Promise::new(global, can_gc);
-                p.reject_error(Error::Type("tensor descriptor too large".to_owned()), can_gc);
+                p.reject_error(
+                    Error::Type("tensor descriptor too large".to_owned()),
+                    can_gc,
+                );
                 return p;
-            }
+            },
         };
 
         // Step 4: Let |tensor| be the result of creating an MLTensor given |this| and |descriptor|.
@@ -253,8 +267,12 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         self.next_tensor_id.0.set(id.wrapping_add(1));
         tensor.set_tensor_id(id);
         // Per-spec the create-tensor promise is stored on the context (not on the tensor).
-        self.pending_tensors.borrow_mut().insert(id, Dom::from_ref(&*tensor));
-        self.pending_tensor_promises.borrow_mut().insert(id, p.clone());
+        self.pending_tensors
+            .borrow_mut()
+            .insert(id, Dom::from_ref(&*tensor));
+        self.pending_tensor_promises
+            .borrow_mut()
+            .insert(id, p.clone());
 
         // Implementation detail: ensure ML-level persistent callback exists for manager/backend replies.
         let ml_dom = global.as_window().Navigator().Ml();
@@ -267,7 +285,12 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // 6.4 [=/If aborted=] -> queue an ML task with |global| to reject |promise| with an "InvalidStateError".
         // Discrepancy: timeline enqueue is implemented by sending `WebNNMsg::CreateTensor` to the WebNN manager; the
         // manager allocates backend storage and invokes the persisted ML callback that routes to `create_tensor_callback`.
-        if let Err(e) = self.global().webnn_sender().send(WebNNMsg::CreateTensor(cb, self.context_id, id, byte_length)) {
+        if let Err(e) = self.global().webnn_sender().send(WebNNMsg::CreateTensor(
+            cb,
+            self.context_id,
+            id,
+            byte_length,
+        )) {
             error!("WebNN CreateTensor send failed ({:?})", e);
             // If sending fails we must clean up the pending DOM-side state and reject
             // the promise with an Operation error (implementation-defined behavior).
@@ -315,18 +338,13 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         let p = Promise::new(global, can_gc);
         tensor.append_pending_promise(p.clone());
 
-        // Step 7: Enqueue the following steps to |tensor|.[[context]]'s [[timeline]]:
-        //     1. Run these steps, but abort when this is lost:
-        //         1. Let |bytes| be a byte sequence containing a copy of |tensor|.[[data]].
-        //         1. If that fails, then queue an ML task with |global| to run these steps:
-        //             1. Remove |promise| from |tensor|.[[pendingPromises]].
-        //             1. Reject |promise| with an "UnknownError" {{DOMException}}, and abort these steps.
-        //         1. Otherwise, queue an ML task with |global| to run these steps:
-        //             1. Remove |promise| from |tensor|.[[pendingPromises]].
-        //             1. Let |buffer| be the result of ArrayBuffer/creating an {{ArrayBuffer}} from |bytes| in |realm|.
-        //             1. Resolve |promise| with |buffer|.
-        //     1. [=/If aborted=], then queue an ML task with |global| to reject |promise| with an "InvalidStateError" {{DOMException}}.
-        // TODO (spec: #api-mlcontext-readtensor): implement ML timeline task queuing, copying of tensor.[[data]], ArrayBuffer creation, and promise resolution; do NOT resolve |promise| here.
+        // Step 7: Enqueue timeline steps to |tensor|.[[context]]'s [[timeline]]:
+        // 7.1 Run these steps, abort when this is lost.
+        // 7.1.1 Let |bytes| be a byte sequence containing a copy of |tensor|.[[data]].
+        // 7.1.2 If that fails -> queue an ML task with |global| to remove |promise| from |tensor|.[[pendingPromises]] and reject |promise| with an "UnknownError".
+        // 7.1.3 Otherwise -> queue an ML task with |global| to remove |promise| from |tensor|.[[pendingPromises]], create an ArrayBuffer from |bytes| in |realm|, and resolve |promise| with that buffer.
+        // 7.2 [=/If aborted=] -> queue an ML task with |global| to reject |promise| with an "InvalidStateError".
+        // Implementation note: ML timeline task queuing, copying of |tensor|.[[data]] and ArrayBuffer creation are TODO; do NOT resolve |promise| here.
 
         // Step 8: Return |promise|.
         p
@@ -380,20 +398,13 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 8: Append |promise| to |tensor|.[[pendingPromises]].
         tensor.append_pending_promise(p.clone());
 
-        // Step 9: Enqueue the following steps to |tensor|.[[context]]'s [[timeline]]:
-        //     1. Run these steps, but abort when this is lost:
-        //         1. Let |bytes| be a byte sequence containing a copy of |tensor|.[[data]].
-        //         1. If that fails, then queue an ML task with |global| to run these steps:
-        //             1. Remove |promise| from |tensor|.[[pendingPromises]].
-        //             1. Reject |promise| with an "UnknownError" {{DOMException}}, and abort these steps.
-        //         1. Otherwise, queue an ML task with |global| to run these steps:
-        //             1. Remove |promise| from |tensor|.[[pendingPromises]].
-        //             1. If |outputData| is BufferSource/detached, then reject |promise| with a {{TypeError}}, and abort these steps.
-        //             1. ArrayBuffer/Write |bytes| to |outputData|.
-        //             1. Resolve |promise| with {{undefined}}.
-        //     1. [=/If aborted=], then queue an ML task with |global| to reject |promise| with an "InvalidStateError" {{DOMException}}.
-        // TODO (spec: #api-mlcontext-readtensor-byob): queue ML timeline task that performs the copy, handles detached buffers,
-        // removes |promise| from tensor.[[pendingPromises]], and resolves or rejects |promise| appropriately.
+        // Step 9: Enqueue timeline steps to |tensor|.[[context]]'s [[timeline]]:
+        // 9.1 Run these steps, abort when this is lost.
+        // 9.1.1 Let |bytes| be a byte sequence containing a copy of |tensor|.[[data]].
+        // 9.1.2 If that fails -> queue an ML task with |global| to remove |promise| from |tensor|.[[pendingPromises]] and reject |promise| with an "UnknownError".
+        // 9.1.3 Otherwise -> queue an ML task with |global| to remove |promise| from |tensor|.[[pendingPromises]]; if |outputData| is detached then reject |promise| with a TypeError and abort; otherwise write |bytes| to |outputData| and resolve |promise| with undefined.
+        // 9.2 [=/If aborted=] -> queue an ML task with |global| to reject |promise| with an "InvalidStateError".
+        // Implementation note: BYOB timeline copy/validation is TODO; do NOT resolve |promise| here.
 
         // Step 10: Return |promise|.
         p

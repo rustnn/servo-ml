@@ -3,7 +3,7 @@ use std::thread;
 
 use base::generic_channel::{GenericReceiver, GenericSender, channel};
 use log::debug;
-use webnn_traits::{ContextId, WebNNMsg, ContextMessage};
+use webnn_traits::{ContextId, ContextMessage, WebNNMsg};
 
 #[derive(Debug)]
 struct ContextInfo {
@@ -52,13 +52,20 @@ fn run_manager(receiver: GenericReceiver<WebNNMsg>) {
                     contexts.remove(&id);
                 },
                 WebNNMsg::CreateTensor(callback, ctx_id, tensor_id, byte_length) => {
-                    debug!("webnn manager: CreateTensor ctx={:?} id={} len={}", ctx_id, tensor_id, byte_length);
+                    debug!(
+                        "webnn manager: CreateTensor ctx={:?} id={} len={}",
+                        ctx_id, tensor_id, byte_length
+                    );
                     // Simple stub backend: create a zeroed Vec<u8> and store it.
                     let buffer = vec![0u8; byte_length];
                     tensor_store.insert((ctx_id, tensor_id), buffer);
                     // Send a ContextMessage so the ML-level persistent callback can
                     // route the reply by ContextId.
-                    let _ = callback.send(ContextMessage::CreateTensorResult(ctx_id, tensor_id, Ok(())));
+                    let _ = callback.send(ContextMessage::CreateTensorResult(
+                        ctx_id,
+                        tensor_id,
+                        Ok(()),
+                    ));
                 },
             },
             Err(_) => break,
