@@ -61,6 +61,7 @@ impl DissimilarOriginWindow {
                 global_to_clone_from.script_to_embedder_chan().clone(),
                 global_to_clone_from.resource_threads().clone(),
                 global_to_clone_from.storage_threads().clone(),
+                global_to_clone_from.webnn_sender().clone(),
                 global_to_clone_from.origin().clone(),
                 global_to_clone_from.creation_url(),
                 global_to_clone_from.top_level_creation_url().clone(),

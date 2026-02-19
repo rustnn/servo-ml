@@ -1,0 +1,13 @@
+[package]
+name = "webnn_traits"
+version.workspace = true
+authors.workspace = true
+license.workspace = true
+edition = "2021"
+
+[lib]
+name = "webnn_traits"
+path = "src/lib.rs"
+
+[dependencies]
+serde = { workspace = true }

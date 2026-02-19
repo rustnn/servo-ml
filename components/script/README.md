@@ -46,6 +46,55 @@ components/script — README
      top of the file. This improves readability and makes future refactors
      and reviews simpler.
 
+**Adding a backend for a Web API (how-to)**
+Follow this checklist when you need a native/task-queue backend for a Web API (for example a manager thread that processes requests):
+
+1. Shared message types
+   - Put the cross-crate IPC/message types into `components/shared/<api>` (example: `components/shared/webnn`).
+   - Derive `serde::Serialize` and `serde::Deserialize` for every message so `base::generic_channel::GenericSender<T>`/`GenericReceiver<T>` can be used across crate boundaries.
+
+2. Manager component
+   - Add a small manager crate under `components/<api>` (example: `components/webnn`).
+   - Expose a constructor `new_<api>_manager()` that returns `(GenericSender<T>, JoinHandle)` or at minimum a `GenericSender<T>`.
+   - Keep the manager implementation local to the component; it should own its worker thread and its message receiver.
+
+3. Wiring into Servo/Constellation
+   - Create the manager in `components/servo/servo.rs` and obtain the `sender` (and optional `join_handle`).
+   - Pass the `sender` into `create_constellation(...)` through `InitialConstellationState` (add fields there if needed).
+   - Store the `JoinHandle` in `InitialConstellationState` as `Option<JoinHandle<()>>` (so Constellation can join on shutdown).
+   - In `Constellation::handle_shutdown()` send an Exit/Shutdown message to the manager and join the handle.
+   - Note (multi-process): when running in multi-process mode, threads started "alongside the Constellation" run in the Constellation process (i.e. separate from the Script/content process). Design your backend and IPC accordingly — message types must be IPC-safe and any assumptions about in-process access to script state are invalid.
+
+4. Expose sender to script/DOM
+   - Add the sender to `InitialScriptState` and thread it through `ScriptThread` → `GlobalScope` so DOM bindings can access it via `GlobalScope::webnn_sender()` (or similar accessor).
+
+5. Avoid dependency cycles
+   - Keep message types in `components/shared/<api>` so `script` only depends on the shared crate, not the manager crate.
+
+6. Shutdown & lifecycle
+   - The Constellation should be authoritative for thread shutdown: send an Exit message and `join()` the manager thread during `handle_shutdown()`.
+
+7. Tests & spec
+   - Behavior of the Web API must be covered by Web Platform Tests (WPT).
+   - Add small unit/smoke tests in the manager crate to verify message receive/Exit behavior if useful.
+
+8. Documentation
+   - Add a short README under `components/<api>/` (and update the subsystem README under `components/script/dom/<api>/README.md`) describing the manager architecture and where message types live.
+
+Checklist summary (quick):
+- [ ] Add `components/shared/<api>` message types (serde)
+- [ ] Implement `components/<api>` manager (returns sender + join handle)
+- [ ] Create manager in `Servo::new` and pass sender/handle into Constellation
+- [ ] Thread sender into `InitialScriptState` → `ScriptThread` → `GlobalScope`
+- [ ] Constellation sends Exit + joins manager on shutdown
+- [ ] WPT coverage for API behavior
+
+Example (wiring highlights):
+- `let (sender, join_handle) = webnn::new_webnn_manager();` (in `Servo::new`)
+- `create_constellation(..., webnn_sender.clone(), Some(join_handle));`
+- `InitialConstellationState { webnn_sender, webnn_join_handle: Some(join_handle), ... }`
+- `Constellation::handle_shutdown()` → `webnn_sender.send(WebNNMsg::Exit)` + `webnn_join_handle.take().unwrap().join()`
+
 **Documenting your work:**
 Follow these exact conventions so code <-> spec mapping is clear and reviewable.
 

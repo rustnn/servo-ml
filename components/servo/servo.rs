@@ -72,6 +72,7 @@ use servo_media::player::context::GlContext;
 use storage::new_storage_threads;
 use storage_traits::StorageThreads;
 use style::global_style_data::StyleThreadPool;
+use webnn_traits::WebNNMsg;
 
 use crate::clipboard_delegate::StringRequest;
 #[cfg(feature = "gamepad")]
@@ -849,6 +850,8 @@ impl Servo {
         let (private_storage_threads, public_storage_threads) =
             new_storage_threads(mem_profiler_chan.clone(), opts.config_dir.clone());
 
+        let (webnn_sender, webnn_join_handle) = webnn::new_webnn_manager();
+
         create_constellation(
             embedder_to_constellation_receiver,
             &paint.borrow(),
@@ -863,6 +866,8 @@ impl Servo {
             async_runtime,
             public_storage_threads.clone(),
             private_storage_threads.clone(),
+            webnn_sender.clone(),
+            Some(webnn_join_handle),
         );
 
         if opts::get().multiprocess {
@@ -1060,6 +1065,8 @@ fn create_constellation(
     async_runtime: Box<dyn net_traits::AsyncRuntime>,
     public_storage_threads: StorageThreads,
     private_storage_threads: StorageThreads,
+    webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
+    webnn_join_handle: Option<std::thread::JoinHandle<()>>,
 ) {
     // Global configuration options, parsed from the command line.
     let opts = opts::get();
@@ -1089,18 +1096,20 @@ fn create_constellation(
         private_resource_threads,
         public_storage_threads,
         private_storage_threads,
-        time_profiler_chan,
-        mem_profiler_chan,
+        webnn_sender,
+        webnn_join_handle,
+        time_profiler_chan: time_profiler_chan.clone(),
+        mem_profiler_chan: mem_profiler_chan.clone(),
+        webrender_external_image_id_manager: paint.webrender_external_image_id_manager(),
+        webgl_threads: Some(paint.webgl_threads()),
+        #[cfg(feature = "webgpu")]
+        wgpu_image_map: paint.webgpu_image_map(),
         #[cfg(feature = "webxr")]
         webxr_registry: Some(paint.webxr_main_thread_registry()),
         #[cfg(not(feature = "webxr"))]
         webxr_registry: None,
-        webgl_threads: Some(paint.webgl_threads()),
-        webrender_external_image_id_manager: paint.webrender_external_image_id_manager(),
-        #[cfg(feature = "webgpu")]
-        wgpu_image_map: paint.webgpu_image_map(),
-        async_runtime,
         privileged_urls,
+        async_runtime,
     };
 
     let layout_factory = Arc::new(LayoutFactoryImpl());

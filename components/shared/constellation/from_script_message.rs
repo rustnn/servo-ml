@@ -41,6 +41,7 @@ use storage_traits::webstorage_thread::WebStorageType;
 use strum::IntoStaticStr;
 #[cfg(feature = "webgpu")]
 use webgpu_traits::{WebGPU, WebGPUAdapterResponse};
+use webnn_traits::WebNNMsg;
 
 use crate::structured_data::{BroadcastChannelMsg, StructuredSerializedData};
 use crate::{
@@ -464,6 +465,8 @@ pub struct WorkerGlobalScopeInit {
     pub resource_threads: ResourceThreads,
     /// Chan to a storage thread
     pub storage_threads: StorageThreads,
+    /// Chan to the WebNN manager
+    pub webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
     /// Chan to the memory profiler
     pub mem_profiler_chan: mem::ProfilerChan,
     /// Chan to the time profiler

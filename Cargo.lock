@@ -4852,6 +4852,89 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
+=======
+name = "libservo"
+version = "0.0.1"
+dependencies = [
+ "accesskit",
+ "arboard",
+ "bitflags 2.11.0",
+ "crossbeam-channel",
+ "dpi",
+ "env_logger",
+ "euclid",
+ "gaol",
+ "gstreamer",
+ "http 1.4.0",
+ "http-body-util",
+ "hyper 1.8.1",
+ "image",
+ "ipc-channel",
+ "keyboard-types",
+ "libservo",
+ "log",
+ "mozangle",
+ "parking_lot",
+ "rustc-hash 2.1.1",
+ "rustls",
+ "serde",
+ "servo-allocator",
+ "servo-background-hang-monitor",
+ "servo-base",
+ "servo-bluetooth",
+ "servo-bluetooth-traits",
+ "servo-canvas-traits",
+ "servo-config",
+ "servo-constellation",
+ "servo-constellation-traits",
+ "servo-devtools",
+ "servo-devtools-traits",
+ "servo-embedder-traits",
+ "servo-fonts",
+ "servo-geometry",
+ "servo-layout",
+ "servo-layout-api",
+ "servo-media",
+ "servo-media-dummy",
+ "servo-media-gstreamer",
+ "servo-media-thread",
+ "servo-net",
+ "servo-net-traits",
+ "servo-paint",
+ "servo-paint-api",
+ "servo-profile",
+ "servo-profile-traits",
+ "servo-script",
+ "servo-script-traits",
+ "servo-storage",
+ "servo-storage-traits",
+ "servo-tracing",
+ "servo-url",
+ "servo-webgl",
+ "servo-webgpu",
+ "servo-webxr",
+ "servo-webxr-api",
+ "stylo",
+ "stylo_traits",
+ "surfman",
+ "tokio",
+ "tracing",
+ "url",
+<<<<<<< HEAD
+=======
+ "webgl",
+ "webgpu",
+ "webnn",
+ "webnn_traits",
+>>>>>>> 41d80fb9384 (add basic backend)
+ "webrender",
+ "webrender_api",
+ "winit",
+]
+
+[[package]]
+>>>>>>> d9839177439 (add basic backend)
 name = "libsqlite3-sys"
 version = "0.35.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -7401,15 +7484,249 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "94143f37725109f92c262ed2cf5e59bce7498c01bcc1502d7b9afe439a4e9f49"
 
 [[package]]
+<<<<<<< HEAD
+=======
+<<<<<<< HEAD
+=======
+name = "script"
+version = "0.0.1"
+dependencies = [
+ "accountable-refcell",
+ "aes",
+ "aes-gcm",
+ "aes-kw",
+ "app_units",
+ "argon2",
+ "arrayvec",
+ "atomic_refcell",
+ "aws-lc-rs",
+ "background_hang_monitor_api",
+ "backtrace",
+ "base",
+ "base64 0.22.1",
+ "base64ct",
+ "bincode",
+ "bitflags 2.10.0",
+ "bluetooth_traits",
+ "brotli",
+ "canvas_traits",
+ "cbc",
+ "chacha20poly1305",
+ "chardetng",
+ "chrono",
+ "cipher",
+ "constellation_traits",
+ "content-security-policy",
+ "cookie 0.18.1",
+ "crossbeam-channel",
+ "cssparser",
+ "ctr",
+ "data-url",
+ "deny_public_fields",
+ "der",
+ "devtools_traits",
+ "digest",
+ "dom_struct",
+ "domobject_derive",
+ "ecdsa",
+ "elliptic-curve",
+ "embedder_traits",
+ "encoding_rs",
+ "euclid",
+ "flate2",
+ "fonts",
+ "fonts_traits",
+ "glow",
+ "headers 0.4.1",
+ "hkdf",
+ "html5ever",
+ "http 1.4.0",
+ "hyper_serde",
+ "image",
+ "indexmap 2.11.4",
+ "ipc-channel",
+ "itertools 0.14.0",
+ "jstraceable_derive",
+ "keyboard-types",
+ "kurbo 0.12.0",
+ "layout_api",
+ "libc",
+ "log",
+ "malloc_size_of_derive",
+ "markup5ever",
+ "media",
+ "metrics",
+ "mime",
+ "mime_guess",
+ "ml-dsa",
+ "ml-kem",
+ "mozangle",
+ "mozjs",
+ "net_traits",
+ "nom-rfc8288",
+ "num-bigint-dig",
+ "num-traits",
+ "num_cpus",
+ "ocb3",
+ "p256",
+ "p384",
+ "p521",
+ "paint_api",
+ "parking_lot",
+ "percent-encoding",
+ "phf",
+ "pixels",
+ "pkcs8",
+ "profile_traits",
+ "rand 0.9.2",
+ "regex",
+ "rsa",
+ "rustc-hash 2.1.1",
+ "rustnn",
+ "script_bindings",
+ "script_traits",
+ "sec1",
+ "selectors",
+ "serde",
+ "serde_json",
+ "servo-media",
+ "servo_arc",
+ "servo_config",
+ "servo_geometry",
+ "servo_malloc_size_of",
+ "servo_url",
+ "sha1",
+ "sha2",
+ "sha3",
+ "smallvec",
+ "storage_traits",
+ "strum",
+ "stylo",
+ "stylo_atoms",
+ "stylo_dom",
+ "stylo_malloc_size_of",
+ "stylo_traits",
+ "swapper",
+ "tempfile",
+ "tendril",
+ "time",
+ "timers",
+ "tracing",
+ "unicode-bidi",
+ "unicode-script",
+ "unicode-segmentation",
+ "url",
+ "urlpattern",
+ "utf-8",
+ "uuid",
+ "webdriver",
+ "webgpu_traits",
+ "webnn",
+ "webnn_traits",
+ "webrender_api",
+ "webxr-api",
+ "wgpu-core",
+ "wgpu-types",
+ "x25519-dalek",
+ "xml5ever",
+ "xpath",
+]
+
+[[package]]
+name = "script_bindings"
+version = "0.0.1"
+dependencies = [
+ "base",
+ "bitflags 2.10.0",
+ "crossbeam-channel",
+ "deny_public_fields",
+ "dom_struct",
+ "domobject_derive",
+ "encoding_rs",
+ "html5ever",
+ "indexmap 2.11.4",
+ "jstraceable_derive",
+ "keyboard-types",
+ "libc",
+ "log",
+ "malloc_size_of_derive",
+ "mozjs",
+ "num-traits",
+ "parking_lot",
+ "phf",
+ "phf_codegen",
+ "phf_shared",
+ "regex",
+ "serde_json",
+ "servo_arc",
+ "servo_config",
+ "servo_malloc_size_of",
+ "servo_url",
+ "smallvec",
+ "stylo",
+ "stylo_atoms",
+ "tendril",
+ "tracing",
+ "webxr-api",
+ "xml5ever",
+]
+
+[[package]]
+>>>>>>> 24816e683dc (start using rustnn in basic dom algos)
+>>>>>>> d9839177439 (add basic backend)
 name = "script_tests"
 version = "0.0.6"
 dependencies = [
  "encoding_rs",
  "euclid",
  "keyboard-types",
+<<<<<<< HEAD
  "servo-base",
  "servo-script",
  "servo-url",
+=======
+ "script",
+ "servo_url",
+]
+
+[[package]]
+name = "script_traits"
+version = "0.0.1"
+dependencies = [
+ "accesskit",
+ "background_hang_monitor_api",
+ "base",
+ "bluetooth_traits",
+ "canvas_traits",
+ "constellation_traits",
+ "content-security-policy",
+ "crossbeam-channel",
+ "devtools_traits",
+ "embedder_traits",
+ "euclid",
+ "fonts_traits",
+ "keyboard-types",
+ "log",
+ "malloc_size_of_derive",
+ "media",
+ "net_traits",
+ "paint_api",
+ "pixels",
+ "profile_traits",
+ "rustc-hash 2.1.1",
+ "serde",
+ "servo_config",
+ "servo_malloc_size_of",
+ "servo_url",
+ "storage_traits",
+ "strum",
+ "stylo_atoms",
+ "stylo_traits",
+ "webgpu_traits",
+ "webnn_traits",
+ "webrender_api",
+ "webxr-api",
+>>>>>>> 41d80fb9384 (add basic backend)
 ]
 
 [[package]]
@@ -11303,6 +11620,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "webnn"
+version = "0.0.1"
+dependencies = [
+ "base",
+ "log",
+ "webnn_traits",
+]
+
+[[package]]
 name = "webnn-graph"
 version = "0.2.1"
 source = "git+https://github.com/rustnn/webnn-graph?branch=main#eba3691f16f1ba25a127e82fc55a3f8abf1e269b"
@@ -11335,7 +11661,17 @@ dependencies = [
 ]
 
 [[package]]
+<<<<<<< HEAD
 >>>>>>> 24816e683dc (start using rustnn in basic dom algos)
+=======
+name = "webnn_traits"
+version = "0.0.1"
+dependencies = [
+ "serde",
+]
+
+[[package]]
+>>>>>>> 41d80fb9384 (add basic backend)
 name = "webpki-root-certs"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"

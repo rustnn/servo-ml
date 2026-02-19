@@ -46,3 +46,4 @@ uuid = { workspace = true }
 webgpu_traits = { workspace = true }
 webrender_api = { workspace = true }
 wgpu-core = { workspace = true, optional = true }
+webnn_traits = { workspace = true }

@@ -42,6 +42,14 @@ For example, if you learn something related only to the webnn implementation, th
 add docs to `components/script/dom/webnn/README.md`, but if the lesson is relevant 
 to any web api, then add docs to `components/script/README.md`. You can also add `README.md` files; ensure those are reffered-to from the `README.md` file at the level above. For example: `components/script/README.md` should refer to the `README.md` files found in `components/script/dom/`.
 
+Prose & README style (for agents)
+
+- Document the *current* design/state only — do **not** leave change‑history or "I did X" comments in source or README files (for example, avoid comments like "create a single sender"). Historical context belongs in the PR description or a changelog, not inline.
+- Use neutral, factual language. Avoid subjective or minimizing words such as "small", "tiny", "minimal", "just", or "only" when describing a component or its responsibilities.
+- Automated agents must not add conversational, transient, or change‑history text to committed files — write stable, forward‑looking prose suitable for future readers.
+- Prefer importing shared message/types with `use` and referring to them unqualified in code (for example, `use webnn_traits::WebNNMsg;` then use `WebNNMsg`), rather than repeatedly using fully‑qualified paths like `webnn_traits::WebNNMsg`. (Keeps signatures and types concise.)
+- If you need to capture why a change was made, put that explanation in the PR/commit message or an appropriate changelog entry.
+
 - Always double-check your work with `./mach check`(without additional arguments). 
 - Do not do anything with Git.
 

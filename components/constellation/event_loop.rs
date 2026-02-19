@@ -97,6 +97,7 @@ impl EventLoop {
             system_font_service: constellation.system_font_service.to_sender(),
             resource_threads,
             storage_threads,
+            webnn_sender: constellation.webnn_sender.clone(),
             time_profiler_sender: constellation.time_profiler_chan.clone(),
             memory_profiler_sender: constellation.mem_profiler_chan.clone(),
             constellation_to_script_sender: script_chan,

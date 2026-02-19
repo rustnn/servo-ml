@@ -73,6 +73,7 @@ use timers::{TimerEventRequest, TimerId};
 use uuid::Uuid;
 #[cfg(feature = "webgpu")]
 use webgpu_traits::{DeviceLostReason, WebGPUDevice};
+use webnn_traits::WebNNMsg;
 
 use super::bindings::codegen::Bindings::MessagePortBinding::StructuredSerializeOptions;
 #[cfg(feature = "webgpu")]
@@ -287,6 +288,10 @@ pub(crate) struct GlobalScope {
     /// including indexeddb thread and storage_thread
     #[no_trace]
     storage_threads: StorageThreads,
+
+    /// Channel to a WebNN manager (stub).
+    #[no_trace]
+    webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
 
     /// The mechanism by which time-outs and intervals are scheduled.
     /// <https://html.spec.whatwg.org/multipage/#timers>
@@ -764,6 +769,7 @@ impl GlobalScope {
         script_to_embedder_chan: ScriptToEmbedderChan,
         resource_threads: ResourceThreads,
         storage_threads: StorageThreads,
+        webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
         origin: MutableOrigin,
         creation_url: ServoUrl,
         top_level_creation_url: Option<ServoUrl>,
@@ -795,6 +801,7 @@ impl GlobalScope {
             in_error_reporting_mode: Default::default(),
             resource_threads,
             storage_threads,
+            webnn_sender,
             timers: OnceCell::default(),
             origin,
             creation_url: DomRefCell::new(creation_url),
@@ -2834,6 +2841,11 @@ impl GlobalScope {
     /// Get a reference to the [`StorageThreads`] for this [`GlobalScope`].
     pub(crate) fn storage_threads(&self) -> &StorageThreads {
         &self.storage_threads
+    }
+
+    /// Channel to the WebNN manager (stub).
+    pub(crate) fn webnn_sender(&self) -> &base::generic_channel::GenericSender<WebNNMsg> {
+        &self.webnn_sender
     }
 
     /// A sender to the event loop of this global scope. This either sends to the Worker event loop

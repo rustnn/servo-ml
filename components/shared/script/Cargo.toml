@@ -47,3 +47,4 @@ stylo_traits = { workspace = true }
 webgpu_traits = { workspace = true, optional = true }
 webrender_api = { workspace = true }
 webxr-api = { workspace = true }
+webnn_traits = { workspace = true }

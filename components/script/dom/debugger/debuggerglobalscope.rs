@@ -27,6 +27,7 @@ use servo_base::generic_channel::{GenericCallback, GenericSender, channel};
 use servo_base::id::{Index, PipelineId, PipelineNamespaceId};
 use servo_url::{ImmutableOrigin, MutableOrigin, ServoUrl};
 use storage_traits::StorageThreads;
+use webnn_traits::WebNNMsg;
 
 use crate::dom::bindings::codegen::Bindings::DebuggerGetEnvironmentEventBinding::EnvironmentInfo;
 use crate::dom::bindings::codegen::Bindings::DebuggerGlobalScopeBinding;
@@ -90,6 +91,7 @@ impl DebuggerGlobalScope {
         script_to_embedder_chan: ScriptToEmbedderChan,
         resource_threads: ResourceThreads,
         storage_threads: StorageThreads,
+        webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
         #[cfg(feature = "webgpu")] gpu_id_hub: std::sync::Arc<IdentityHub>,
         cx: &mut JSContext,
     ) -> DomRoot<Self> {
@@ -103,6 +105,7 @@ impl DebuggerGlobalScope {
                 script_to_embedder_chan,
                 resource_threads,
                 storage_threads,
+                webnn_sender,
                 MutableOrigin::new(ImmutableOrigin::new_opaque()),
                 ServoUrl::parse_with_base(None, "about:internal/debugger")
                     .expect("Guaranteed by argument"),

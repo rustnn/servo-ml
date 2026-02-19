@@ -52,8 +52,7 @@ use style_traits::{CSSPixel, SpeculativePainter};
 use stylo_atoms::Atom;
 #[cfg(feature = "webgpu")]
 use webgpu_traits::WebGPUMsg;
-use webrender_api::ImageKey;
-use webrender_api::units::DevicePixel;
+use webnn_traits::WebNNMsg;
 
 /// The initial data required to create a new `Pipeline` attached to an existing `ScriptThread`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -377,6 +376,8 @@ pub struct InitialScriptState {
     pub resource_threads: ResourceThreads,
     /// A channel to the storage manager thread.
     pub storage_threads: StorageThreads,
+    /// A channel to the WebNN manager (stub).
+    pub webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
     /// A channel to the bluetooth thread.
     #[cfg(feature = "bluetooth")]
     pub bluetooth_sender: GenericSender<BluetoothRequest>,
