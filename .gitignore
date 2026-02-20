@@ -35,9 +35,9 @@ webrender-captures/
 
 # Python setuptools
 /servo.egg-info
-=======
-specs/
->>>>>>> 303cd8097ec (initial setup)
+
+# Temporary AI-related artifacts
+scratchpad/
 
 # Allow CSV files to be used as resources in tests
 !/tests/**/*.csv

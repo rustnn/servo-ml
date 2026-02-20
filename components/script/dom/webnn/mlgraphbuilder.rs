@@ -14,6 +14,8 @@ use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLOperandDescriptor, MLOperatorOptions,
 };
 use crate::dom::bindings::error::{Error, Fallible};
+use script_bindings::record::Record;
+use script_bindings::str::USVString;
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
 use crate::dom::bindings::root::{Dom, DomRoot};
 use crate::dom::bindings::str::DOMString;
@@ -625,10 +627,22 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             None,
         );
         let id = self.push_operand_to_graph(rust_operand, false);
-        // Step 4.3: TODO — persist the constant bytes for operand id |id| into GraphInfo so
-        // Build() can materialize the constant; populate
-        // `graph_info.constant_operand_ids_to_handles` and
-        // `graph_info.id_to_constant_tensor_operand_map`.
+        // Step 4.3: Persist the constant bytes for operand id |id| into GraphInfo so
+        // Build() can materialize the constant later (e.g. during conversion to a backend
+        // format).  We only have access to the raw buffer here, so stash the bytes in the
+        // `constant_operand_ids_to_handles` map.  The `id_to_constant_tensor_operand_map`
+        // remains empty since this path does not involve an MLTensor handle.
+        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
+            // Convert the JS buffer/source into a Vec<u8> just like WriteTensor does.
+            let bytes: Vec<u8> = match buffer {
+                ArrayBufferViewOrArrayBuffer::ArrayBufferView(view) => view.to_vec(),
+                ArrayBufferViewOrArrayBuffer::ArrayBuffer(buf) => buf.to_vec(),
+            };
+            gi.constant_operand_ids_to_handles.insert(
+                id,
+                rustnn::graph::ConstantData { data: bytes, label: None },
+            );
+        }
 
         // Step 4.1: Let |operand| be the result of creating an MLOperand given this and |descriptor|.
         let operand = create_an_mloperand(
@@ -682,10 +696,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             None,
         );
         let id = self.push_operand_to_graph(rust_operand, false);
-        // Step 5.3: TODO — persist the bytes of |tensor| in the builder's GraphInfo so the
-        // runtime can materialize the constant during Build().
-        // TODO (spec: #api-mlgraphbuilder-constant-tensor): record tensor bytes in
-        // `graph_info.constant_operand_ids_to_handles` and `id_to_constant_tensor_operand_map`.
+        // Step 5.3: Persist a reference so we can materialize the constant later.  The
+        // library currently has no synchronous access to |tensor|'s data (it lives in the
+        // manager thread), so we record the tensor id in
+        // `id_to_constant_tensor_operand_map` and let the manager fill in the bytes at
+        // dispatch time.  This mirrors the behaviour of the Python reference binding.
+        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
+            // store tensor id as string; it will be parsed later by the manager
+            gi.id_to_constant_tensor_operand_map
+                .insert(id, tensor.tensor_id().to_string());
+        }
 
         // Step 5.1: Let |operand| be the result of creating an MLOperand given this and |tensor|.[[descriptor]].
         let operand = create_an_mloperand(
@@ -706,7 +726,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-build>
-    fn Build(&self, outputs: Vec<DomRoot<MLOperand>>, can_gc: CanGc) -> Rc<Promise> {
+    fn Build(&self, outputs: Record<USVString, DomRoot<MLOperand>>, can_gc: CanGc) -> Rc<Promise> {
         // Step 1: Let |global| be this's relevant global object.
         let global = &self.global();
 
@@ -725,42 +745,97 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // Step 4: For each |operand| of |outputs|, run the per-operand validations from the spec.
-        for operand in outputs.iter() {
-            // Step 4.1: If |name| is empty, then return a rejected promise with a TypeError.
-            // TODO (spec: #api-mlgraphbuilder-build): the current binding accepts sequence<MLOperand>
-            // (no names). Implement MLNamedOperands support to validate empty names when needed.
+        // Along the way we also ensure names are unique and don’t conflict with inputs.
+        let mut seen_output_names = std::collections::HashSet::new();
+        if let Some(ref gi) = self.graph_info.borrow().as_ref() {
+            for (name, operand) in outputs.iter() {
+                // Step 4.1: If |name| is empty, then return a rejected promise with a TypeError.
+                if name.is_empty() {
+                    let p = Promise::new(global, can_gc);
+                    p.reject_error(Error::Type("operand name is empty".to_owned()), can_gc);
+                    return p;
+                }
 
-            // Step 4.2: If MLGraphBuilder/validating operand given |this| and |operand| returns false, then reject.
-            if !self.validate_operand(operand) {
-                let p = Promise::new(global, can_gc);
-                p.reject_error(Error::Type("invalid operand".to_owned()), can_gc);
-                return p;
+                // Duplicate check for outputs.
+                if !seen_output_names.insert(name.as_ref().to_string()) {
+                    let p = Promise::new(global, can_gc);
+                    p.reject_error(Error::Type("duplicate output name".to_owned()), can_gc);
+                    return p;
+                }
+
+                // Check collision with any existing input name recorded in GraphInfo.
+                for &input_id in gi.input_operands.iter() {
+                    if let Some(op) = gi.operands.get(input_id as usize) {
+                        if let Some(op_name) = &op.name {
+                            if op_name.as_str() == name.as_ref() {
+                                let p = Promise::new(global, can_gc);
+                                p.reject_error(
+                                    Error::Type("output name conflicts with input".to_owned()),
+                                    can_gc,
+                                );
+                                return p;
+                            }
+                        }
+                    }
+                }
+
+                // Step 4.2: If MLGraphBuilder/validating operand given |this| and |operand| returns false, then reject.
+                if !self.validate_operand(operand) {
+                    let p = Promise::new(global, can_gc);
+                    p.reject_error(Error::Type("invalid operand".to_owned()), can_gc);
+                    return p;
+                }
+
+                // Step 4.3: If |operand| is in this graph's input operands or constants, then reject.
+                if operand.is_input() || operand.is_constant() {
+                    let p = Promise::new(global, can_gc);
+                    p.reject_error(
+                        Error::Type("operand cannot be an input or constant".to_owned()),
+                        can_gc,
+                    );
+                    return p;
+                }
+
+                // Step 4.4: If |operand|.[[constantTensor]] exists and |operand|.[[constantTensor]].[[isDestroyed]] is true, then reject.
+                // TODO (spec: #api-mlgraphbuilder-build): MLOperand currently does not keep a reference to an
+                // associated constant MLTensor. Add tracking or a helper so this validation can be implemented.
             }
-
-            // Step 4.3: If |operand| is in this graph's input operands or constants, then reject.
-            if operand.is_input() || operand.is_constant() {
-                let p = Promise::new(global, can_gc);
-                p.reject_error(
-                    Error::Type("operand cannot be an input or constant".to_owned()),
-                    can_gc,
-                );
-                return p;
-            }
-
-            // Step 4.4: If |operand|.[[constantTensor]] exists and |operand|.[[constantTensor]].[[isDestroyed]] is true, then reject.
-            // TODO (spec: #api-mlgraphbuilder-build): MLOperand currently does not keep a reference to an
-            // associated constant MLTensor. Add tracking or a helper so this validation can be implemented.
         }
 
         // Step 5: Let |graph| be a new MLGraph and associate it with this.[[context]].
         // Step 6: Set this.[[hasBuilt]] to true.
         //
         // Implementation note: `graph_info == None` represents [[hasBuilt]]; Build() moves GraphInfo.
-        let graph_info = self
+        let mut graph_info = self
             .graph_info
             .borrow_mut()
             .take()
             .expect("can_build() ensured graph_info is Some");
+
+        // Assign the names provided in the |outputs| record to the corresponding
+        // operands in our implementation GraphInfo.  This ensures Dispatch and any
+        // other consumer looking up operands by name will succeed.
+        for (name, operand) in outputs.iter() {
+            if let Some(id) = operand.id() {
+                if let Some(op) = graph_info.operands.get_mut(id as usize) {
+                    op.name = Some(name.clone().to_string());
+                }
+            }
+        }
+
+        // Remember which operand ids correspond to the declared outputs so that
+        // backend code can make decisions based on whether the graph has outputs.
+        // We intentionally mirror the spec's "outputDescriptors" list here.  An
+        // earlier bug left `GraphInfo::output_operands` empty which caused the
+        // manager thread to think every graph had zero outputs and skip
+        // execution; the unit test in `components/webnn/src/lib.rs` exists solely
+        // to catch regressions in that behaviour.  Populate the vector now.
+        for operand in outputs.values() {
+            if let Some(id) = operand.id() {
+                graph_info.output_operands.push(id);
+            }
+        }
+
         let graph = MLGraph::new_with_info(&self.context(), graph_info, global, can_gc);
 
         // Step 7: Convert the builder's computational graph into an implementation-defined format
@@ -2042,5 +2117,49 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             can_gc,
         );
         Ok(operand)
+    }
+}
+
+// Unit tests for the graph builder ensure that the implementation-side
+// `GraphInfo` correctly records the set of output operand IDs.  This is the
+// root cause of the "dispatch ctx=… has no outputs" log seen during normal
+// execution; the builder used to leave `output_operands` empty which made the
+// WebNN manager skip all work.  The regression test in `components/webnn`
+// verifies the manager doesn't panic, but the following test exercises the
+// builder itself.
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::dom::webnn::mlcontext::MLContext;
+    use crate::dom::globalscope::GlobalScope;
+    use crate::script_runtime::CanGc;
+
+    #[test]
+    fn build_populates_output_operands() {
+        // create a minimal context/builder
+        let globals = GlobalScope::new();
+        let ctx = MLContext::new(&globals, CanGc::NoGc);
+        let builder = MLGraphBuilder::new(&ctx, &globals, CanGc::NoGc);
+
+        // add a single input and a trivial operation so we have something to
+        // build.  using `Identity` operation here is simplest.
+        let input = builder.Input(&crate::dom::webnn::MLOperandDescriptor {
+            dataType: crate::dom::webnn::MLOperandDataType::Float32,
+            shape: vec![1],
+        }, CanGc::NoGc).expect("input");
+        let output = builder.Identity(&input, &crate::dom::webnn::MLOperatorOptions, CanGc::NoGc)
+            .expect("identity");
+
+        // build with one named output
+        let mut outputs = std::collections::BTreeMap::new();
+        outputs.insert("y".into(), output.clone());
+        let promise = builder.Build(&outputs, CanGc::NoGc);
+        // synchronous resolve
+        let graph = promise.unwrap_native::<crate::dom::webnn::MLGraph>(CanGc::NoGc)
+            .expect("promise resolved");
+
+        let gi = graph.graph_info().borrow();
+        assert_eq!(gi.output_operands.len(), 1);
+        assert_eq!(gi.output_operands[0], output.id().unwrap());
     }
 }

@@ -467,6 +467,7 @@ impl NavigatorMethods<crate::DomTypeHolder> for Navigator {
 
     // https://w3c.github.io/webnn/
     fn Ml(&self) -> DomRoot<ML> {
+        println!("Navigator ML");
         // Lazily create the `ML` object exposed at `navigator.ml`.
         self.ml.or_init(|| ML::new(&self.global(), CanGc::note()))
     }

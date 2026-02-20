@@ -148,6 +148,12 @@ impl MLOperand {
     pub(crate) fn name(&self) -> Option<DOMString> {
         self.name.clone()
     }
+
+    /// Internal helper used by the builder when the JS-visible `outputs` record
+    /// assigns a name to a previously unnamed operand.
+    pub(crate) fn set_name(&mut self, name: DOMString) {
+        self.name = Some(name);
+    }
 }
 
 impl MLOperandMethods<crate::DomTypeHolder> for MLOperand {

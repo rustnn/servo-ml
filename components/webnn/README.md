@@ -38,6 +38,16 @@ Design notes
 - Implementation note: prefer declaring manager helper types (for example
   `ContextInfo`) at module scope rather than inside `run_manager()` so types
   are discoverable, easier to test, and stable for future backend additions.
+- When dispatching graphs we currently only support the macOS CoreML backend.
+  Graphs with constant operands must have their bytes recorded (`constant-*`
+  operations in `GraphInfo`) before conversion; the manager now auto-populates
+  missing constant data from `tensor_store` to avoid CoreML parsing errors
+  (previously some graphs failed with "Operations are expected to be topologically
+  sorted").  The unit test added to `components/webnn/src/lib.rs` exercises this
+  scenario.
+- The manager makes a best-effort attempt to zero‑fill output tensors if no
+  backend is available, preventing script-side reads from hanging; real
+  backends should replace this no-op behavior.
 - In multiprocess mode manager threads started with Constellation run in
   the Constellation process (not the Script/content process).
 

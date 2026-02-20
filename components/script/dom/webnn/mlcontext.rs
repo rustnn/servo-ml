@@ -82,7 +82,7 @@ impl MLContext {
         // Step 1.2: Set |context|.[[contextType]] to "default".
         // Step 1.3: Set |context|.[[powerPreference]] to the provided value.
         // Step 1.4: Set |context|.[[accelerated]] to the provided `accelerated` value.
-        MLContext {
+        let ctx = MLContext {
             reflector_: Reflector::new(),
             context_id,
             next_tensor_id: crate::dom::bindings::trace::NoTrace(std::cell::Cell::new(1)),
@@ -93,7 +93,8 @@ impl MLContext {
             power_preference,
             accelerated,
             lost,
-        }
+        };
+        ctx
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-ml-createcontext>

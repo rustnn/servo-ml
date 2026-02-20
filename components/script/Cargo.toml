@@ -100,6 +100,9 @@ mime-multipart-hyper1 = { workspace = true }
 mime_guess = { workspace = true }
 ml-dsa = { workspace = true }
 ml-kem = { workspace = true }
+rustnn = { git = "https://github.com/rustnn/rustnn", features = [] }
+
+[target.'cfg(target_os = "macos")'.dependencies]
 rustnn = { git = "https://github.com/rustnn/rustnn", features = ["coreml-runtime"] }
 net_traits = { workspace = true }
 nom-rfc8288 = { workspace = true }

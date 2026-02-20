@@ -13,9 +13,14 @@ path = "src/lib.rs"
 base = { workspace = true }
 log = { workspace = true }
 webnn_traits = { workspace = true }
-rustnn = { git = "https://github.com/rustnn/rustnn", features = ["coreml-runtime"] }
+# `rustnn` is always required for graph/data types.  We only enable the
+# "coreml-runtime" feature when building for macOS, so callers don’t need to
+# pass an extra feature flag.
+rustnn = { git = "https://github.com/rustnn/rustnn", features = [] }
 half = "2"
 
-[features]
-# Toggle CoreML runtime support (propagates to the rustnn dependency)
-coreml-runtime = ["rustnn/coreml-runtime"]
+# CoreML-specific features are gated purely by the target OS.  The legacy
+# `coreml-runtime` workspace feature was removed.
+
+[target.'cfg(target_os = "macos")'.dependencies]
+rustnn = { git = "https://github.com/rustnn/rustnn", features = ["coreml-runtime"] }

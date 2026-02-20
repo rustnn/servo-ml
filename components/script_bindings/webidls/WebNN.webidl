@@ -15,6 +15,9 @@ interface ML {
 
 typedef record<USVString, MLTensor> MLNamedTensors;
 
+// Named operands used for graph builder outputs (spec uses {name: operand} records).
+typedef record<USVString, MLOperand> MLNamedOperands;
+
 [SecureContext, Exposed=(Window, Worker)]
 interface MLContext {
   Promise<MLTensor> createTensor(MLTensorDescriptor descriptor);
@@ -180,7 +183,8 @@ interface MLGraphBuilder {
   [Throws] MLOperand constant(MLOperandDescriptor descriptor, /*[AllowShared]*/ BufferSource buffer);
   [Throws] MLOperand constant(MLTensor tensor);
 
-  Promise<MLGraph> build(sequence<MLOperand> outputs);
+  // The spec requires a record mapping output names to operands.
+  Promise<MLGraph> build(MLNamedOperands outputs);
 };
 
 partial interface MLGraphBuilder {
