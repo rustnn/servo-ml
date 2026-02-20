@@ -65,4 +65,8 @@ pub enum WebNNMsg {
     /// and invoke `callback` with `ContextMessage::ReadTensorResult` containing
     /// the copied bytes (or an error).
     ReadTensor(GenericCallback<ContextMessage>, ContextId, u32),
+
+    /// Request the backend to overwrite the tensor bytes for (context_id, tensor_id).
+    /// Arguments: context id, tensor id (script-side u32), and bytes to copy into the tensor storage.
+    WriteTensor(ContextId, u32, Vec<u8>),
 }

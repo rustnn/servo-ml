@@ -18,7 +18,7 @@ use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLTensorDescriptor,
 };
 use crate::dom::bindings::codegen::UnionTypes::ArrayBufferViewOrArrayBuffer;
-use crate::dom::bindings::error::{Error, throw_dom_exception};
+use crate::dom::bindings::error::{Error, Fallible};
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
 use crate::dom::bindings::root::{Dom, DomRoot};
 use crate::dom::bindings::str::DOMString;
@@ -774,56 +774,83 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         tensor: &MLTensor,
         input_data: ArrayBufferViewOrArrayBuffer,
         can_gc: CanGc,
-    ) {
+    ) -> Fallible<()> {
         // Step 1: Let |global| be this's relevant global object.
+        let global = &self.global();
 
         // Step 2: Let |realm| be this's relevant realm.
 
         // Step 3: If |tensor|.[[context]] is not |this|, then throw a TypeError.
         if tensor.context() != Dom::from_ref(self) {
-            let cx = GlobalScope::get_cx();
-            throw_dom_exception(
-                cx,
-                &self.global(),
-                Error::Type("tensor is not owned by this context".to_owned()),
-                can_gc,
-            );
-            return;
+            return Err(Error::Type(
+                "tensor is not owned by this context".to_owned(),
+            ));
         }
 
         // Step 4: If |tensor|.[[isDestroyed]] is true, then throw a TypeError.
         if tensor.is_destroyed() {
-            let cx = GlobalScope::get_cx();
-            throw_dom_exception(
-                cx,
-                &self.global(),
-                Error::Type("MLTensor is destroyed".to_owned()),
-                can_gc,
-            );
-            return;
+            return Err(Error::Type("MLTensor is destroyed".to_owned()));
         }
 
         // Step 5: If |tensor|.[[descriptor]].{{MLTensorDescriptor/writable}} is false, then throw a TypeError.
         if !tensor.writable() {
-            let cx = GlobalScope::get_cx();
-            throw_dom_exception(
-                cx,
-                &self.global(),
-                Error::Type("tensor is not writable".to_owned()),
-                can_gc,
-            );
-            return;
+            return Err(Error::Type("tensor is not writable".to_owned()));
         }
 
-        // Step 6: If validating buffer with descriptor given |inputData| and |tensor|.[[descriptor]] returns false, then throw a {{TypeError}}.
-        // Step 7: Let |bytes| be the result of getting a copy of the bytes held by the buffer source given |inputData|.
-        // Step 8: [=Assert=]: |bytes|'s [=byte sequence/length=] is equal to |tensor|.[[descriptor]]'s [=MLOperandDescriptor/byte length=].
-        // Step 9: Enqueue the following steps to |tensor|.[[context]]'s [[timeline]]:
-        //     1. Run these steps, but abort when this is lost:
-        //         1. Copy |bytes| to |tensor|.[[data]].
-        // TODO (spec: #api-mlcontext-writetensor): perform buffer validation, obtain |bytes|, assert lengths, and queue timeline copy.
+        // Step 6: If validating buffer with descriptor given |inputData| and |tensor|.[[descriptor]] returns false, then throw a TypeError.
+        // Implementation: compute the expected byte-length from the tensor's dataType/shape and compare below.
+        let dtype = tensor.data_type();
+        let element_size: u128 = match dtype {
+            "float32" => 4,
+            "float16" => 2,
+            "int32" => 4,
+            "uint32" => 4,
+            "int8" => 1,
+            "uint8" => 1,
+            "int64" => 8,
+            "uint64" => 8,
+            _ => 4,
+        };
+        let mut element_length: u128 = 1;
+        for &dim in tensor.shape().iter() {
+            element_length = match element_length.checked_mul(dim as u128) {
+                Some(v) => v,
+                None => return Err(Error::Type("tensor descriptor too large".to_owned())),
+            };
+        }
+        let expected_byte_length = match element_length.checked_mul(element_size) {
+            Some(v) if v <= (usize::MAX as u128) => v as usize,
+            _ => return Err(Error::Type("tensor descriptor too large".to_owned())),
+        };
 
-        // Step 8: Return undefined.
+        // Step 7: Let |bytes| be the result of getting a copy of the bytes held by the buffer source given |inputData|.
+        let bytes: Vec<u8> = match input_data {
+            ArrayBufferViewOrArrayBuffer::ArrayBufferView(view) => view.to_vec(),
+            ArrayBufferViewOrArrayBuffer::ArrayBuffer(buf) => buf.to_vec(),
+        };
+
+        // Step 8: Assert: |bytes|'s length equals the tensor descriptor's byte length.
+        if bytes.len() != expected_byte_length {
+            return Err(Error::Type(
+                "input data length does not match tensor descriptor".to_owned(),
+            ));
+        }
+
+        // Step 9: Enqueue the timeline copy to |tensor|.[[context]]'s [[timeline]].
+        // Implementation note: timeline enqueue is implemented by sending `WebNNMsg::WriteTensor`
+        // to the WebNN manager so the backend can perform the copy asynchronously on the ML task queue.
+        let id = tensor.tensor_id();
+        if let Err(e) =
+            global
+                .webnn_sender()
+                .send(WebNNMsg::WriteTensor(self.context_id, id, bytes))
+        {
+            error!("WebNN WriteTensor send failed ({:?})", e);
+            return Err(Error::Operation(None));
+        }
+
+        // Step 10: Return undefined.
+        Ok(())
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlcontext-opsupportlimits>

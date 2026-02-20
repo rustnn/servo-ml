@@ -21,7 +21,7 @@ interface MLContext {
   Promise<ArrayBuffer> readTensor(MLTensor tensor);
   Promise<undefined> readTensor(MLTensor tensor, /*[AllowShared]*/ BufferSource outputData);
 
-  undefined writeTensor(MLTensor tensor, /*[AllowShared]*/ BufferSource inputData);
+  [Throws] undefined writeTensor(MLTensor tensor, /*[AllowShared]*/ BufferSource inputData);
 
   MLOpSupportLimits opSupportLimits();
 

@@ -105,6 +105,31 @@ fn run_manager(receiver: GenericReceiver<WebNNMsg>) {
                         },
                     }
                 },
+
+                WebNNMsg::WriteTensor(ctx_id, tensor_id, bytes) => {
+                    debug!(
+                        "webnn manager: WriteTensor ctx={:?} id={} len={}",
+                        ctx_id,
+                        tensor_id,
+                        bytes.len()
+                    );
+                    match tensor_store.get_mut(&(ctx_id, tensor_id)) {
+                        Some(buf) => {
+                            // If sizes match, overwrite in-place; otherwise replace.
+                            if buf.len() == bytes.len() {
+                                buf.copy_from_slice(&bytes);
+                            } else {
+                                *buf = bytes;
+                            }
+                        },
+                        None => {
+                            warn!(
+                                "webnn manager: WriteTensor - missing buffer for {:?}/{}",
+                                ctx_id, tensor_id
+                            );
+                        },
+                    }
+                },
             },
             Err(_) => break,
         }
