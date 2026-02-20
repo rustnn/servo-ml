@@ -15,7 +15,7 @@ use crate::dom::bindings::buffer_source::{BufferSource, HeapBufferSource, create
 use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLContextLostInfo, MLContextMethods, MLNamedTensors, MLOpSupportLimits, MLOperandDescriptor,
-    MLPowerPreference, MLTensorDescriptor,
+    MLPowerPreference, MLTensorDescriptor, MLTensorLimits, MLRankRange, MLOperandDataType,
 };
 use crate::dom::bindings::codegen::UnionTypes::ArrayBufferViewOrArrayBuffer;
 use crate::dom::bindings::error::{Error, Fallible};
@@ -857,8 +857,29 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
     /// <https://webmachinelearning.github.io/webnn/#api-mlcontext-opsupportlimits>
     fn OpSupportLimits(&self) -> MLOpSupportLimits {
         // Step 1: Return this implementation's supported operation limits.
-        // Minimal implementation: return the default limits (placeholder).
-        Default::default()
+        // Provide conservative, sensible defaults for core WebNN features.
+        // - support all MLOperandDataType variants for input/constant/output
+        // - allow rank in range [0, 8]
+        // - max tensor byte length = 2**32 - 1 (unsigned long max, ~4GB)
+
+        let data_types = Some(vec![
+            MLOperandDataType::Float32,
+            MLOperandDataType::Float16,
+            MLOperandDataType::Int32,
+            MLOperandDataType::Uint32,
+            MLOperandDataType::Int64,
+            MLOperandDataType::Uint64,
+            MLOperandDataType::Int8,
+            MLOperandDataType::Uint8,
+        ]);
+
+        MLOpSupportLimits {
+            constant: Some(MLTensorLimits { dataTypes: data_types.clone(), rankRange: Some(MLRankRange { min: Some(0), max: Some(8) }) }),
+            input: Some(MLTensorLimits { dataTypes: data_types.clone(), rankRange: Some(MLRankRange { min: Some(0), max: Some(8) }) }),
+            maxTensorByteLength: Some(4294967295u64), // 2**32 - 1
+            output: Some(MLTensorLimits { dataTypes: data_types, rankRange: Some(MLRankRange { min: Some(0), max: Some(8) }) }),
+            preferredInputLayout: None,
+        }
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlcontext-dispatch>

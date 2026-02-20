@@ -765,12 +765,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 7: Convert the builder's computational graph into an implementation-defined format
         // and enqueue initialization on the ML timeline. This is an async timeline task per the spec.
-        // Step 7: TODO — queue ML timeline initialization and do not resolve the returned promise here.
+        // Step 7: TODO — queue ML timeline initialization; for now we resolve synchronously.
         // TODO (spec: #api-mlgraphbuilder-build): implement ML timeline graph initialization which
         // must perform preprocessing on the MLContext/[[timeline]] and resolve/reject the promise.
 
-        // Step 8: Return |promise| (timeline task will resolve/reject it asynchronously).
+        // Step 8: Return |promise|.  In the spec the GraphBuilder may resolve asynchronously after
+        // timeline initialization completes, but our implementation resolves immediately,
+        // because those steps will be run as part of dispatching the graph instead.
         let p = Promise::new(global, can_gc);
+        // Resolve with the newly-created graph so callers can continue.
+        p.resolve_native(&graph, can_gc);
         p
     }
 
