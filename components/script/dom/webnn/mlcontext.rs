@@ -613,35 +613,26 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // 7.1.3 Otherwise -> the backend will cause the ML reply to resolve the promise with an ArrayBuffer of |bytes|.
         // 7.2 [=/If aborted=] -> the ML reply handler will reject the promise with an "InvalidStateError".
 
-        // If the tensor has a backend id, request the bytes from the manager. Otherwise
-        // fail the timeline request immediately (no backend storage available).
-        match tensor.tensor_id() {
-            Some(id) => {
-                let ml_dom = global.as_window().Navigator().Ml();
-                let cb = ml_dom.get_or_setup_callback(global);
-                if let Err(e) =
-                    self.global()
-                        .webnn_sender()
-                        .send(WebNNMsg::ReadTensor(cb, self.context_id, id))
-                {
-                    error!("WebNN ReadTensor send failed ({:?})", e);
-                    // Clean up the pending promise and reject it with an Operation error.
-                    tensor.remove_pending_promise(Rc::as_ptr(&p) as *const Promise);
-                    p.reject_error(Error::Operation(None), can_gc);
-                }
-            },
-            None => {
-                // No backend buffer available for this tensor -> reject with UnknownError.
-                tensor.remove_pending_promise(Rc::as_ptr(&p) as *const Promise);
-                p.reject_error(Error::Operation(None), can_gc);
-            },
+        // Request the bytes from the manager. `tensor_id` is guaranteed non-zero by the constructor.
+        let id = tensor.tensor_id();
+        let ml_dom = global.as_window().Navigator().Ml();
+        let cb = ml_dom.get_or_setup_callback(global);
+        if let Err(e) =
+            self.global()
+                .webnn_sender()
+                .send(WebNNMsg::ReadTensor(cb, self.context_id, id))
+        {
+            error!("WebNN ReadTensor send failed ({:?})", e);
+            // Clean up the pending promise and reject it with an Operation error.
+            tensor.remove_pending_promise(Rc::as_ptr(&p) as *const Promise);
+            p.reject_error(Error::Operation(None), can_gc);
         }
 
         // Step 8: Return |promise|.
         p
     }
 
-    /// BYOB overload: readTensor(tensor, outputData)
+    /// <https://webmachinelearning.github.io/webnn/#api-mlcontext-readtensor-byob>
     fn ReadTensor_(
         &self,
         tensor: &MLTensor,
@@ -699,7 +690,27 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // 9.1.2 If that fails -> queue an ML task with |global| to remove |promise| from |tensor|.[[pendingPromises]] and reject |promise| with an "UnknownError".
         // 9.1.3 Otherwise -> queue an ML task with |global| to remove |promise| from |tensor|.[[pendingPromises]]; if |outputData| is detached then reject |promise| with a TypeError and abort; otherwise write |bytes| to |outputData| and resolve |promise| with undefined.
         // 9.2 [=/If aborted=] -> queue an ML task with |global| to reject |promise| with an "InvalidStateError".
-        // Implementation note: BYOB timeline copy/validation is TODO; do NOT resolve |promise| here.
+        // Implementation note: BYOB *validation* and the timeline copy remain TODO (see Step 6).
+        // The timeline *enqueue* for BYOB reads is implemented here — this method requests backend
+        // bytes via `WebNNMsg::ReadTensor` (same as the non-BYOB `ReadTensor` overload). The backend
+        // reply is routed to `MLContext::read_tensor_callback`, which will consume the stored
+        // pending BYOB `outputData` (via `MLTensor::take_first_pending_out`) and then resolve or
+        // reject the associated promise. Do NOT resolve |promise| synchronously in this method.
+
+        // Request the bytes from the manager. `tensor_id` is guaranteed non-zero by the constructor.
+        let id = tensor.tensor_id();
+        let ml_dom = global.as_window().Navigator().Ml();
+        let cb = ml_dom.get_or_setup_callback(global);
+        if let Err(e) =
+            self.global()
+                .webnn_sender()
+                .send(WebNNMsg::ReadTensor(cb, self.context_id, id))
+        {
+            error!("WebNN ReadTensor send failed ({:?})", e);
+            // Clean up the pending promise and reject it with an Operation error.
+            tensor.remove_pending_promise(Rc::as_ptr(&p) as *const Promise);
+            p.reject_error(Error::Operation(None), can_gc);
+        }
 
         // Step 10: Return |promise|.
         p

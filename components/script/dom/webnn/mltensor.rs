@@ -15,15 +15,15 @@ use crate::dom::webnn::mlcontext::MLContext;
 use crate::script_runtime::CanGc;
 
 #[dom_struct]
-/// Minimal MLTensor required for `MLContext.createTensor()` (expand later).
+/// <https://webmachinelearning.github.io/webnn/#dom-mltensor>
 pub(crate) struct MLTensor {
     reflector_: Reflector,
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mltensor-context-slot>
     context: Dom<MLContext>,
 
-    /// Script-visible tensor id (assigned by MLContext). Optional for some tensors.
-    tensor_id: crate::dom::bindings::trace::NoTrace<std::cell::Cell<Option<u32>>>,
+    /// Script-visible tensor id (assigned by MLContext). Uses 0 for "no backend id".
+    tensor_id: crate::dom::bindings::trace::NoTrace<std::cell::Cell<u32>>,
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mloperanddescriptor-datatype>
     data_type: String,
@@ -62,7 +62,7 @@ impl MLTensor {
         shape: Vec<i64>,
         readable: bool,
         writable: bool,
-        tensor_id: Option<u32>,
+        tensor_id: u32,
     ) -> MLTensor {
         MLTensor {
             reflector_: Reflector::new(),
@@ -109,13 +109,14 @@ impl MLTensor {
         self.is_constant
     }
 
-    /// Script-visible tensor id assigned by the context (if any).
-    pub(crate) fn tensor_id(&self) -> Option<u32> {
+    /// Script-visible tensor id assigned by the context (0 means no backend id).
+    pub(crate) fn tensor_id(&self) -> u32 {
         self.tensor_id.0.get()
     }
 
     pub(crate) fn set_tensor_id(&self, id: u32) {
-        self.tensor_id.0.set(Some(id));
+        debug_assert_ne!(id, 0, "MLTensor::set_tensor_id must not be called with 0");
+        self.tensor_id.0.set(id);
     }
 
     pub(crate) fn append_pending_promise(&self, p: Rc<Promise>) {
@@ -173,6 +174,10 @@ impl MLTensor {
         tensor_id: u32,
         can_gc: CanGc,
     ) -> DomRoot<MLTensor> {
+        // Debug-check the invariant that non-constant tensors must have a non-zero id.
+        // Callers must ensure `tensor_id != 0`; this is verified only in debug builds.
+        debug_assert_ne!(tensor_id, 0, "MLTensor::new called with tensor_id == 0");
+
         let data_type = descriptor.dataType.clone().to_string();
         let shape = descriptor.shape.clone();
         let readable = descriptor.readable;
@@ -180,23 +185,18 @@ impl MLTensor {
 
         reflect_dom_object(
             Box::new(MLTensor::new_inherited(
-                context,
-                data_type,
-                shape,
-                readable,
-                writable,
-                Some(tensor_id),
+                context, data_type, shape, readable, writable, tensor_id,
             )),
             global,
             can_gc,
         )
     }
 
-    /// Create a constant MLTensor (used by `MLContext.createConstantTensor`).
+    /// Helper to create a constant MLTensor (used by `MLContext.createConstantTensor`).
     ///
     /// Minimal implementation: mark the tensor as constant and make it
-    /// non-readable / non-writable. The ML timeline copy/allocation is left
-    /// as a TODO and must not resolve any promises here.
+    /// non-readable / non-writable. Timeline allocation/copy MUST be performed by
+    /// the caller's ML timeline task; this helper does not resolve any promises.
     pub(crate) fn new_constant(
         context: &MLContext,
         global: &GlobalScope,
@@ -211,7 +211,7 @@ impl MLTensor {
         // Use the same reflector construction as `new_inherited`, but mark `is_constant`.
         reflect_dom_object(
             Box::new(MLTensor::new_inherited(
-                context, data_type, shape, readable, writable, None,
+                context, data_type, shape, readable, writable, 0,
             )),
             global,
             can_gc,
