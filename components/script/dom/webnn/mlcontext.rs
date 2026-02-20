@@ -14,8 +14,8 @@ use webnn_traits::{ContextId, WebNNMsg};
 use crate::dom::bindings::buffer_source::{BufferSource, HeapBufferSource, create_buffer_source};
 use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
-    MLContextLostInfo, MLContextMethods, MLOpSupportLimits, MLOperandDescriptor, MLPowerPreference,
-    MLTensorDescriptor,
+    MLContextLostInfo, MLContextMethods, MLNamedTensors, MLOpSupportLimits, MLOperandDescriptor,
+    MLPowerPreference, MLTensorDescriptor,
 };
 use crate::dom::bindings::codegen::UnionTypes::ArrayBufferViewOrArrayBuffer;
 use crate::dom::bindings::error::{Error, Fallible};
@@ -25,6 +25,7 @@ use crate::dom::bindings::str::DOMString;
 use crate::dom::bindings::trace::{HashMapTracedValues, RootedTraceableBox};
 use crate::dom::globalscope::GlobalScope;
 use crate::dom::promise::Promise;
+use crate::dom::webnn::MLGraph;
 use crate::dom::webnn::ml::ML;
 use crate::dom::webnn::mltensor::MLTensor;
 use crate::script_runtime::CanGc;
@@ -858,6 +859,194 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 1: Return this implementation's supported operation limits.
         // Minimal implementation: return the default limits (placeholder).
         Default::default()
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#api-mlcontext-dispatch>
+    fn Dispatch(
+        &self,
+        graph: &MLGraph,
+        inputs: MLNamedTensors,
+        outputs: MLNamedTensors,
+    ) -> Fallible<()> {
+        // Step 1: If |graph|.[[context]] is not |this|, then throw a TypeError.
+        if graph.context() != Dom::from_ref(self) {
+            return Err(Error::Type(
+                "graph does not belong to this context".to_owned(),
+            ));
+        }
+
+        // Step 2: If |graph|.[[isDestroyed]] is true, then throw an InvalidStateError.
+        if graph.is_destroyed() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 3: Let |allTensors| be a list of tensors consisting of inputs' values extended by outputs' values.
+        let mut all_tensors: Vec<crate::dom::bindings::root::DomRoot<MLTensor>> = Vec::new();
+        for (_name, tensor) in inputs.iter() {
+            all_tensors.push(tensor.clone());
+        }
+        for (_name, tensor) in outputs.iter() {
+            all_tensors.push(tensor.clone());
+        }
+
+        // Step 4: If |allTensors| contains any duplicate items, then throw a TypeError.
+        for (i, t) in all_tensors.iter().enumerate() {
+            for other in all_tensors.iter().skip(i + 1) {
+                if t == other {
+                    return Err(Error::Type(
+                        "duplicate tensor in dispatch inputs/outputs".to_owned(),
+                    ));
+                }
+            }
+        }
+
+        // Step 5: For each tensor of |allTensors|: validate ownership and state.
+        for tensor in all_tensors.iter() {
+            if tensor.context() != Dom::from_ref(self) {
+                return Err(Error::Type(
+                    "tensor is not owned by this context".to_owned(),
+                ));
+            }
+            if tensor.is_destroyed() {
+                return Err(Error::Type("MLTensor is destroyed".to_owned()));
+            }
+        }
+
+        // Step 6: If validating tensors with descriptors given |inputs| and |graph|.[[inputDescriptors]] returns false, then throw a TypeError.
+        // Step 7: If validating tensors with descriptors given |outputs| and |graph|.[[outputDescriptors]] returns false, then throw a TypeError.
+        // Implementation: use the builder/implementation GraphInfo to obtain operand descriptors.
+        let gi_cell = graph.graph_info();
+        let gi = gi_cell.borrow();
+
+        // Helper: find operand index by name in GraphInfo.operands
+        let find_operand_id = |name: &str| -> Option<u32> {
+            for (idx, op) in gi.operands.iter().enumerate() {
+                if let Some(op_name) = &op.name {
+                    if op_name.as_str() == name {
+                        return Some(idx as u32);
+                    }
+                }
+            }
+            None
+        };
+
+        // Validate inputs against graph operand descriptors.
+        for (name, tensor) in inputs.iter() {
+            // Step 6.1: If |tensor|.[[isConstant]] is true, return false (per spec's validating algorithm) — treat as TypeError here.
+            if tensor.is_constant() {
+                return Err(Error::Type("input tensor is constant".to_owned()));
+            }
+
+            let name_str = name.as_ref();
+            let Some(op_id) = find_operand_id(name_str) else {
+                return Err(Error::Type("input name not found in graph".to_owned()));
+            };
+
+            // Compare descriptor: operand descriptor -> tensor descriptor
+            if let Some(op) = gi.operands.get(op_id as usize) {
+                // Compare data type
+                let op_dtype_str = match op.descriptor.data_type {
+                    rustnn::graph::DataType::Float32 => "float32",
+                    rustnn::graph::DataType::Float16 => "float16",
+                    rustnn::graph::DataType::Int32 => "int32",
+                    rustnn::graph::DataType::Uint32 => "uint32",
+                    rustnn::graph::DataType::Int8 => "int8",
+                    rustnn::graph::DataType::Uint8 => "uint8",
+                    rustnn::graph::DataType::Int64 => "int64",
+                    rustnn::graph::DataType::Uint64 => "uint64",
+                    _ => "float32",
+                };
+                if tensor.data_type() != op_dtype_str {
+                    return Err(Error::Type("input tensor descriptor mismatch".to_owned()));
+                }
+                // Compare shape
+                let op_shape: Vec<i64> = op.descriptor.shape.iter().map(|&d| d as i64).collect();
+                if tensor.shape() != &op_shape {
+                    return Err(Error::Type("input tensor shape mismatch".to_owned()));
+                }
+            } else {
+                return Err(Error::Type("input operand descriptor missing".to_owned()));
+            }
+        }
+
+        // Validate outputs similarly.
+        for (name, tensor) in outputs.iter() {
+            if tensor.is_constant() {
+                return Err(Error::Type("output tensor is constant".to_owned()));
+            }
+
+            let name_str = name.as_ref();
+            let Some(op_id) = find_operand_id(name_str) else {
+                return Err(Error::Type("output name not found in graph".to_owned()));
+            };
+
+            if let Some(op) = gi.operands.get(op_id as usize) {
+                let op_dtype_str = match op.descriptor.data_type {
+                    rustnn::graph::DataType::Float32 => "float32",
+                    rustnn::graph::DataType::Float16 => "float16",
+                    rustnn::graph::DataType::Int32 => "int32",
+                    rustnn::graph::DataType::Uint32 => "uint32",
+                    rustnn::graph::DataType::Int8 => "int8",
+                    rustnn::graph::DataType::Uint8 => "uint8",
+                    rustnn::graph::DataType::Int64 => "int64",
+                    rustnn::graph::DataType::Uint64 => "uint64",
+                    _ => "float32",
+                };
+                if tensor.data_type() != op_dtype_str {
+                    return Err(Error::Type("output tensor descriptor mismatch".to_owned()));
+                }
+                let op_shape: Vec<i64> = op.descriptor.shape.iter().map(|&d| d as i64).collect();
+                if tensor.shape() != &op_shape {
+                    return Err(Error::Type("output tensor shape mismatch".to_owned()));
+                }
+            } else {
+                return Err(Error::Type("output operand descriptor missing".to_owned()));
+            }
+        }
+
+        // Step 8: Enqueue the following steps to graph.[[context]].[[timeline]] — implementation: send a Dispatch message to the WebNN manager.
+        // Build operand-id -> tensor-id mappings to send to the backend.
+        let mut input_pairs: Vec<(u32, u32)> = Vec::new();
+        for (name, tensor) in inputs.iter() {
+            let name_str = name.as_ref();
+            let op_id = find_operand_id(name_str).expect("validated above");
+            let tensor_id = tensor.tensor_id();
+            if tensor_id == 0 {
+                return Err(Error::Type("input tensor has no backend id".to_owned()));
+            }
+            input_pairs.push((op_id, tensor_id));
+        }
+
+        let mut output_pairs: Vec<(u32, u32)> = Vec::new();
+        for (name, tensor) in outputs.iter() {
+            let name_str = name.as_ref();
+            let op_id = find_operand_id(name_str).expect("validated above");
+            let tensor_id = tensor.tensor_id();
+            if tensor_id == 0 {
+                return Err(Error::Type("output tensor has no backend id".to_owned()));
+            }
+            output_pairs.push((op_id, tensor_id));
+        }
+
+        // Clone GraphInfo to send to the manager (graph.graph_info is owned by MLGraph).
+        let gi_clone = graph.graph_info().borrow().clone();
+
+        if let Err(e) = self
+            .global()
+            .webnn_sender()
+            .send(webnn_traits::WebNNMsg::Dispatch(
+                self.context_id,
+                gi_clone,
+                input_pairs,
+                output_pairs,
+            ))
+        {
+            error!("WebNN Dispatch send failed ({:?})", e);
+            return Err(Error::Operation(None));
+        }
+
+        // Return undefined per spec.
+        Ok(())
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlcontext-destroy>

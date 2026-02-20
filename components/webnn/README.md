@@ -11,6 +11,9 @@ What this crate provides
     performs backend work (currently a minimal stub that handles `Exit`).
   - Returns the `sender` for use by `Servo` / `Constellation` / `Script` and
     the `JoinHandle` so the owner can join the worker on shutdown.
+  - Note: the manager does **not** perform a default/naive execution of graphs; if no backend
+    is available (for example CoreML is not enabled) `Dispatch` is a no-op and the manager
+    will emit a warning. Implement a proper backend instead of relying on a fallback.
 - Local runtime-only code; the message type is defined in
   `components/shared/webnn` (provides `WebNNMsg` in the `webnn_traits` crate) so message types are
   shared across crates without creating dependency cycles.

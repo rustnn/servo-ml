@@ -13,6 +13,8 @@ interface ML {
   Promise<MLContext> createContext(optional MLContextOptions options = {});
 };
 
+typedef record<USVString, MLTensor> MLNamedTensors;
+
 [SecureContext, Exposed=(Window, Worker)]
 interface MLContext {
   Promise<MLTensor> createTensor(MLTensorDescriptor descriptor);
@@ -26,6 +28,8 @@ interface MLContext {
   MLOpSupportLimits opSupportLimits();
 
   undefined destroy();
+
+  [Throws] undefined dispatch(MLGraph graph, MLNamedTensors inputs, MLNamedTensors outputs);
 
   readonly attribute boolean accelerated;
   readonly attribute Promise<MLContextLostInfo> lost;

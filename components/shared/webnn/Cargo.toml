@@ -14,3 +14,4 @@ serde = { workspace = true }
 base = { workspace = true }
 malloc_size_of = { workspace = true }
 profile_traits = { workspace = true }
+rustnn = { git = "https://github.com/rustnn/rustnn" }

@@ -19,6 +19,7 @@ impl malloc_size_of::MallocSizeOf for ContextId {
 
 /// Messages addressed to the WebNN manager.
 use profile_traits::generic_callback::GenericCallback;
+use rustnn::graph::GraphInfo;
 
 /// Messages delivered through the ML-level persistent callback.  Keeping a
 /// small enum here makes it easy to extend the ML callback for other
@@ -66,7 +67,16 @@ pub enum WebNNMsg {
     /// the copied bytes (or an error).
     ReadTensor(GenericCallback<ContextMessage>, ContextId, u32),
 
-    /// Request the backend to overwrite the tensor bytes for (context_id, tensor_id).
-    /// Arguments: context id, tensor id (script-side u32), and bytes to copy into the tensor storage.
+    /// Request the backend to write bytes into an existing tensor buffer.
+    /// Arguments: ContextId, tensor id, bytes to write.
     WriteTensor(ContextId, u32, Vec<u8>),
+
+    /// Dispatch a graph execution request to the backend.
+    ///
+    /// Arguments:
+    /// - ContextId: originating context
+    /// - GraphInfo: the implementation-defined graph description (rustnn::GraphInfo)
+    /// - Vec<(operand_id, tensor_id)>: mapping of graph input operand ids -> backend tensor ids
+    /// - Vec<(operand_id, tensor_id)>: mapping of graph output operand ids -> backend tensor ids
+    Dispatch(ContextId, GraphInfo, Vec<(u32, u32)>, Vec<(u32, u32)>),
 }

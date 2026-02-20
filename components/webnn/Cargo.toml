@@ -13,3 +13,9 @@ path = "src/lib.rs"
 base = { workspace = true }
 log = { workspace = true }
 webnn_traits = { workspace = true }
+rustnn = { git = "https://github.com/rustnn/rustnn", features = ["coreml-runtime"] }
+half = "2"
+
+[features]
+# Toggle CoreML runtime support (propagates to the rustnn dependency)
+coreml-runtime = ["rustnn/coreml-runtime"]

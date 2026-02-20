@@ -194,6 +194,11 @@ def containsDomInterface(t: IDLObject, logging: bool = False) -> bool:
     if isDomInterface(t):
         return True
     assert isinstance(t, IDLType)
+    # Records (typedef record<...>) are container types like sequences and
+    # should be recursed into to detect inner DOM interfaces.
+    if t.isRecord():
+        assert isinstance(t, IDLRecordType)
+        return containsDomInterface(t.inner)
     if t.isSequence():
         assert isinstance(t, IDLSequenceType)
         return containsDomInterface(t.inner)
