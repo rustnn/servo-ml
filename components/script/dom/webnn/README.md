@@ -36,6 +36,7 @@ Overview — how WebNN is wired in Servo
 
 - Script/DOM access
   - The `GenericSender<WebNNMsg>` is threaded into `InitialScriptState` → `ScriptThread` → `GlobalScope` and exposed via `GlobalScope::webnn_sender()` for DOM/WebIDL implementations (e.g. `MLContext`, `MLGraphBuilder`) to send backend requests.
+- Sending a message to the webnn backend should never fail, because the constellation keeps that component alive until all script has shut-down, so if sending a message fail, log an error.
 
 - Logging policy for DOM→manager sends: if sending a `WebNNMsg` from the DOM to the manager fails, log at `error!` (not `warn!`). The Constellation guarantees the manager thread exists until clean shutdown, so a send failure indicates a serious/unexpected problem and should be surfaced at error level.
 

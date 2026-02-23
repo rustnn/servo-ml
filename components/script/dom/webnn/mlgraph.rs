@@ -2,6 +2,7 @@ use std::cell::Cell;
 
 use dom_struct::dom_struct;
 use rustnn::graph::GraphInfo;
+use webnn_traits::GraphId;
 
 use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::MLGraphMethods;
@@ -22,6 +23,11 @@ pub(crate) struct MLGraph {
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraph-isdestroyed-slot>
     is_destroyed: Cell<bool>,
 
+    /// Identifier supplied by the builder.  Zero is used for graphs created
+    /// directly via `new MLGraph()`.
+    #[no_trace]
+    graph_id: GraphId,
+
     /// Implementation-defined graph representation (rustnn `GraphInfo`) owned by the MLGraph.
     #[no_trace]
     #[ignore_malloc_size_of = "rustnn::GraphInfo is external; skip malloc-size accounting"]
@@ -32,11 +38,12 @@ impl MLGraph {
     pub(crate) fn new_inherited(context: &MLContext) -> MLGraph {
         // Preserve the original default (empty) constructor used by the JS-facing
         // `new MLGraph()` binding. Graphs created from a builder should use
-        // `new_inherited_with_info` / `new_with_info` below.
+        // `new_inherited_with_info_and_id` / `new_with_info_and_id` below.
         MLGraph {
             reflector_: Reflector::new(),
             context: Dom::from_ref(context),
             is_destroyed: Cell::new(false),
+            graph_id: GraphId(0),
             graph_info: DomRefCell::new(GraphInfo {
                 operands: Vec::new(),
                 input_operands: Vec::new(),
@@ -49,24 +56,37 @@ impl MLGraph {
         }
     }
 
+    /// Builder-specific constructor that accepts an id and the prepared
+    /// `GraphInfo` produced by `MLGraphBuilder`.
     pub(crate) fn new_with_info(
+        graph_id: GraphId,
         context: &MLContext,
         graph_info: GraphInfo,
         global: &GlobalScope,
         can_gc: CanGc,
     ) -> DomRoot<MLGraph> {
         reflect_dom_object(
-            Box::new(MLGraph::new_inherited_with_info(context, graph_info)),
+            Box::new(MLGraph::new_inherited_with_info(
+                context, graph_id, graph_info,
+            )),
             global,
             can_gc,
         )
     }
 
-    fn new_inherited_with_info(context: &MLContext, graph_info: GraphInfo) -> MLGraph {
+    /// Internal helper used by the public constructors above.  The caller
+    /// must provide a `graph_id`; callers that don't care about the id can
+    /// pass `GraphId(0)`.
+    fn new_inherited_with_info(
+        context: &MLContext,
+        graph_id: GraphId,
+        graph_info: GraphInfo,
+    ) -> MLGraph {
         MLGraph {
             reflector_: Reflector::new(),
             context: Dom::from_ref(context),
             is_destroyed: Cell::new(false),
+            graph_id,
             graph_info: DomRefCell::new(graph_info),
         }
     }
@@ -90,6 +110,11 @@ impl MLGraph {
     /// Accessor for the owned GraphInfo.
     pub(crate) fn graph_info(&self) -> DomRefCell<GraphInfo> {
         self.graph_info.clone()
+    }
+
+    /// Retrieve this graph's identifier.
+    pub(crate) fn graph_id(&self) -> GraphId {
+        self.graph_id
     }
 }
 

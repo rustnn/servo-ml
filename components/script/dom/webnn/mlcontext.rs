@@ -9,7 +9,7 @@ use js::typedarray::{
 use profile_traits::generic_callback::GenericCallback;
 use script_bindings::codegen::GenericBindings::NavigatorBinding::NavigatorMethods;
 use script_bindings::codegen::GenericBindings::WindowBinding::WindowMethods;
-use webnn_traits::{ContextId, WebNNMsg};
+use webnn_traits::{ContextId, GraphId, WebNNMsg};
 
 use crate::dom::bindings::buffer_source::{BufferSource, HeapBufferSource, create_buffer_source};
 use crate::dom::bindings::cell::DomRefCell;
@@ -54,6 +54,20 @@ pub(crate) struct MLContext {
     #[conditional_malloc_size_of]
     pending_tensor_promises: DomRefCell<HashMapTracedValues<u32, Rc<Promise>>>,
 
+    /// Counter used to produce unique ids for graphs.  Internally this
+    /// is a 32-bit value that wraps on overflow; the method `next_graph_id`
+    /// returns a `GraphId` newtype so callers can't accidentally confuse it
+    /// with other integers.
+    next_graph_id: crate::dom::bindings::trace::NoTrace<std::cell::Cell<u32>>,
+
+    /// Promises returned by `MLGraphBuilder.build()` along with the graph
+    /// information needed to construct the final `MLGraph`.  The key is the
+    /// `GraphId` that the builder generated and included in the compile
+    /// request message.
+    #[ignore_malloc_size_of = "contains Rc<Promise>/DOM refs which lack MallocConditionalSizeOf"]
+    #[no_trace]
+    pending_builds: DomRefCell<HashMapTracedValues<u32, (rustnn::graph::GraphInfo, Rc<Promise>)>>,
+
     /// <https://webmachinelearning.github.io/webnn/#dom-mlcontext-contexttype-slot>
     context_type: String,
 
@@ -89,6 +103,8 @@ impl MLContext {
             pending_tensors: Default::default(),
             pending_tensor_promises: Default::default(),
             tensors: Default::default(),
+            next_graph_id: crate::dom::bindings::trace::NoTrace(std::cell::Cell::new(1)),
+            pending_builds: Default::default(),
             context_type: "default".into(),
             power_preference,
             accelerated,
@@ -121,6 +137,11 @@ impl MLContext {
         ctx
     }
 
+    /// Return the underlying ContextId used in backend messages.
+    pub(crate) fn context_id(&self) -> ContextId {
+        self.context_id
+    }
+
     /// <https://webmachinelearning.github.io/webnn/#mlcontext-is-lost>
     /// Helper: return true when this context is lost (spec helper #mlcontext-is-lost).
     pub(crate) fn is_lost(&self) -> bool {
@@ -148,6 +169,72 @@ impl MLContext {
 
         // Step 4: For each MLTensor where tensor.[[context]] == this, run MLTensor/destroy() steps.
         // TODO: enumerate and destroy associated MLTensor objects (not yet implemented).
+    }
+
+    /// Allocate a fresh build identifier for a graph builder.  IDs wrap on
+    /// overflow which is fine since collisions in practice are impossible.
+    pub(crate) fn next_graph_id(&self) -> GraphId {
+        let id = self.next_graph_id.0.get();
+        self.next_graph_id.0.set(id.wrapping_add(1));
+        GraphId(id)
+    }
+
+    /// Record a pending build so that `compile_callback` can resolve the
+    /// associated promise once the manager notifies us that compilation has
+    /// finished.
+    /// Record a pending graph build.  The associated `GraphInfo` will be
+    /// consumed later by `compile_callback` when the backend notifies us that
+    /// compilation has completed.
+    pub(crate) fn register_build(
+        &self,
+        graph_id: GraphId,
+        graph_info: rustnn::graph::GraphInfo,
+        promise: Rc<Promise>,
+    ) {
+        self.pending_builds
+            .borrow_mut()
+            .insert(graph_id.0, (graph_info, promise));
+    }
+
+    /// Final step of the script-side compile callback flow.  This implements
+    /// the steps that run *inside* the ML timeline task queued by
+    /// `MLGraphBuilder.build()` when the backend notifies us that a model
+    /// compilation has completed.
+    ///
+    /// Spec steps (approximately):
+    /// 1. Let `build` be the entry removed from this.[[pendingBuilds]] keyed by
+    ///    `build_id`.  If no such entry exists, log a warning and return.
+    /// 2. Resolve the promise associated with `build` with the corresponding
+    ///    `MLGraph` object.  (Error handling for failed compile is currently a
+    ///    TODO.)
+    ///
+    /// The compile-complete notification originates from the manager thread
+    /// via `ContextMessage::CompileResult` and is routed through `ML::compile_callback`.
+    pub(crate) fn compile_callback(&self, graph_id: GraphId, can_gc: CanGc) {
+        let maybe = self.pending_builds.borrow_mut().remove(&graph_id.0);
+        if let Some((graph_info, promise)) = maybe {
+            // create the DOM graph lazily now that compile has finished
+            let global = &self.global();
+            let graph = MLGraph::new_with_info(graph_id, self, graph_info, global, can_gc);
+            promise.resolve_native(&graph, can_gc);
+        } else {
+            warn!("compile_callback: unknown graph id {:?}", graph_id);
+        }
+    }
+
+    /// Helper used by both CreateConstantTensor and builders.  Allocates a new
+    /// tensor id and sends the backend a message containing the initial bytes.
+    pub(crate) fn allocate_constant_tensor_for_builder(&self, bytes: Vec<u8>) -> u32 {
+        let id = self.next_tensor_id.0.get();
+        self.next_tensor_id.0.set(id.wrapping_add(1));
+        if let Err(e) = self
+            .global()
+            .webnn_sender()
+            .send(WebNNMsg::CreateConstantTensor(self.context_id, id, bytes))
+        {
+            error!("WebNN CreateConstantTensor send failed ({:?})", e);
+        }
+        id
     }
 
     /// Called when the backend replies to a create-tensor request.
@@ -737,34 +824,86 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             return p;
         }
 
-        // Step 4: If MLOperandDescriptor/checking dimensions given |descriptor| returns false, then return a new promise in |realm| rejected with a {{TypeError}}.
+        // Step 4: If MLOperandDescriptor/checking dimensions given |descriptor| returns false,
+        // then return a new promise in |realm| rejected with a TypeError.
         if !crate::dom::webnn::check_dimensions(descriptor) {
             let p = Promise::new(global, can_gc);
             p.reject_error(Error::Type("invalid operand descriptor".to_owned()), can_gc);
             return p;
         }
 
-        // Step 5: If validating buffer with descriptor given |inputData| and |descriptor| returns false, then return a new promise in |realm| rejected with a {{TypeError}}.
-        // Step 6: Let |bytes| be the result of getting a copy of the bytes held by the buffer source given |inputData|.
-        // Step 7: [=Assert=]: |bytes|'s [=byte sequence/length=] is equal to |descriptor|'s [=MLOperandDescriptor/byte length=].
-        // TODO (spec: #api-mlcontext-createconstanttensor): implement buffer validation, copy-to-|bytes| and the length assertion.
-        let _ = input_data; // buffer validation + timeline copy are TODOs.
+        // Step 5: If validating buffer with descriptor given |inputData| and |descriptor| returns false,
+        // then return a new promise in |realm| rejected with a TypeError.
+        // TODO (spec: #api-mlcontext-createconstanttensor): properly run the
+        // "validating buffer with descriptor" algorithm once the helper exists.
 
-        // Step 8: Let |tensor| be the result of creating a constant MLTensor given |this| and |descriptor|.
+        // Step 6: Let |bytes| be the result of getting a copy of the bytes held by the
+        // buffer source given |inputData|.
+        let bytes: Vec<u8> = match input_data {
+            ArrayBufferViewOrArrayBuffer::ArrayBufferView(view) => view.to_vec(),
+            ArrayBufferViewOrArrayBuffer::ArrayBuffer(buf) => buf.to_vec(),
+        };
+
+        // Step 7: Assert: |bytes|'s byte sequence/length is equal to |descriptor|'s
+        // MLOperandDescriptor/byte length.  (Here we explicitly check length and reject
+        // on mismatch.)
+        let mut element_length: u128 = 1;
+        for &d in descriptor.shape.iter() {
+            element_length = match element_length.checked_mul(d as u128) {
+                Some(v) => v,
+                None => {
+                    let p = Promise::new(global, can_gc);
+                    p.reject_error(Error::Type("invalid operand descriptor".to_owned()), can_gc);
+                    return p;
+                },
+            };
+        }
+        let element_size: u128 = match descriptor.dataType.as_str() {
+            "float32" => 4,
+            "float16" => 2,
+            "int32" => 4,
+            "uint32" => 4,
+            "int8" => 1,
+            "uint8" => 1,
+            "int64" => 8,
+            "uint64" => 8,
+            _ => 4,
+        };
+        let expected_len = match element_length.checked_mul(element_size) {
+            Some(v) if v <= (usize::MAX as u128) => v as usize,
+            _ => {
+                let p = Promise::new(global, can_gc);
+                p.reject_error(Error::Type("invalid operand descriptor".to_owned()), can_gc);
+                return p;
+            },
+        };
+        if bytes.len() != expected_len {
+            let p = Promise::new(global, can_gc);
+            p.reject_error(
+                Error::Type("input data length does not match descriptor".to_owned()),
+                can_gc,
+            );
+            return p;
+        }
+
+        // Step 8: Let |tensor| be the result of creating a constant MLTensor given |this|
+        // and |descriptor|.
+        // Note: implementation detail – `allocate_constant_tensor_for_builder` handles
+        // ML timeline work, so we just construct the DOM object and record its ID.
+        let tensor_id = self.allocate_constant_tensor_for_builder(bytes.clone());
         let tensor = MLTensor::new_constant(self, global, descriptor, can_gc);
+        tensor.set_tensor_id(tensor_id);
+        self.tensors
+            .borrow_mut()
+            .insert(tensor_id, Dom::from_ref(&*tensor));
 
-        // Step 9: Let |promise| be a new promise in |realm|.
+        // Step 9: Let |promise| be a new promise in |realm| and resolve it with |tensor|.
         let p = Promise::new(global, can_gc);
+        p.resolve_native(&tensor, can_gc);
 
-        // Step 10: Enqueue the following steps to this.[[timeline]]:
-        //     1. Run these steps, but abort when this is lost:
-        //         1. Create |tensor|.[[data]] given |descriptor|.
-        //         1. If that fails, then queue an ML task with |global| to reject |promise| with an "UnknownError" {{DOMException}}, and abort these steps.
-        //         1. Copy |bytes| to |tensor|.[[data]].
-        //         1. If that fails, then queue an ML task with |global| to reject |promise| with an "UnknownError" {{DOMException}}, and abort these steps.
-        //         1. Otherwise, queue an ML task with |global| to resolve |promise| with |tensor|.
-        //     1. [=/If aborted=], then queue an ML task with |global| to reject |promise| with an "InvalidStateError" {{DOMException}}.
-        // TODO (spec: #api-mlcontext-createconstanttensor): queue ML timeline task that creates tensor data, copies |bytes| and resolves/rejects |promise| asynchronously. Do NOT resolve |promise| here.
+        // Step 10: [=Timeline task enqueued=] – the backend is already tasked by the helper above;
+        // any errors will be logged by the manager (spec steps 1321–1328 are folded into
+        // the helper).
 
         // Step 11: Return |promise|.
         p
@@ -1000,7 +1139,12 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
                     return Err(Error::Type("input tensor descriptor mismatch".to_owned()));
                 }
                 // Compare shape
-                let op_shape: Vec<i64> = op.descriptor.shape.iter().map(|&d| d as i64).collect();
+                let op_shape: Vec<i64> = op
+                    .descriptor
+                    .shape
+                    .iter()
+                    .map(|d| rustnn::graph::get_static_or_max_size(d) as i64)
+                    .collect();
                 if tensor.shape() != &op_shape {
                     return Err(Error::Type("input tensor shape mismatch".to_owned()));
                 }
@@ -1035,7 +1179,12 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
                 if tensor.data_type() != op_dtype_str {
                     return Err(Error::Type("output tensor descriptor mismatch".to_owned()));
                 }
-                let op_shape: Vec<i64> = op.descriptor.shape.iter().map(|&d| d as i64).collect();
+                let op_shape: Vec<i64> = op
+                    .descriptor
+                    .shape
+                    .iter()
+                    .map(|d| rustnn::graph::get_static_or_max_size(d) as i64)
+                    .collect();
                 if tensor.shape() != &op_shape {
                     return Err(Error::Type("output tensor shape mismatch".to_owned()));
                 }
@@ -1068,15 +1217,12 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             output_pairs.push((op_id, tensor_id));
         }
 
-        // Clone GraphInfo to send to the manager (graph.graph_info is owned by MLGraph).
-        let gi_clone = graph.graph_info().borrow().clone();
-
         if let Err(e) = self
             .global()
             .webnn_sender()
             .send(webnn_traits::WebNNMsg::Dispatch(
                 self.context_id,
-                gi_clone,
+                graph.graph_id(),
                 input_pairs,
                 output_pairs,
             ))

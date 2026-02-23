@@ -3,7 +3,7 @@ use std::rc::Rc;
 
 use dom_struct::dom_struct;
 use profile_traits::generic_callback::GenericCallback;
-use webnn_traits::{ContextId, ContextMessage, WebNNMsg};
+use webnn_traits::{ContextId, ContextMessage, GraphId, WebNNMsg};
 
 use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{MLContextOptions, MLMethods};
@@ -82,6 +82,13 @@ impl ML {
                         ml.read_tensor_callback(ctx_id, tensor_id, backend_result, CanGc::note());
                     }));
                 },
+
+                ContextMessage::CompileResult(ctx_id, build_id) => {
+                    task_source.queue(task!(compile_result_to_ml: move || {
+                        let ml = trusted_ml.root();
+                        ml.compile_callback(ctx_id, build_id, CanGc::note());
+                    }));
+                },
             }
         })
         .expect("Could not create ML context persistent callback");
@@ -130,6 +137,20 @@ impl ML {
             return;
         };
         ctx.read_tensor_callback(tensor_id, result, can_gc);
+    }
+
+    /// Route a compile-complete notification to the correct MLContext so it can
+    /// resolve any promises queued by `MLGraphBuilder.build()`.
+    pub(crate) fn compile_callback(&self, context_id: ContextId, graph_id: GraphId, can_gc: CanGc) {
+        let maybe_ctx = {
+            let contexts = self.contexts.borrow();
+            contexts.get(&context_id).cloned()
+        };
+        let Some(ctx) = maybe_ctx else {
+            warn!("compile_callback: unknown context {:?}", context_id);
+            return;
+        };
+        ctx.compile_callback(graph_id, can_gc);
     }
 
     pub(crate) fn new(global: &GlobalScope, can_gc: CanGc) -> DomRoot<ML> {
