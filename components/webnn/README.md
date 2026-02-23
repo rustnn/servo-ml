@@ -17,6 +17,12 @@ What this crate provides
 - Local runtime-only code; the message type is defined in
   `components/shared/webnn` (provides `WebNNMsg` in the `webnn_traits` crate) so message types are
   shared across crates without creating dependency cycles.
+- **Timeline behaviour**: each `Context` now maintains a `VecDeque` of
+  pending operations.  When a compute dispatch is in-flight subsequent create,
+  read, write or dispatch requests are queued and replayed serially once the
+  compute finishes.  This implements the WebNN timeline requirement without
+  blocking the manager thread on ML work (see `Context::enqueue_or_run` and
+  `PendingOp` in `src/lib.rs`).
 
 Wiring & lifecycle (short)
 - Construction: `Servo::new()` calls `webnn::new_webnn_manager()` to create

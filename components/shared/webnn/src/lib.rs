@@ -1,5 +1,7 @@
 //! Shared WebNN message types used across the process boundary.
 
+use std::collections::HashMap;
+
 use base::id::PipelineId;
 use serde::{Deserialize, Serialize};
 
@@ -79,4 +81,10 @@ pub enum WebNNMsg {
     /// - Vec<(operand_id, tensor_id)>: mapping of graph input operand ids -> backend tensor ids
     /// - Vec<(operand_id, tensor_id)>: mapping of graph output operand ids -> backend tensor ids
     Dispatch(ContextId, GraphInfo, Vec<(u32, u32)>, Vec<(u32, u32)>),
+
+    /// Response from the backend containing output tensor bytes for a
+    /// previously-dispatched graph.  The context id allows the manager thread
+    /// to look up the correct `Context` instance and merge the results into
+    /// its tensor store.
+    ComputeResult(ContextId, HashMap<u32, Vec<u8>>),
 }

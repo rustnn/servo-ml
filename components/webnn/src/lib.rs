@@ -1,8 +1,8 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::thread;
 
 use base::generic_channel::{GenericReceiver, GenericSender, channel};
-use crossbeam::channel::{self, Sender, Receiver};
+use crossbeam::channel::{self, Receiver, Sender};
 use log::{debug, warn};
 use profile_traits::generic_callback::GenericCallback;
 // Required to materialize constant operands during dispatch.
@@ -10,11 +10,31 @@ use rustnn::graph::ConstantData;
 use webnn_traits::{ContextId, ContextMessage, WebNNMsg};
 
 #[derive(Debug)]
+/// A single operation that may be deferred on a context timeline.
+enum PendingOp {
+    CreateTensor(GenericCallback<ContextMessage>, ContextId, u32, usize),
+    ReadTensor(GenericCallback<ContextMessage>, ContextId, u32),
+    WriteTensor(ContextId, u32, Vec<u8>),
+    Dispatch(
+        ContextId,
+        rustnn::graph::GraphInfo,
+        HashMap<u32, u32>,
+        HashMap<u32, u32>,
+    ),
+}
+
 struct Context {
     // Backend-specific context state.
     tensor_store: HashMap<u32, Vec<u8>>,
     // Sender for offloading ML work to the dedicated thread.
     compute_tx: Sender<MlMsg>,
+
+    // Implementation of the WebNN context "timeline".  When a compute is
+    // in-flight we must hold subsequent operations and replay them after the
+    // compute completes.  The queue holds operations that arrived while
+    // `compute_in_flight` was true.
+    timeline: VecDeque<PendingOp>,
+    compute_in_flight: bool,
 }
 
 /// State handled by the manager thread.  Encapsulating the mutable maps
@@ -56,7 +76,8 @@ impl WebNNManager {
             },
             WebNNMsg::NewContext(id) => {
                 debug!("webnn manager: NewContext {:?}", id);
-                self.contexts.insert(id, Context::new(self.ml_sender.clone()));
+                self.contexts
+                    .insert(id, Context::new(self.ml_sender.clone()));
                 true
             },
             WebNNMsg::DestroyContext(id) => {
@@ -67,7 +88,12 @@ impl WebNNManager {
             },
             WebNNMsg::CreateTensor(callback, ctx_id, tensor_id, byte_length) => {
                 if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
-                    ctx.handle_create_tensor(callback, ctx_id, tensor_id, byte_length);
+                    ctx.enqueue_or_run(PendingOp::CreateTensor(
+                        callback,
+                        ctx_id,
+                        tensor_id,
+                        byte_length,
+                    ));
                 } else {
                     warn!(
                         "webnn manager: CreateTensor for unknown context {:?}",
@@ -78,7 +104,7 @@ impl WebNNManager {
             },
             WebNNMsg::ReadTensor(callback, ctx_id, tensor_id) => {
                 if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
-                    ctx.handle_read_tensor(callback, ctx_id, tensor_id);
+                    ctx.enqueue_or_run(PendingOp::ReadTensor(callback, ctx_id, tensor_id));
                 } else {
                     warn!("webnn manager: ReadTensor for unknown context {:?}", ctx_id);
                 }
@@ -86,7 +112,7 @@ impl WebNNManager {
             },
             WebNNMsg::WriteTensor(ctx_id, tensor_id, bytes) => {
                 if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
-                    ctx.handle_write_tensor(ctx_id, tensor_id, bytes);
+                    ctx.enqueue_or_run(PendingOp::WriteTensor(ctx_id, tensor_id, bytes));
                 } else {
                     warn!(
                         "webnn manager: WriteTensor for unknown context {:?}",
@@ -103,6 +129,17 @@ impl WebNNManager {
                 }
                 true
             },
+            WebNNMsg::ComputeResult(ctx_id, outputs) => {
+                if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
+                    ctx.handle_compute_result(outputs);
+                } else {
+                    warn!(
+                        "webnn manager: ComputeResult for unknown context {:?}",
+                        ctx_id
+                    );
+                }
+                true
+            },
         }
     }
 }
@@ -115,6 +152,8 @@ impl Context {
         Context {
             tensor_store: HashMap::new(),
             compute_tx,
+            timeline: VecDeque::new(),
+            compute_in_flight: false,
         }
     }
 
@@ -172,8 +211,13 @@ impl Context {
                     "webnn manager: ReadTensor - missing buffer for {:?}/{}",
                     ctx_id, tensor_id
                 );
-                if let Err(e) = callback.send(ContextMessage::ReadTensorResult(ctx_id, tensor_id, Err(()))) {
-                    warn!("webnn manager: ReadTensor error callback send failed: {:?}", e);
+                if let Err(e) =
+                    callback.send(ContextMessage::ReadTensorResult(ctx_id, tensor_id, Err(())))
+                {
+                    warn!(
+                        "webnn manager: ReadTensor error callback send failed: {:?}",
+                        e
+                    );
                 }
             },
         }
@@ -196,38 +240,18 @@ impl Context {
         inputs_map: Vec<(u32, u32)>,
         outputs_map: Vec<(u32, u32)>,
     ) {
-        // convert to HashMap for easier lookup inside the dispatch logic
+        // Convert the flat vectors into maps before creating the queued
+        // operation, matching the old behaviour.  (Doing this once now keeps
+        // the `PendingOp` simple.)
         let inputs_map: HashMap<u32, u32> = inputs_map.into_iter().collect();
         let outputs_map: HashMap<u32, u32> = outputs_map.into_iter().collect();
-        debug!(
-            "webnn manager: Dispatch ctx={:?} graph_ops={} inputs={} outputs={}",
-            ctx_id,
-            graph_info.operations.len(),
-            inputs_map.len(),
-            outputs_map.len()
-        );
 
-        if graph_info.output_operands.is_empty() {
-            debug!(
-                "webnn manager: Dispatch ctx={:?} has no outputs; skipping execution",
-                ctx_id
-            );
-            return;
-        }
-
-        // Pass ownership of the maps into compute directly.  we also hand
-        // over a reference to the compute channel so the call below can send
-        // work to the ml thread.
-        // clone sender to avoid borrowing `self` mutably while we still
-        // need to access other fields.
-        let compute_chan = self.compute_tx.clone();
-        self.compute(
+        self.enqueue_or_run(PendingOp::Dispatch(
             ctx_id,
             graph_info,
             inputs_map,
             outputs_map,
-            &compute_chan,
-        );
+        ));
     }
 
     fn collect_input_bytes(&self, inputs_map: &HashMap<u32, u32>) -> HashMap<u32, Vec<u8>> {
@@ -266,6 +290,11 @@ impl Context {
     /// Convenience helper used from `handle_dispatch` to run the graph and
     /// populate `tensor_store`.  It mirrors the former body of
     /// `handle_dispatch` but delegates the CoreML attempt to a free function.
+    /// Run a graph compute on the ML thread.  Returns true if the compute
+    /// was successfully dispatched and `compute_in_flight` remains true.  A
+    /// return value of `false` indicates we fell back synchronously (e.g. the
+    /// ML channel was closed), in which case callers should continue draining
+    /// the timeline immediately.
     fn compute(
         &mut self,
         _ctx_id: ContextId,
@@ -273,43 +302,37 @@ impl Context {
         inputs_map: HashMap<u32, u32>,
         outputs_map: HashMap<u32, u32>,
         compute_tx: &Sender<MlMsg>,
-    ) {
+    ) -> bool {
         let inputs_bytes = self.collect_input_bytes(&inputs_map);
         self.resolve_constant_operands(&mut graph_info);
 
-        // send work to the ml thread, then wait for the outputs mapping.  we always
-        // get a complete set of bytes back (even if CoreML failed, the worker will
-        // generate zeroed outputs), so we can just apply whatever we receive.
-        let (response_tx, response_rx) = channel::bounded(1);
-
-        // clone the graph info and outputs_map for the worker; we still need
-        // the originals for fallback if something goes wrong.
+        // Build and send the compute message.  If the channel is closed we
+        // immediately populate zeroed outputs and clear the in‑flight flag so
+        // that queued operations can proceed.
         let work_graph = graph_info.clone();
         let work_outputs = outputs_map.clone();
 
         let msg = MlMsg::Compute {
+            // ctx_id is intentionally not sent to the worker; the manager
+            // thread handles the ComputeResult message instead.
+            ctx_id: _ctx_id,
             graph_info: work_graph,
             inputs_map,
             inputs_bytes,
             outputs_map: work_outputs,
-            response: response_tx,
         };
 
-        // this send should never fail unless the worker has already exited;
-        // in that case we'll simply fall back to zeroed outputs below.
         if let Err(e) = compute_tx.send(msg) {
             warn!("webnn manager: failed to send compute message: {:?}", e);
-        }
-        if let Ok(outputs) = response_rx.recv() {
-            for (tensor_id, bytes) in outputs {
-                self.tensor_store.insert(tensor_id, bytes);
-            }
-            return;
+            // fallback synchronously, then let the caller handle draining.
+            self.zeroed_outputs(&graph_info, &outputs_map);
+            self.compute_in_flight = false;
+            return false;
         }
 
-        // channel closed or error, do local zeroed fallback using the original
-        // graph_info we still own.
-        self.zeroed_outputs(&graph_info, &outputs_map);
+        // compute dispatched successfully; keep flag set until we get a
+        // ComputeResult from the ML worker.
+        true
     }
 
     fn zeroed_outputs(
@@ -330,6 +353,57 @@ impl Context {
             }
         }
     }
+
+    // timeline helpers
+    fn enqueue_or_run(&mut self, op: PendingOp) {
+        if self.compute_in_flight {
+            self.timeline.push_back(op);
+        } else {
+            self.run_now(op);
+        }
+    }
+
+    fn run_now(&mut self, op: PendingOp) {
+        match op {
+            PendingOp::CreateTensor(cb, ctx_id, tensor_id, len) => {
+                self.handle_create_tensor(cb, ctx_id, tensor_id, len);
+            },
+            PendingOp::ReadTensor(cb, ctx_id, tensor_id) => {
+                self.handle_read_tensor(cb, ctx_id, tensor_id);
+            },
+            PendingOp::WriteTensor(ctx_id, tensor_id, bytes) => {
+                self.handle_write_tensor(ctx_id, tensor_id, bytes);
+            },
+            PendingOp::Dispatch(ctx_id, graph_info, inputs_map, outputs_map) => {
+                self.compute_in_flight = true;
+                let compute_chan = self.compute_tx.clone();
+                let started =
+                    self.compute(ctx_id, graph_info, inputs_map, outputs_map, &compute_chan);
+                if !started {
+                    self.compute_in_flight = false;
+                }
+            },
+        }
+    }
+
+    fn handle_compute_result(&mut self, outputs: HashMap<u32, Vec<u8>>) {
+        for (tensor_id, bytes) in outputs {
+            self.tensor_store.insert(tensor_id, bytes);
+        }
+        self.compute_in_flight = false;
+        self.process_queue();
+    }
+
+    fn process_queue(&mut self) {
+        while !self.compute_in_flight {
+            if let Some(op) = self.timeline.pop_front() {
+                self.run_now(op);
+                // loop again unless a dispatch set compute_in_flight true
+            } else {
+                break;
+            }
+        }
+    }
 }
 
 /// Create a new WebNN manager and return the `GenericSender<WebNNMsg>`
@@ -341,22 +415,27 @@ pub fn new_webnn_manager() -> (GenericSender<WebNNMsg>, std::thread::JoinHandle<
     let (tx, rx): (GenericSender<WebNNMsg>, GenericReceiver<WebNNMsg>) =
         channel().expect("webnn channel");
 
+    // we keep a clone of the sender so the ML thread can emit ComputeResult
+    // back to the manager.
+    let manager_tx = tx.clone();
+
     let handle = thread::Builder::new()
         .name("WebNNManager".into())
-        .spawn(move || run_manager(rx))
+        .spawn(move || run_manager(rx, manager_tx))
         .expect("failed to spawn WebNN manager thread");
 
     (tx, handle)
 }
 
-fn run_manager(receiver: GenericReceiver<WebNNMsg>) {
+fn run_manager(receiver: GenericReceiver<WebNNMsg>, manager_tx: GenericSender<WebNNMsg>) {
     // create dedicated channel for ML work
     let (ml_tx, ml_rx): (Sender<MlMsg>, Receiver<MlMsg>) = channel::unbounded();
 
-    // spawn the ML worker thread
+    // spawn the ML worker thread; give it a copy of `manager_tx` so it
+    // can post the ComputeResult message when work finishes.
     let ml_handle = thread::Builder::new()
         .name("WebNNML".into())
-        .spawn(move || ml_loop(ml_rx))
+        .spawn(move || ml_loop(ml_rx, manager_tx.clone()))
         .expect("failed to spawn WebNN ML thread");
 
     // manager now owns a sender that it will clone into each context
@@ -393,16 +472,17 @@ fn run_manager(receiver: GenericReceiver<WebNNMsg>) {
 }
 
 // messages sent to the ml worker thread.  compute requests carry a
-// copy of all data necessary to run CoreML (or compute zeroed outputs) and
-// a one-shot channel on which the worker returns the resulting bytes map.
+// copy of all data necessary to run CoreML (or compute zeroed outputs).  The
+// worker no longer returns results directly; instead it sends a
+// `WebNNMsg::ComputeResult` back to the manager thread.
 #[derive(Debug)]
 enum MlMsg {
     Compute {
+        ctx_id: ContextId,
         graph_info: rustnn::graph::GraphInfo,
         inputs_map: HashMap<u32, u32>,
         inputs_bytes: HashMap<u32, Vec<u8>>,
         outputs_map: HashMap<u32, u32>,
-        response: Sender<HashMap<u32, Vec<u8>>>,
     },
     Exit,
 }
@@ -410,15 +490,15 @@ enum MlMsg {
 // Worker loop run on the dedicated ML thread.  It waits for compute messages,
 // executes `try_coreml_execute` (or generates zeroed outputs if that fails),
 // and then sends the resulting tensor bytes back to the caller.
-fn ml_loop(rx: Receiver<MlMsg>) {
+fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
     while let Ok(msg) = rx.recv() {
         match msg {
             MlMsg::Compute {
+                ctx_id,
                 mut graph_info,
                 inputs_map,
                 inputs_bytes,
                 outputs_map,
-                response,
             } => {
                 let mut outputs = HashMap::new();
                 if !try_coreml_execute(
@@ -436,16 +516,18 @@ fn ml_loop(rx: Receiver<MlMsg>) {
                                 .shape
                                 .iter()
                                 .fold(1usize, |acc, &d| acc.saturating_mul(d as usize));
-                            let byte_len =
-                                element_count.saturating_mul(operand.descriptor.data_type.bytes_per_element());
+                            let byte_len = element_count
+                                .saturating_mul(operand.descriptor.data_type.bytes_per_element());
                             outputs.insert(*tensor_id, vec![0u8; byte_len]);
                         }
                     }
                 }
-                if let Err(e) = response.send(outputs) {
-                    warn!("webnn ML thread: response send failed: {:?}", e);
+                // send the outputs back to the manager instead of using the
+                // one‑shot response channel.
+                if let Err(e) = manager_tx.send(WebNNMsg::ComputeResult(ctx_id, outputs)) {
+                    warn!("webnn ML thread: failed to send ComputeResult: {:?}", e);
                 }
-            }
+            },
             MlMsg::Exit => break,
         }
     }
@@ -531,20 +613,17 @@ fn try_coreml_execute(
                         let default_name = format!("output_{}", op_id);
                         let output_name = operand.name.as_deref().unwrap_or(&default_name);
 
-                        if let Some(coreml_out) = outputs.iter().find(|o| o.name == output_name)
-                        {
+                        if let Some(coreml_out) = outputs.iter().find(|o| o.name == output_name) {
                             match operand.descriptor.data_type {
                                 rustnn::graph::DataType::Float32 => {
-                                    let mut bytes =
-                                        Vec::with_capacity(coreml_out.data.len() * 4);
+                                    let mut bytes = Vec::with_capacity(coreml_out.data.len() * 4);
                                     for &v in coreml_out.data.iter() {
                                         bytes.extend_from_slice(&v.to_le_bytes());
                                     }
                                     outputs_store.insert(*tensor_id, bytes);
                                 },
                                 rustnn::graph::DataType::Float16 => {
-                                    let mut bytes =
-                                        Vec::with_capacity(coreml_out.data.len() * 2);
+                                    let mut bytes = Vec::with_capacity(coreml_out.data.len() * 2);
                                     for &v in coreml_out.data.iter() {
                                         let bits = half::f16::from_f32(v).to_bits();
                                         bytes.extend_from_slice(&bits.to_le_bytes());
@@ -558,8 +637,7 @@ fn try_coreml_execute(
                                         .iter()
                                         .fold(1usize, |acc, &d| acc.saturating_mul(d as usize))
                                         .saturating_mul(4usize);
-                                    outputs_store
-                                        .insert(*tensor_id, vec![0u8; byte_length]);
+                                    outputs_store.insert(*tensor_id, vec![0u8; byte_length]);
                                 },
                             }
                         } else {

@@ -48,6 +48,7 @@ Principle: add lessons to the *lowest* README that makes sense. Do **not** dupli
 - Always double-check your work with `./mach check`(without additional arguments). 
 - Do not do anything with Git.
 - Never use fully qualified imports. To check build, always use ./mach check with zero additional arguments
+- Avoid useless adjective like "small" in your code documentation(unless the data really is small for a reason).
 
 Where to look next
 - For DOM / Web API work: see `components/script/README.md`.
