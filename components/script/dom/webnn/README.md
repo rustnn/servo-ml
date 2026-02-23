@@ -2,36 +2,25 @@ https://webmachinelearning.github.io/webnn/
 
 components/script/dom/webnn — implementation notes (minimal)
 
-- Read the README chain before changing WebNN code: start with `AGENTS.md` (top-level agent orientation), then `components/script/README.md` (component guidance), then this file for WebNN-specific notes. Do **not** duplicate content across README files; subsystem READMEs must be concise and only contain subsystem-specific notes, spec anchors, and TODOs.
+- Read the README chain before changing WebNN code: start with `AGENTS.md` (top-level agent orientation), then `components/script/README.md` (component guidance), then this file for WebNN-specific notes.
 
-- Use the canonical online WebNN spec via `search-bs` (do **not** rely on local `specs/` HTML copies). Recommended workflow for finding anchors and quoting spec prose:
+- Use the canonical WebNN spec via `search-bs` (do **not** rely on local `specs/` HTML copies). Recommended workflow for finding anchors and quoting spec prose:
   1. Index the spec (if not already indexed):
      `search-bs index https://github.com/webmachinelearning/webnn/blob/main/index.bs --name webnn`
   2. Locate the API/algorithm anchor and preview matches:
-     `search-bs search --name webnn "cast" --around 2 --json`
+     `search-bs search --name webnn "cast" --around 2`
      - Note the returned `anchor` (for example `api-mlgraphbuilder-cast`) and the `line` number.
   3. Retrieve the exact lines you want to quote or paste into code comments:
-     `search-bs get --name webnn --line <LINE> --count <N> --json`
+     `search-bs get --name webnn --line <LINE> --count <N>`
   4. Use the anchor in top doc-comments exactly, for example:
      `/// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-cast>`
   5. Copy spec step prose with `search-bs get` and annotate code using `Step N:` comments quoting the spec text.
 
-  Tips: use `--around` for context, `--json` for automation, and prefer `search-bs` output over manually opening HTML files.
-
-- The `MLContext` exposes a `timeline` concept in the spec. In this codebase model the timeline should be implemented as steps enqueued to a backend/task queue. This is work-in-progress; keep API implementations minimal and add TODOs for backend messaging. If an in-parallel TODO would resolve a Promise, do not resolve it in the stub — return the promise unresolved.
-
-  - Implementation note: `MLContext.createTensor` now implements the spec's "Enqueue the following steps to this.[[timeline]]" by sending `WebNNMsg::CreateTensor` to the WebNN manager. The manager/backend is expected to allocate the tensor's backend storage (initialize `tensor.[[data]]`), handle allocation failures, and invoke the persisted ML callback so that `MLContext::create_tensor_callback` can resolve or reject the promise stored on the context. See `mlcontext.rs` for line-level spec mappings and exact spec quotes.
-
-WebNN-specific expectations (short):
-
-- Method-level doc: top doc-comment = canonical spec anchor only (no parenthetical/top-doc prose).
-- Implementation comments: use `Step N:` comments for spec-mapped steps inside function bodies.
-- Internal slots: document struct fields with the canonical `-slot` anchor when present.
-- Tests: add WPT tests (do not add component-local tests).
+- The `MLContext` exposes a `timeline` concept in the spec. In this codebase model the timeline should be implemented as steps enqueued to a backend/task queue. See the `webnn` top-level component for more info. 
 
 Important: this README is subsystem-specific — read `components/script/README.md` and `AGENTS.md` first. Keep this file focused on WebNN-specific anchors and TODOs.
 
-- The `skills/pyrustexample.rs` file contains an extensive example using `rustnn` primitives (it shows algorithmic helpers and usage patterns). Read it when implementing or adapting the graph-builder/backend integration.
+- The `scratchpad/` top-level directory contains the source code for `rustnn`, as well as that of `pywebnn`. The latter is basically to Python what this crate is to the Web. Use this example. 
 
 Overview — how WebNN is wired in Servo
 
@@ -50,6 +39,4 @@ Overview — how WebNN is wired in Servo
 
 - Logging policy for DOM→manager sends: if sending a `WebNNMsg` from the DOM to the manager fails, log at `error!` (not `warn!`). The Constellation guarantees the manager thread exists until clean shutdown, so a send failure indicates a serious/unexpected problem and should be surfaced at error level.
 
-TODOs & notes
-- TODO: document supported backends and add an example `rustnn` adapter in `components/webnn`.
-- Keep this README focused — see `components/script/README.md` for cross-cutting rules and `AGENTS.md` for contributor guidance.
+Keep this README focused — see `components/script/README.md` for cross-cutting rules and `AGENTS.md` for contributor guidance.

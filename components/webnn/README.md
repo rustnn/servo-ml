@@ -58,9 +58,7 @@ Extending the backend
   thread(s); do not block Script/Constellation event loops.
 
 Tests
-- Add WPT tests for the WebNN API surface.
-- Optional: small unit/smoke tests inside `components/webnn` to validate
-  message handling and Exit/join semantics.
+- Do not add tests; everything should also be covered by WPT tests. 
 
 See also
 - `components/shared/webnn` — shared message types (canonical `WebNNMsg`).

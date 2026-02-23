@@ -8,44 +8,43 @@ components/script — README
 - dom/ — DOM types and implementations (each WebIDL interface maps to a
   Rust `#[dom_struct]` type and a generated `*Methods` trait).
 - bindings/ — the part of generated bindings glue code and helpers that hasn't been moved yet to `components/script_bindings/`.
-- Various files, like the WebIDL files and the config files, are found in the top-level partner component `components/script_bindings/webidls`.
+- The codegen--like the WebIDL files and the config files--infra is found found in the top-level partner component `components/script_bindings/webidls`.
 
 **Searching web specs (use search-bs)**
-- Prefer `search-bs` to query the canonical online Bikeshed (.bs) sources instead of relying on local HTML copies.
-  - Index (one-time): `search-bs index https://github.com/webmachinelearning/webnn/blob/main/index.bs --name webnn`
+- To access web standars (specs) always use the `search-bs` command-line tool.
+  - Index (one-time, if you do this you can add a note to the relevant README to remember it): `search-bs index https://github.com/webmachinelearning/webnn/blob/main/index.bs --name webnn`
   - Find the API/algorithm anchor and preview matches: `search-bs search --name webnn "cast" --around 2`
     - Look for the anchor id in the result (example: `api-mlgraphbuilder-cast`).
-  - Fetch exact lines for quoting or copying spec steps: `search-bs get --name webnn --line <LINE> --count <N> --json`.
-  - Use the anchor to form a top-level doc-comment: `/// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-cast>`.
-  - Useful flags: `--around` (context), `--json` (machine-readable), `--show-url`.
+  - Fetch exact lines for quoting or copying spec steps: `search-bs get --name webnn --line <LINE> --count <N>`.
+  - The tool is documented in `skills/search-bikeshed/README.md`.
 
   Example: to find the `MLGraphBuilder.cast()` anchor and extract the method steps:
-  1. `search-bs search --name webnn "cast" --json` → note `api-mlgraphbuilder-cast` and line number.
-  2. `search-bs get --name webnn --line 2613 --count 40` → copy the algorithm prose you need.
+  1. `search-bs search --name webnn "cast"` → note `dom-mlgraphbuilder-cast` and line number.
+  2. `search-bs get --name webnn --line {insert line num} --count 40` → copy the algorithm prose you need.
+  3. Make sure you obtain the full algorihtm: do not attempt to hallucinate parts not found in the initial response, instead, make a second `get` call to get the missing parts from the spec.
 
 **Working on a Web API (tips)**
 1. Find the WebIDL in `components/script_bindings/webidls/` (or add one if
    implementing a new API).
    - If your method can throw exceptions at runtime, mark it with `[Throws]` in the WebIDL.  The Servo bindings generator will then produce an implementation signature that returns `ErrorResult` (for void returns) or `Fallible<DomRoot<T>>` / `Result<..., Error>` (for methods that return DOM objects). Implementations should `return Err(Error::...)` instead of calling `throw_dom_exception(...)`. Example: mark `MLGraphBuilder.input` with `[Throws]` so `Input()` can return `Err(Error::Type(...))` and the binding will throw in JS.
-2. Consult the canonical online specification for the API you are implementing — check the component/subsystem README for the canonical spec URL. Before you start work, download the spec and write a copy of the HTML file `specs/{name of subdir containing readme with link}` and read it. 
-3. Use the canonical online spec as the authoritative source for algorithms and internal-slot definitions.
-4. Document code by linking the generated method to the canonical spec anchor in the top-level doc-comment and add per-line `Step N:` comments inside the function body (see **Documenting your work** below for the exact format).
-5. Add a `#[dom_struct]` with `Dom` members and implement the generated
+2. Use the canonical spec as the authoritative source for algorithms and internal-slot definitions, and access it with the `search-bs` commmand line tool.
+3. Document code by linking the generated method to the canonical spec anchor in the top-level doc-comment and add per-line `Step N:` comments inside the function body (see **Documenting your work** below for the exact format).
+4. Add a `#[dom_struct]` with `Dom` members and implement the generated
    trait methods: start with `todo!()` bodies.
-6. Sub-directories (e.g. `dom/webgpu`, `dom/xr`) often include their own
+5. Sub-directories (e.g. `dom/webgpu`, `dom/xr`) often include their own
    README with subsystem-specific guidance. Always read the README chain for
    the area you're changing: start with `components/script/README.md`, then
    read any `components/script/dom/<subdir>/README.md` for subsystem rules,
    and finally consult the authoritative canonical online spec for
    algorithm and internal-slot details (link in the subsystem README).
-7. Good quality examples of implementation and documentation patterns are found in `components/script/dom/stream`.
-8. Prefer top-level `use` imports for types that appear in the file (for
+6. Good quality examples of implementation and documentation patterns are found in `components/script/dom/stream`.
+7. Prefer top-level `use` imports for types that appear in the file (for
    example `use crate::dom::webnn::mlcontext::MLContext;`) instead of using
    fully-qualified `crate::...` paths inside signatures or bodies.
    - Use short type names in method signatures and code; add the `use` at the
      top of the file. This improves readability and makes future refactors
      and reviews simpler.
-9. Consolidate multiple calls to `global()` into one by assigning the global to a variable, and if needed passing it down by reference.
+8. Consolidate multiple calls to `global()` into one by assigning the global to a variable, and if needed passing it down by reference.
 
 **Adding a backend for a Web API (how-to)**
 Follow this checklist when you need a native/task-queue backend for a Web API (for example a manager thread that processes requests):
@@ -55,7 +54,7 @@ Follow this checklist when you need a native/task-queue backend for a Web API (f
    - Derive `serde::Serialize` and `serde::Deserialize` for every message so `base::generic_channel::GenericSender<T>`/`GenericReceiver<T>` can be used across crate boundaries.
 
 2. Manager component
-   - Add a small manager crate under `components/<api>` (example: `components/webnn`).
+   - Add a manager crate under `components/<api>` (example: `components/webnn`).
    - Expose a constructor `new_<api>_manager()` that returns `(GenericSender<T>, JoinHandle)` or at minimum a `GenericSender<T>`.
    - Keep the manager implementation local to the component; it should own its worker thread and its message receiver.
 
@@ -76,19 +75,11 @@ Follow this checklist when you need a native/task-queue backend for a Web API (f
    - The Constellation should be authoritative for thread shutdown: send an Exit message and `join()` the manager thread during `handle_shutdown()`.
 
 7. Tests & spec
-   - Behavior of the Web API must be covered by Web Platform Tests (WPT).
-   - Add small unit/smoke tests in the manager crate to verify message receive/Exit behavior if useful.
+   - Behavior of the Web API must be covered by Web Platform Tests (WPT). Do not add or adjusts tests without first making sure it is necessary.
+   - Never add unit-tests to `script`. 
 
 8. Documentation
    - Add a short README under `components/<api>/` (and update the subsystem README under `components/script/dom/<api>/README.md`) describing the manager architecture and where message types live.
-
-Checklist summary (quick):
-- [ ] Add `components/shared/<api>` message types (serde)
-- [ ] Implement `components/<api>` manager (returns sender + join handle)
-- [ ] Create manager in `Servo::new` and pass sender/handle into Constellation
-- [ ] Thread sender into `InitialScriptState` → `ScriptThread` → `GlobalScope`
-- [ ] Constellation sends Exit + joins manager on shutdown
-- [ ] WPT coverage for API behavior
 
 Example (wiring highlights):
 - `let (sender, join_handle) = webnn::new_webnn_manager();` (in `Servo::new`)
@@ -100,18 +91,13 @@ Example (wiring highlights):
 Follow these exact conventions so code <-> spec mapping is clear and reviewable.
 
 - Method- & type-level doc
-  - Method-level: the method's top doc-comment must contain *only* the canonical spec anchor (e.g. `/// <https://webmachinelearning.github.io/webnn/#api-ml-createcontext>`).
+  - Method-level: the method's top doc-comment must contain *only* the canonical spec anchor (e.g. `/// <https://webmachinelearning.github.io/webnn/#dom-ml-createcontext>`).
     - Do NOT add parenthetical notes or extra prose in top doc-comments (for example, `(internal helper)`) — these add noise and are disallowed. Keep top-level doc-comments anchor-only.
+    If the algorithm implementation is broken-up into multiple method or functions, you can add a note below the anchor to explain which part of the algo the current code corresponds to.
 
   - Functions & spec-algorithms
-    - Use a **module-level free function** when you are implementing a *spec algorithm* (for example `create an MLOperand`) or a small utility that is shared by multiple generated methods and does **not** directly mutate the DOM object's internal slots. Prefer a free function when the spec algorithm is described independently of any single interface implementation.
-    - Use an **impl method** on the `#[dom_struct]` type when the helper needs to access or mutate that struct's private internal slots (i.e. it logically belongs to the type and requires `self`).
+    - Follow the structure of the spec. For example, if the spec defines an interface method and then from it calls into another algorithm, then you should also implement that algorithm either with a seperate method(if you need to access state of the dom struct), or just a function.
     - Naming & visibility: name the function to reflect the spec algorithm (`create_an_mloperand`), keep it private by default, and move it to a shared module only if genuinely reused across components.
-    - Documentation rules for functions that implement spec algorithms:
-      - The function's top doc-comment must contain *only* the canonical *algorithm* anchor (for example `/// <https://webmachinelearning.github.io/webnn/#create-an-mloperand>`). Do **not** add extra prose in the top doc-comment.
-      - Inside the function body annotate each implementation step with `Step N:` comments that quote the spec step verbatim, exactly as you would for generated methods.
-      - IMPORTANT: if the spec's algorithm does **not** mutate the caller's internal slots, the function must **not** perform those mutations — the caller (e.g. the generated method) must run the spec steps that modify the object's internal state (this preserves 1:1 mapping between spec steps and code locations).
-      - For small, internal utilities that are *not* direct implementations of a spec algorithm, use a brief one-line doc comment describing intent (no spec anchor).
 
 - In-body per-line spec mapping
   - Inside the function body annotate *each relevant line of code* with a
@@ -241,12 +227,3 @@ see the final method signature.
 
 **Refcell re-borrow hazard**
 Whenever the JS engine is called into, the GC could trace any member of a dom_struct, therefore, never hold a borrow when making a call to anything with a `CanGC` argument.  
-
-**Helpful files**
-- `search-bs` (preferred) — CLI for indexing and searching Bikeshed (.bs) source documents directly from their source URLs; use it to find canonical anchors and exact algorithm prose. See `skills/search-bikeshed/README.md` for full usage.
-  - Index: `search-bs index <blob-or-raw-url> --name <spec-name>`
-  - Search: `search-bs search --name <spec-name> "<query>"` (use `--json` to extract anchors/line numbers)
-  - Get exact lines: `search-bs get --name <spec-name> --line <LINE> --count <N>`
-- `components/script_bindings/webidls/` — WebIDL source used by the
-  generator.
-- `components/script/dom/` — implementation files you will edit.
