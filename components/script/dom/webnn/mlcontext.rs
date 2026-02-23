@@ -14,8 +14,8 @@ use webnn_traits::{ContextId, WebNNMsg};
 use crate::dom::bindings::buffer_source::{BufferSource, HeapBufferSource, create_buffer_source};
 use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
-    MLContextLostInfo, MLContextMethods, MLNamedTensors, MLOpSupportLimits, MLOperandDescriptor,
-    MLPowerPreference, MLTensorDescriptor, MLTensorLimits, MLRankRange, MLOperandDataType,
+    MLContextLostInfo, MLContextMethods, MLNamedTensors, MLOpSupportLimits, MLOperandDataType,
+    MLOperandDescriptor, MLPowerPreference, MLRankRange, MLTensorDescriptor, MLTensorLimits,
 };
 use crate::dom::bindings::codegen::UnionTypes::ArrayBufferViewOrArrayBuffer;
 use crate::dom::bindings::error::{Error, Fallible};
@@ -875,10 +875,28 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         ]);
 
         MLOpSupportLimits {
-            constant: Some(MLTensorLimits { dataTypes: data_types.clone(), rankRange: Some(MLRankRange { min: Some(0), max: Some(8) }) }),
-            input: Some(MLTensorLimits { dataTypes: data_types.clone(), rankRange: Some(MLRankRange { min: Some(0), max: Some(8) }) }),
+            constant: Some(MLTensorLimits {
+                dataTypes: data_types.clone(),
+                rankRange: Some(MLRankRange {
+                    min: Some(0),
+                    max: Some(8),
+                }),
+            }),
+            input: Some(MLTensorLimits {
+                dataTypes: data_types.clone(),
+                rankRange: Some(MLRankRange {
+                    min: Some(0),
+                    max: Some(8),
+                }),
+            }),
             maxTensorByteLength: Some(4294967295u64), // 2**32 - 1
-            output: Some(MLTensorLimits { dataTypes: data_types, rankRange: Some(MLRankRange { min: Some(0), max: Some(8) }) }),
+            output: Some(MLTensorLimits {
+                dataTypes: data_types,
+                rankRange: Some(MLRankRange {
+                    min: Some(0),
+                    max: Some(8),
+                }),
+            }),
             preferredInputLayout: None,
         }
     }

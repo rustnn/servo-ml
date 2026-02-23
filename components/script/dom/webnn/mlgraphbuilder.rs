@@ -6,6 +6,8 @@ use dom_struct::dom_struct;
 use js::rust::HandleObject;
 use rustnn::graph::{DataType, GraphInfo, Operand, OperandDescriptor, OperandKind, Operation};
 use script_bindings::codegen::GenericUnionTypes::ArrayBufferViewOrArrayBuffer;
+use script_bindings::record::Record;
+use script_bindings::str::USVString;
 
 use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
@@ -14,8 +16,6 @@ use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLOperandDescriptor, MLOperatorOptions,
 };
 use crate::dom::bindings::error::{Error, Fallible};
-use script_bindings::record::Record;
-use script_bindings::str::USVString;
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
 use crate::dom::bindings::root::{Dom, DomRoot};
 use crate::dom::bindings::str::DOMString;
@@ -640,7 +640,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             };
             gi.constant_operand_ids_to_handles.insert(
                 id,
-                rustnn::graph::ConstantData { data: bytes, label: None },
+                rustnn::graph::ConstantData {
+                    data: bytes,
+                    label: None,
+                },
             );
         }
 
@@ -2130,8 +2133,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::dom::webnn::mlcontext::MLContext;
     use crate::dom::globalscope::GlobalScope;
+    use crate::dom::webnn::mlcontext::MLContext;
     use crate::script_runtime::CanGc;
 
     #[test]
@@ -2143,11 +2146,17 @@ mod tests {
 
         // add a single input and a trivial operation so we have something to
         // build.  using `Identity` operation here is simplest.
-        let input = builder.Input(&crate::dom::webnn::MLOperandDescriptor {
-            dataType: crate::dom::webnn::MLOperandDataType::Float32,
-            shape: vec![1],
-        }, CanGc::NoGc).expect("input");
-        let output = builder.Identity(&input, &crate::dom::webnn::MLOperatorOptions, CanGc::NoGc)
+        let input = builder
+            .Input(
+                &crate::dom::webnn::MLOperandDescriptor {
+                    dataType: crate::dom::webnn::MLOperandDataType::Float32,
+                    shape: vec![1],
+                },
+                CanGc::NoGc,
+            )
+            .expect("input");
+        let output = builder
+            .Identity(&input, &crate::dom::webnn::MLOperatorOptions, CanGc::NoGc)
             .expect("identity");
 
         // build with one named output
@@ -2155,7 +2164,8 @@ mod tests {
         outputs.insert("y".into(), output.clone());
         let promise = builder.Build(&outputs, CanGc::NoGc);
         // synchronous resolve
-        let graph = promise.unwrap_native::<crate::dom::webnn::MLGraph>(CanGc::NoGc)
+        let graph = promise
+            .unwrap_native::<crate::dom::webnn::MLGraph>(CanGc::NoGc)
             .expect("promise resolved");
 
         let gi = graph.graph_info().borrow();

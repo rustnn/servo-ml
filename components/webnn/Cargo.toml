@@ -18,6 +18,7 @@ webnn_traits = { workspace = true }
 # pass an extra feature flag.
 rustnn = { git = "https://github.com/rustnn/rustnn", features = [] }
 half = "2"
+profile_traits = { workspace = true }
 
 # CoreML-specific features are gated purely by the target OS.  The legacy
 # `coreml-runtime` workspace feature was removed.
