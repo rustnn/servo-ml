@@ -24,7 +24,6 @@ use crate::dom::bindings::root::{Dom, DomRoot};
 use crate::dom::bindings::str::DOMString;
 use crate::dom::globalscope::GlobalScope;
 use crate::dom::promise::Promise;
-use crate::dom::webnn::mlgraph::MLGraph;
 use crate::dom::webnn::mloperand::MLOperand;
 use crate::dom::{MLContext, MLTensor};
 use crate::script_runtime::CanGc;
@@ -833,16 +832,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // generate a unique id for the graph
         let graph_id = self.context().next_graph_id();
 
-        // record the graph info + promise on the context; the actual DOM
-        // `MLGraph` object will be created later in the compile callback.
+        // record the promise on the context; we no longer keep the GraphInfo
+        // locally.  It will be shipped to the backend in the next message and
+        // then returned to us in the compile callback.
         let p = Promise::new(global, can_gc);
-        self.context()
-            .register_build(graph_id, graph_info.clone(), p.clone());
+        self.context().register_build(graph_id, p.clone());
 
-        // send compile request to the manager; include the ML persistent
-        // callback and the graph id so the manager can notify us when the
-        // compilation finishes.  The promise will be resolved asynchronously
-        // by the callback handler.  We clone the GraphInfo for the message.
+        // send compile request to the manager.  Move `graph_info` into the
+        // message rather than cloning it; script-side storage has been dropped.
         let cb = self
             .global()
             .as_window()
@@ -853,7 +850,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             cb,
             graph_id,
             self.context().context_id(),
-            graph_info.clone(),
+            graph_info,
         ));
 
         // Step 7/8: Return the promise without resolving it yet. It will be

@@ -180,8 +180,7 @@ impl WebNNManager {
             WebNNMsg::Compile(cb, graph_id, ctx_id, graph_info) => {
                 if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
                     // register graph (possibly compiling or caching) and record callback
-                    let key =
-                        ctx.get_or_compile(ctx_id, graph_id, graph_info, Some((graph_id, cb)));
+                    let key = ctx.get_or_compile(ctx_id, graph_id, graph_info, Some((graph_id, cb)));
                     // put a compile step on the timeline so subsequent ops wait
                     ctx.enqueue_or_run(PendingOp::Compile(key));
                 } else {
@@ -196,9 +195,32 @@ impl WebNNManager {
                     }
                     // notify any build callbacks waiting for this graph_id
                     if let Some(vec) = ctx.script_build_request.remove(&graph_id) {
-                        for (gid, cb) in vec {
-                            // send result back to script thread
-                            let _ = cb.send(ContextMessage::CompileResult(ctx_id, gid));
+                        for (bid, cb) in vec {
+                            // send result back to script thread, including the
+                            // GraphInfo that we still have cached in the model
+                            // entry.  This frees the script from having to keep a copy.
+                            if let Some(entry) = ctx.model_cache.get(&graph_id) {
+                                let _ = cb.send(ContextMessage::CompileResult(
+                                    ctx_id,
+                                    graph_id,
+                                    entry.graph_info.clone(),
+                                ));
+                            } else {
+                                // fallback: should never happen
+                                let _ = cb.send(ContextMessage::CompileResult(
+                                    ctx_id,
+                                    graph_id,
+                                    rustnn::graph::GraphInfo {
+                                        operands: Vec::new(),
+                                        input_operands: Vec::new(),
+                                        output_operands: Vec::new(),
+                                        operations: Vec::new(),
+                                        constant_operand_ids_to_handles: HashMap::new(),
+                                        id_to_constant_tensor_operand_map: HashMap::new(),
+                                        quantized: false,
+                                    },
+                                ));
+                            }
                         }
                     }
                     // compilation counts as an in-flight operation; clear flag
@@ -221,8 +243,20 @@ impl WebNNManager {
                     // script side can resolve the promises, though they won't
                     // be able to dispatch successfully later.
                     if let Some(vec) = ctx.script_build_request.remove(&key) {
-                        for (build_id, cb) in vec {
-                            let _ = cb.send(ContextMessage::CompileResult(ctx_id, build_id));
+                        for (_build_id, cb) in vec {
+                            let _ = cb.send(ContextMessage::CompileResult(
+                                ctx_id,
+                                key,
+                                rustnn::graph::GraphInfo {
+                                    operands: Vec::new(),
+                                    input_operands: Vec::new(),
+                                    output_operands: Vec::new(),
+                                    operations: Vec::new(),
+                                    constant_operand_ids_to_handles: HashMap::new(),
+                                    id_to_constant_tensor_operand_map: HashMap::new(),
+                                    quantized: false,
+                                },
+                            ));
                         }
                     }
                     if ctx.queue_blocked {
@@ -831,24 +865,67 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                 // compile the model and record the returned path
                 // we no longer need to pre‑allocate a cache directory; the
                 // helper will give us the location of the compiled model.
-                match unsafe {
+                // sanity‑check the model bytes in debug builds; an empty buffer
+                // would trip the CoreML FFI and is almost certainly a bug.
+                debug_assert!(!model_bytes.is_empty(), "compile: empty model bytes");
+
+                // The `prepare_compiled_model_with_weights` helper is marked
+                // `unsafe` because it crosses the CoreML FFI boundary.  Exercise
+                // extra care by catching panics so a corrupted model can't abort
+                // the ML thread and bring down the browser process.
+                let compile_result = std::panic::catch_unwind(|| unsafe {
                     prepare_compiled_model_with_weights(&model_bytes, weights.as_deref(), None)
-                } {
-                    Ok((_compiled_url, compiled_path, _temp_mlmodel)) => {
+                });
+                
+
+                match compile_result {
+                    Ok(Ok((_compiled_url, compiled_path, _temp_mlmodel))) => {
                         compiled_map.insert(key, (compiled_path.clone(), graph_info));
                         // notify manager so the context can mark the entry ready
-                        let _ = manager_tx.send(WebNNMsg::Compiled(ctx_id, key, compiled_path));
-                    },
-                    Err(e) => {
+                        if let Err(e) = manager_tx.send(WebNNMsg::Compiled(ctx_id, key, compiled_path)) {
+                            warn!(
+                                "webnn ML thread: failed to send Compiled: {:?}",
+                                e
+                            );
+                        }
+                    }
+                    Ok(Err(e)) => {
                         warn!("webnn ML thread: compile failed for key {}: {:?}", key, e);
-                        // send explicit failure message to manager instead of
-                        // faking an empty path
-                        let _ = manager_tx.send(WebNNMsg::CompileFailed(
+                        if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(
                             ctx_id,
                             key,
                             format!("{:?}", e),
-                        ));
-                    },
+                        )) {
+                            warn!(
+                                "webnn ML thread: failed to send CompileFailed: {:?}",
+                                e
+                            );
+                        }
+                    }
+                    Err(panic_payload) => {
+                        // Conversion from panic payload to string is best-effort.
+                        let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                            s.to_string()
+                        } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                            s.clone()
+                        } else {
+                            "unknown panic".to_string()
+                        };
+                        warn!(
+                            "webnn ML thread: compile panicked for key {}: {}",
+                            key, msg
+                        );
+                        if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(
+                            ctx_id,
+                            key,
+                            format!("panic: {}", msg),
+                        )) {
+                            warn!(
+                                "webnn ML thread: failed to send CompileFailed: {:?}",
+                                e
+                            );
+                        }
+                    }
                 }
             },
             MlMsg::Exit => {
@@ -936,17 +1013,17 @@ fn try_coreml_execute(
     let converter = CoremlMlProgramConverter;
     if let Ok(converted) = converter.convert(graph_info) {
         debug!("try_coreml_execute: conversion succeeded");
-        let weights_ref = converted.weights_data.as_deref();
-        let run_result = if let Some(path) = cached_compiled {
-            debug!(
-                "try_coreml_execute: running cached compiled model at {:?}",
-                path
-            );
-            run_coreml_with_inputs_cached(&converted.data, coreml_inputs, Some(path))
-        } else {
-            debug!("try_coreml_execute: running un-cached model");
-            run_coreml_with_inputs_with_weights(&converted.data, weights_ref, coreml_inputs)
-        };
+        // at this point the graph should already have been compiled on a
+        // previous path; ensure we have a cached model directory.  If this
+        // assertion ever trips in release it indicates a programming error
+        // where dispatch was allowed to run without compilation.
+        debug_assert!(cached_compiled.is_some(), "dispatch without cached compiled model");
+        let path = cached_compiled.expect("cached model path");
+        debug!(
+            "try_coreml_execute: running cached compiled model at {:?}",
+            path
+        );
+        let run_result = run_coreml_with_inputs_cached(&converted.data, coreml_inputs, Some(path));
         if let Ok(attempts) = run_result {
             if let Some(outputs) = attempts
                 .iter()

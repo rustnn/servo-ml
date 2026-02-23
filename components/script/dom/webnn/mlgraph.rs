@@ -56,8 +56,11 @@ impl MLGraph {
         }
     }
 
-    /// Builder-specific constructor that accepts an id and the prepared
-    /// `GraphInfo` produced by `MLGraphBuilder`.
+    /// Builder-specific constructor that accepts a `GraphId` and the prepared
+    /// `GraphInfo` produced during the build.  Under the new compile flow the
+    /// `GraphInfo` is supplied by the backend as part of the compile-complete
+    /// notification; script-side callers no longer clone or retain a copy prior
+    /// to compilation.
     pub(crate) fn new_with_info(
         graph_id: GraphId,
         context: &MLContext,

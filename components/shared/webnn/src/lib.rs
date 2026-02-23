@@ -17,9 +17,9 @@ pub struct ContextId {
 /// Unique identifier for a graph object supplied by script.  Builders
 /// allocate these from their context and embed them in outgoing messages
 /// so the backend can use the id as a cache key and correlate replies with
-/// the originating graph.  The value wraps a 32‑bit counter and, like the
-/// previous `BuildId`, is echoed back in completion notifications so the
-/// caller can correlate promises with replies.
+/// the originating graph.  The value wraps a 32‑bit counter and is echoed
+/// back in completion notifications so the caller can correlate promises
+/// with replies.
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
 pub struct GraphId(pub u32);
 
@@ -57,10 +57,11 @@ pub enum ContextMessage {
     /// The Result contains the requested byte vector on success, or an Err(()) on failure.
     ReadTensorResult(ContextId, u32, Result<Vec<u8>, ()>),
 
-    /// Notification that a graph build has completed compilation.  Arguments are
-    /// the originating context and the `GraphId` that was provided by the
-    /// script when the graph was requested.
-    CompileResult(ContextId, GraphId),
+    /// Notification that a graph build has completed compilation.  Arguments
+    /// are the originating context, the `GraphId` that was provided by script
+    /// when `build()` was called, and the `GraphInfo` supplied earlier to the
+    /// backend.  The promise resolver can immediately create an `MLGraph`.
+    CompileResult(ContextId, GraphId, GraphInfo),
 }
 
 impl malloc_size_of::MallocSizeOf for ContextMessage {
@@ -134,6 +135,13 @@ pub enum WebNNMsg {
     /// the context id, and a copy of the implementation-defined graph
     /// description.  The callback will be invoked when the compilation finishes
     /// so that the promise returned by `MLGraphBuilder.build()` can be resolved.
+    // Arguments are a persistent ML callback (see [`ContextMessage`] above),
+    // the script-provided graph identifier returned by `MLGraphBuilder.build()`,
+    // the `ContextId` owning the graph, and the `GraphInfo` itself.  The
+    // backend will keep the supplied info for compilation and send it back in
+    // the corresponding `ContextMessage::CompileResult` so the script can
+    // construct the final `MLGraph` without having held its own copy during the
+    // asynchronous build.
     Compile(
         GenericCallback<ContextMessage>,
         GraphId,
