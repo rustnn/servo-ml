@@ -9,23 +9,22 @@ use rustnn::graph::ConstantData;
 use webnn_traits::{ContextId, ContextMessage, WebNNMsg};
 
 #[derive(Debug)]
-struct ContextInfo {
-    // Placeholder for future backend-specific context state.
+struct Context {
+    // Backend-specific context state.
+    tensor_store: HashMap<u32, Vec<u8>>,
 }
 
 /// State handled by the manager thread.  Encapsulating the mutable maps
 /// inside a struct lets us move the large match arms into helpers and
 /// dramatically reduce nesting in `run_manager`.
 struct WebNNManager {
-    contexts: HashMap<ContextId, ContextInfo>,
-    tensor_store: HashMap<(ContextId, u32), Vec<u8>>,
+    contexts: HashMap<ContextId, Context>,
 }
 
 impl WebNNManager {
     fn new() -> Self {
         WebNNManager {
             contexts: HashMap::new(),
-            tensor_store: HashMap::new(),
         }
     }
 
@@ -47,31 +46,64 @@ impl WebNNManager {
             },
             WebNNMsg::NewContext(id) => {
                 debug!("webnn manager: NewContext {:?}", id);
-                self.contexts.insert(id, ContextInfo {});
+                self.contexts.insert(id, Context::new());
                 true
             },
             WebNNMsg::DestroyContext(id) => {
                 debug!("webnn manager: DestroyContext {:?}", id);
-                self.tensor_store.retain(|(ctx, _), _| ctx != &id);
+                // dropping the context automatically discards its tensor store
                 self.contexts.remove(&id);
                 true
             },
             WebNNMsg::CreateTensor(callback, ctx_id, tensor_id, byte_length) => {
-                self.handle_create_tensor(callback, ctx_id, tensor_id, byte_length);
+                if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
+                    ctx.handle_create_tensor(callback, ctx_id, tensor_id, byte_length);
+                } else {
+                    warn!(
+                        "webnn manager: CreateTensor for unknown context {:?}",
+                        ctx_id
+                    );
+                }
                 true
             },
             WebNNMsg::ReadTensor(callback, ctx_id, tensor_id) => {
-                self.handle_read_tensor(callback, ctx_id, tensor_id);
+                if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
+                    ctx.handle_read_tensor(callback, ctx_id, tensor_id);
+                } else {
+                    warn!("webnn manager: ReadTensor for unknown context {:?}", ctx_id);
+                }
                 true
             },
             WebNNMsg::WriteTensor(ctx_id, tensor_id, bytes) => {
-                self.handle_write_tensor(ctx_id, tensor_id, bytes);
+                if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
+                    ctx.handle_write_tensor(ctx_id, tensor_id, bytes);
+                } else {
+                    warn!(
+                        "webnn manager: WriteTensor for unknown context {:?}",
+                        ctx_id
+                    );
+                }
                 true
             },
             WebNNMsg::Dispatch(ctx_id, graph_info, inputs_map, outputs_map) => {
-                self.handle_dispatch(ctx_id, graph_info, inputs_map, outputs_map);
+                if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
+                    ctx.handle_dispatch(ctx_id, graph_info, inputs_map, outputs_map);
+                } else {
+                    warn!("webnn manager: Dispatch for unknown context {:?}", ctx_id);
+                }
                 true
             },
+        }
+    }
+}
+
+// Methods that used to live on the manager have been pushed down into each
+// context instance.  The manager now merely looks up the appropriate context
+// and forwards messages.
+impl Context {
+    fn new() -> Self {
+        Context {
+            tensor_store: HashMap::new(),
         }
     }
 
@@ -94,7 +126,7 @@ impl WebNNManager {
         if byte_length % 4 != 0 {
             buffer.extend(std::iter::repeat(0u8).take(byte_length % 4));
         }
-        self.tensor_store.insert((ctx_id, tensor_id), buffer);
+        self.tensor_store.insert(tensor_id, buffer);
         let _ = callback.send(ContextMessage::CreateTensorResult(
             ctx_id,
             tensor_id,
@@ -112,7 +144,7 @@ impl WebNNManager {
             "webnn manager: ReadTensor ctx={:?} id={}",
             ctx_id, tensor_id
         );
-        match self.tensor_store.get(&(ctx_id, tensor_id)) {
+        match self.tensor_store.get(&tensor_id) {
             Some(buf) => {
                 let _ = callback.send(ContextMessage::ReadTensorResult(
                     ctx_id,
@@ -137,7 +169,7 @@ impl WebNNManager {
             tensor_id,
             bytes.len()
         );
-        self.tensor_store.insert((ctx_id, tensor_id), bytes);
+        self.tensor_store.insert(tensor_id, bytes);
     }
 
     fn handle_dispatch(
@@ -166,8 +198,8 @@ impl WebNNManager {
             return;
         }
 
-        let inputs_bytes = self.collect_input_bytes(ctx_id, &inputs_map);
-        self.resolve_constant_operands(ctx_id, &mut graph_info);
+        let inputs_bytes = self.collect_input_bytes(&inputs_map);
+        self.resolve_constant_operands(&mut graph_info);
 
         // Attempt CoreML execution; on macOS this may succeed and write outputs.
         if self.try_coreml(
@@ -181,34 +213,26 @@ impl WebNNManager {
         }
 
         // Fall back to zeroed outputs if we didn't already write something.
-        self.zeroed_outputs(ctx_id, &graph_info, &outputs_map);
+        self.zeroed_outputs(&graph_info, &outputs_map);
     }
 
-    fn collect_input_bytes(
-        &self,
-        ctx_id: ContextId,
-        inputs_map: &HashMap<u32, u32>,
-    ) -> HashMap<u32, Vec<u8>> {
+    fn collect_input_bytes(&self, inputs_map: &HashMap<u32, u32>) -> HashMap<u32, Vec<u8>> {
         let mut inputs_bytes = HashMap::new();
         for (op_id, tensor_id) in inputs_map {
-            if let Some(buf) = self.tensor_store.get(&(ctx_id, *tensor_id)) {
+            if let Some(buf) = self.tensor_store.get(tensor_id) {
                 inputs_bytes.insert(*op_id, buf.clone());
             }
         }
         inputs_bytes
     }
 
-    fn resolve_constant_operands(
-        &mut self,
-        ctx_id: ContextId,
-        graph_info: &mut rustnn::graph::GraphInfo,
-    ) {
+    fn resolve_constant_operands(&mut self, graph_info: &mut rustnn::graph::GraphInfo) {
         if graph_info.id_to_constant_tensor_operand_map.is_empty() {
             return;
         }
         for (op_id, tensor_id_str) in graph_info.id_to_constant_tensor_operand_map.iter() {
             if let Ok(tid) = tensor_id_str.parse::<u32>() {
-                if let Some(buf) = self.tensor_store.get(&(ctx_id, tid)) {
+                if let Some(buf) = self.tensor_store.get(&tid) {
                     graph_info.constant_operand_ids_to_handles.insert(
                         *op_id,
                         ConstantData {
@@ -224,7 +248,7 @@ impl WebNNManager {
     #[cfg(target_os = "macos")]
     fn try_coreml(
         &mut self,
-        ctx_id: ContextId,
+        _ctx_id: ContextId,
         graph_info: &mut rustnn::graph::GraphInfo,
         inputs_map: &HashMap<u32, u32>,
         inputs_bytes: &HashMap<u32, Vec<u8>>,
@@ -307,7 +331,7 @@ impl WebNNManager {
                                         for &v in coreml_out.data.iter() {
                                             bytes.extend_from_slice(&v.to_le_bytes());
                                         }
-                                        self.tensor_store.insert((ctx_id, *tensor_id), bytes);
+                                        self.tensor_store.insert(*tensor_id, bytes);
                                     },
                                     rustnn::graph::DataType::Float16 => {
                                         let mut bytes =
@@ -316,7 +340,7 @@ impl WebNNManager {
                                             let bits = half::f16::from_f32(v).to_bits();
                                             bytes.extend_from_slice(&bits.to_le_bytes());
                                         }
-                                        self.tensor_store.insert((ctx_id, *tensor_id), bytes);
+                                        self.tensor_store.insert(*tensor_id, bytes);
                                     },
                                     _other => {
                                         let byte_length = operand
@@ -326,7 +350,7 @@ impl WebNNManager {
                                             .fold(1usize, |acc, &d| acc.saturating_mul(d as usize))
                                             .saturating_mul(4usize);
                                         self.tensor_store
-                                            .insert((ctx_id, *tensor_id), vec![0u8; byte_length]);
+                                            .insert(*tensor_id, vec![0u8; byte_length]);
                                     },
                                 }
                             } else {
@@ -336,8 +360,7 @@ impl WebNNManager {
                                     .iter()
                                     .fold(1usize, |acc, &d| acc.saturating_mul(d as usize))
                                     .saturating_mul(4usize);
-                                self.tensor_store
-                                    .insert((ctx_id, *tensor_id), vec![0u8; byte_length]);
+                                self.tensor_store.insert(*tensor_id, vec![0u8; byte_length]);
                             }
                         }
                     }
@@ -362,7 +385,6 @@ impl WebNNManager {
 
     fn zeroed_outputs(
         &mut self,
-        ctx_id: ContextId,
         graph_info: &rustnn::graph::GraphInfo,
         outputs_map: &HashMap<u32, u32>,
     ) {
@@ -375,8 +397,7 @@ impl WebNNManager {
                     .fold(1usize, |acc, &d| acc.saturating_mul(d as usize));
                 let byte_len =
                     element_count.saturating_mul(operand.descriptor.data_type.bytes_per_element());
-                self.tensor_store
-                    .insert((ctx_id, *tensor_id), vec![0u8; byte_len]);
+                self.tensor_store.insert(*tensor_id, vec![0u8; byte_len]);
             }
         }
     }

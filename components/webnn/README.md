@@ -36,7 +36,7 @@ Design notes
   separate backend crates) — DOM/script should only depend on the shared
   message crate and the `sender`.
 - Implementation note: prefer declaring manager helper types (for example
-  `ContextInfo`) at module scope rather than inside `run_manager()` so types
+  `Context`) at module scope rather than inside `run_manager()` so types
   are discoverable, easier to test, and stable for future backend additions.
 - When dispatching graphs we currently only support the macOS CoreML backend.
   Graphs with constant operands must have their bytes recorded (`constant-*`
