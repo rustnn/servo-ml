@@ -1,5 +1,4 @@
 use std::collections::{HashMap, VecDeque};
-use std::hash::Hasher;
 use std::path::PathBuf;
 use std::thread;
 
@@ -36,35 +35,27 @@ enum PendingOp {
     Compile(GraphId),
 }
 
-struct ModelCacheEntry {
-    /// raw converted model bytes; used for dispatch and (in future) hashing
-    model_bytes: Vec<u8>,
-    weights: Option<Vec<u8>>,
-    /// path to compiled model directory once compilation has finished
-    compiled_path: Option<PathBuf>,
-    /// original GraphInfo from the build/compile step.  Stored here so
-    /// the compute path can look it up using just the graph id.
-    graph_info: rustnn::graph::GraphInfo,
-}
-
 struct Context {
     // Backend-specific context state.
-    tensor_store: HashMap<u32, Vec<u8>>,
+    tensor_store: HashMap<u32, std::sync::Arc<Vec<u8>>>,
     // Sender for offloading ML work to the dedicated thread.
     compute_tx: Sender<MlMsg>,
 
-    /// Cache of previously-seen graphs keyed by the `GraphId` provided by
-    /// script.  The entry contains the compiled path when available as well
-    /// as the original GraphInfo needed for dispatch.
-    model_cache: HashMap<GraphId, ModelCacheEntry>,
+    /// Set of graph ids we’ve already forwarded to the ML thread for
+    /// compilation.  We don’t retain the full GraphInfo on the manager side
+    /// any more; the compute thread keeps its own cache.  The set exists purely
+    /// to avoid reconverting the same graph bytes if the script repeatedly
+    /// calls `compile()` for the same id.
+    seen_graphs: std::collections::HashSet<GraphId>,
 
     /// When the script requests a compilation via `MLGraphBuilder.build()` we
     /// record the `GraphId` it generated together with the persistent
     /// callback supplied by the caller.  After the ML worker signals that a
     /// particular graph id has finished compiling we use this map to notify every
     /// waiting build (and correspondingly resolve the promise on the script
-    /// side).
-    script_build_request: HashMap<GraphId, Vec<(GraphId, GenericCallback<ContextMessage>)>>,
+    /// side).  The key already identifies the graph so we only store the
+    /// callback in the value vector.
+    script_build_request: HashMap<GraphId, Vec<GenericCallback<ContextMessage>>>,
 
     // Implementation of the WebNN context "timeline".  When a compute or
     // compile is in-flight we must hold subsequent operations and replay them
@@ -180,6 +171,8 @@ impl WebNNManager {
             WebNNMsg::Compile(cb, graph_id, ctx_id, graph_info) => {
                 if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
                     // register graph (possibly compiling or caching) and record callback
+                    // we now take ownership of `graph_info` directly rather than
+                    // referencing it, since the manager doesn't cache it.
                     let key =
                         ctx.get_or_compile(ctx_id, graph_id, graph_info, Some((graph_id, cb)));
                     // put a compile step on the timeline so subsequent ops wait
@@ -189,39 +182,18 @@ impl WebNNManager {
                 }
                 true
             },
-            WebNNMsg::Compiled(ctx_id, graph_id, path) => {
+            WebNNMsg::Compiled(ctx_id, graph_id, _path) => {
                 if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
-                    if let Some(entry) = ctx.model_cache.get_mut(&graph_id) {
-                        entry.compiled_path = Some(path.clone());
-                    }
                     // notify any build callbacks waiting for this graph_id
                     if let Some(vec) = ctx.script_build_request.remove(&graph_id) {
-                        for (bid, cb) in vec {
-                            // send result back to script thread, including the
-                            // GraphInfo that we still have cached in the model
-                            // entry.  This frees the script from having to keep a copy.
-                            if let Some(entry) = ctx.model_cache.get(&graph_id) {
-                                let _ = cb.send(ContextMessage::CompileResult(
-                                    ctx_id,
-                                    graph_id,
-                                    entry.graph_info.clone(),
-                                ));
-                            } else {
-                                // fallback: should never happen
-                                let _ = cb.send(ContextMessage::CompileResult(
-                                    ctx_id,
-                                    graph_id,
-                                    rustnn::graph::GraphInfo {
-                                        operands: Vec::new(),
-                                        input_operands: Vec::new(),
-                                        output_operands: Vec::new(),
-                                        operations: Vec::new(),
-                                        constant_operand_ids_to_handles: HashMap::new(),
-                                        id_to_constant_tensor_operand_map: HashMap::new(),
-                                        quantized: false,
-                                    },
-                                ));
-                            }
+                        for cb in vec {
+                            // send result back to script thread.  The script
+                            // stored its own clone of the GraphInfo when the
+                            // build request was issued, so the callback can
+                            // construct the MLGraph with that information.  The
+                            // manager itself does not send the info in the
+                            // compile result message.
+                            let _ = cb.send(ContextMessage::CompileResult(ctx_id, graph_id));
                         }
                     }
                     // compilation counts as an in-flight operation; clear flag
@@ -244,20 +216,8 @@ impl WebNNManager {
                     // script side can resolve the promises, though they won't
                     // be able to dispatch successfully later.
                     if let Some(vec) = ctx.script_build_request.remove(&key) {
-                        for (_build_id, cb) in vec {
-                            let _ = cb.send(ContextMessage::CompileResult(
-                                ctx_id,
-                                key,
-                                rustnn::graph::GraphInfo {
-                                    operands: Vec::new(),
-                                    input_operands: Vec::new(),
-                                    output_operands: Vec::new(),
-                                    operations: Vec::new(),
-                                    constant_operand_ids_to_handles: HashMap::new(),
-                                    id_to_constant_tensor_operand_map: HashMap::new(),
-                                    quantized: false,
-                                },
-                            ));
+                        for cb in vec {
+                            let _ = cb.send(ContextMessage::CompileResult(ctx_id, key));
                         }
                     }
                     if ctx.queue_blocked {
@@ -295,7 +255,7 @@ impl Context {
         Context {
             tensor_store: HashMap::new(),
             compute_tx,
-            model_cache: HashMap::new(),
+            seen_graphs: std::collections::HashSet::new(),
             script_build_request: HashMap::new(),
             timeline: VecDeque::new(),
             queue_blocked: false,
@@ -321,7 +281,8 @@ impl Context {
         if byte_length % 4 != 0 {
             buffer.extend(std::iter::repeat(0u8).take(byte_length % 4));
         }
-        self.tensor_store.insert(tensor_id, buffer);
+        self.tensor_store
+            .insert(tensor_id, std::sync::Arc::new(buffer));
         if let Err(e) = callback.send(ContextMessage::CreateTensorResult(
             ctx_id,
             tensor_id,
@@ -339,7 +300,8 @@ impl Context {
             bytes.len()
         );
         // create the buffer exactly as given; no zeroing required
-        self.tensor_store.insert(tensor_id, bytes);
+        self.tensor_store
+            .insert(tensor_id, std::sync::Arc::new(bytes));
         // unlike CreateTensor there is no callback path; callers either
         // resolve their own promise synchronously or ignore the result.
     }
@@ -359,7 +321,7 @@ impl Context {
                 if let Err(e) = callback.send(ContextMessage::ReadTensorResult(
                     ctx_id,
                     tensor_id,
-                    Ok(buf.clone()),
+                    Ok(buf.as_ref().clone()),
                 )) {
                     warn!("webnn manager: ReadTensor callback send failed: {:?}", e);
                 }
@@ -388,7 +350,8 @@ impl Context {
             tensor_id,
             bytes.len()
         );
-        self.tensor_store.insert(tensor_id, bytes);
+        self.tensor_store
+            .insert(tensor_id, std::sync::Arc::new(bytes));
     }
 
     fn handle_dispatch(
@@ -411,7 +374,7 @@ impl Context {
         let mut inputs_bytes = HashMap::new();
         for (op_id, tensor_id) in inputs_map {
             if let Some(buf) = self.tensor_store.get(tensor_id) {
-                inputs_bytes.insert(*op_id, buf.clone());
+                inputs_bytes.insert(*op_id, buf.as_ref().clone());
             }
         }
         inputs_bytes
@@ -427,7 +390,7 @@ impl Context {
                     graph_info.constant_operand_ids_to_handles.insert(
                         *op_id,
                         ConstantData {
-                            data: buf.clone(),
+                            data: buf.as_ref().clone(),
                             label: None,
                         },
                     );
@@ -450,30 +413,29 @@ impl Context {
     /// the timeline immediately.
     /// Ensure the graph is compiled and return its cache key.
     ///
-    /// This may queue a compilation on the ML thread if no entry exists yet.
-    /// Compute/cache a key for `graph_info`, enqueue a compile on the
-    /// ML thread if we haven't seen it before, and optionally record a script-side
-    /// callback that should be invoked when the compilation completes.
+    /// This may queue a compilation on the ML thread if we haven't sent the
+    /// graph before.  We convert the provided `graph_info` to bytes, resolve
+    /// any constant operands, and notify the ML worker.  A simple `seen_graphs`
+    /// set prevents duplicate conversions.  If `build_request` is provided we
+    /// also record the callback so the script can be notified when compilation
+    /// finishes.
     fn get_or_compile(
         &mut self,
         ctx_id: ContextId,
         graph_id: GraphId,
-        graph_info: rustnn::graph::GraphInfo,
+        mut graph_info: rustnn::graph::GraphInfo,
         build_request: Option<(GraphId, GenericCallback<ContextMessage>)>,
     ) -> GraphId {
         debug!("get_or_compile: ctx={:?}", ctx_id);
-        // make a mutable copy so we can resolve constants without warning
-        let mut gi = graph_info;
-        // resolve any constant operands before conversion: this ensures the
-        // compiled model includes them and we don't need to mutate the graph
-        // on the compute path.
-        self.resolve_constant_operands(&mut gi);
+        // caller already gave us ownership of the graph info; mutate it
+        // directly to resolve constants before converting.
+        self.resolve_constant_operands(&mut graph_info);
         use rustnn::converters::CoremlMlProgramConverter;
         // convert once; the resulting bytes are used by the backend for
         // compilation and dispatch.  The script-supplied `graph_id` acts as the
         // cache key instead of hashing the bytes.
         let converter = CoremlMlProgramConverter;
-        if let Ok(converted) = converter.convert(&gi) {
+        if let Ok(converted) = converter.convert(&graph_info) {
             debug!(
                 "get_or_compile: conversion succeeded for graph {:?}",
                 graph_id
@@ -486,41 +448,29 @@ impl Context {
                     "get_or_compile: recording build_request for graph {:?}",
                     gid
                 );
-                self.script_build_request
-                    .entry(gid)
-                    .or_default()
-                    .push((gid, cb));
+                self.script_build_request.entry(gid).or_default().push(cb);
             }
 
-            if !self.model_cache.contains_key(&graph_id) {
+            // avoid reconverting the same graph repeatedly
+            if !self.seen_graphs.contains(&graph_id) {
                 debug!(
-                    "get_or_compile: inserting new graph {:?} into cache",
+                    "get_or_compile: inserting new graph {:?} into seen set",
                     graph_id
                 );
-                self.model_cache.insert(
-                    graph_id,
-                    ModelCacheEntry {
-                        model_bytes: converted.data.clone(),
-                        weights: converted.weights_data.clone(),
-                        compiled_path: None,
-                        graph_info: gi.clone(),
-                    },
-                );
-                // send compile request to ML thread
+                self.seen_graphs.insert(graph_id);
+                // send compile request to ML thread with graph info for the
+                // worker's own cache
                 if let Err(e) = self.compute_tx.send(MlMsg::Compile {
                     ctx_id,
                     key: graph_id,
                     model_bytes: converted.data,
                     weights: converted.weights_data,
-                    graph_info: gi.clone(),
+                    graph_info,
                 }) {
                     warn!("webnn manager: failed to send compile message: {:?}", e);
                 }
             } else {
-                debug!(
-                    "get_or_compile: graph {:?} already present in cache",
-                    graph_id
-                );
+                debug!("get_or_compile: graph {:?} already seen", graph_id);
             }
             graph_id
         } else {
@@ -539,41 +489,12 @@ impl Context {
     ) -> bool {
         debug!("compute: ctx={:?}", _ctx_id);
 
-        // Look up the matching GraphInfo from our cache.  Dispatch no longer
-        // sends the full graph, so we must retrieve it here using the previously
-        // stored entry.  If it's missing we can't reasonably execute, so return
-        // early with zeroed outputs.
-        let mut graph_info = if let Some(entry) = self.model_cache.get(&key) {
-            entry.graph_info.clone()
-        } else {
-            warn!("compute: missing graph_info for graph {:?}", key);
-            self.zeroed_outputs(
-                &rustnn::graph::GraphInfo {
-                    operands: Vec::new(),
-                    input_operands: Vec::new(),
-                    output_operands: Vec::new(),
-                    operations: Vec::new(),
-                    constant_operand_ids_to_handles: HashMap::new(),
-                    id_to_constant_tensor_operand_map: HashMap::new(),
-                    quantized: false,
-                },
-                &outputs_map,
-            );
-            self.queue_blocked = false;
-            return false;
-        };
-
-        // Materialize any constant operands now that we have the graph info.
-        self.resolve_constant_operands(&mut graph_info);
-
+        // The manager no longer keeps a cache; the compute thread owns all
+        // graph metadata.  We simply forward the inputs to the ML worker and
+        // let it handle missing/uncached graphs (it will zero the outputs).
         let inputs_bytes = self.collect_input_bytes(&inputs_map);
         debug!("compute: collected {} input buffers", inputs_bytes.len());
 
-        // Ensure the graph has been compiled (a no-op if already cached).
-        let _ = self.get_or_compile(_ctx_id, key, graph_info.clone(), None);
-        debug!("compute: using graph {:?}", key);
-
-        let work_graph = graph_info.clone();
         let work_outputs = outputs_map.clone();
 
         let msg = MlMsg::Compute {
@@ -586,7 +507,19 @@ impl Context {
 
         if let Err(e) = compute_tx.send(msg) {
             warn!("webnn manager: failed to send compute message: {:?}", e);
-            self.zeroed_outputs(&work_graph, &outputs_map);
+            // fall back to zeroing outputs locally.
+            self.zeroed_outputs(
+                &rustnn::graph::GraphInfo {
+                    operands: Vec::new(),
+                    input_operands: Vec::new(),
+                    output_operands: Vec::new(),
+                    operations: Vec::new(),
+                    constant_operand_ids_to_handles: HashMap::new(),
+                    id_to_constant_tensor_operand_map: HashMap::new(),
+                    quantized: false,
+                },
+                &outputs_map,
+            );
             self.queue_blocked = false;
             return false;
         }
@@ -608,7 +541,8 @@ impl Context {
                     });
                 let byte_len =
                     element_count.saturating_mul(operand.descriptor.data_type.bytes_per_element());
-                self.tensor_store.insert(*tensor_id, vec![0u8; byte_len]);
+                self.tensor_store
+                    .insert(*tensor_id, std::sync::Arc::new(vec![0u8; byte_len]));
             }
         }
     }
@@ -655,13 +589,9 @@ impl Context {
                 debug!("run_now: Compile graph={:?}", key);
                 // block the timeline until the compilation result arrives.
                 self.queue_blocked = true;
-                if let Some(entry) = self.model_cache.get(&key) {
-                    if entry.compiled_path.is_some() {
-                        // already done; we can immediately resume
-                        debug!("run_now: compile already done, unblocking");
-                        self.queue_blocked = false;
-                    }
-                }
+                // we no longer track compiled paths on the manager; the ML
+                // thread owns that cache and will notify us when the work
+                // completes via `WebNNMsg::Compiled`.
             },
         }
     }
@@ -674,7 +604,8 @@ impl Context {
                 tensor_id,
                 bytes.len()
             );
-            self.tensor_store.insert(tensor_id, bytes);
+            self.tensor_store
+                .insert(tensor_id, std::sync::Arc::new(bytes));
         }
         self.queue_blocked = false;
         self.process_queue();
@@ -794,8 +725,15 @@ enum MlMsg {
 // and then sends the resulting tensor bytes back to the caller.
 fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
     debug!("ml_loop: starting");
-    // map from graph id -> (cached compiled model directory, original GraphInfo)
-    let mut compiled_map: HashMap<GraphId, (PathBuf, rustnn::graph::GraphInfo)> = HashMap::new();
+    // map from graph id -> cached information retained on the compute thread.
+    // The entry holds the original GraphInfo so compute messages need only
+    // supply the graph id.  The compiled model path is filled in once the
+    // compile operation completes.
+    struct MlCacheEntry {
+        graph_info: rustnn::graph::GraphInfo,
+        compiled_path: Option<PathBuf>,
+    }
+    let mut compiled_map: HashMap<GraphId, MlCacheEntry> = HashMap::new();
     while let Ok(msg) = rx.recv() {
         debug!("ml_loop: received message {:?}", msg);
         match msg {
@@ -808,21 +746,27 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
             } => {
                 debug!("ml_loop: Compute ctx={:?} graph={:?}", ctx_id, key);
                 let mut outputs = HashMap::new();
-                // retrieve the stored graph_info and path from the cache
-                let (cached_path, mut graph_info) = if let Some((path, gi)) = compiled_map.get(&key)
-                {
-                    (Some(path.as_path()), gi.clone())
-                } else {
-                    // missing entry; produce zeroed outputs and skip CoreML
-                    for (op_id, tensor_id) in outputs_map.iter() {
-                        // can't inspect operand shape without graph_info; just zero 4-byte elements
+
+                // if we haven't seen a compile for this graph yet the ML thread
+                // can't execute anything; generate zeroed outputs and bail.
+                if compiled_map.get(&key).is_none() {
+                    for (_op_id, tensor_id) in outputs_map.iter() {
+                        // Without graph info we can't inspect shape here, so
+                        // fall back to zero-length buffers (same as previous
+                        // behaviour when the entry was missing).
                         outputs.insert(*tensor_id, Vec::new());
                     }
                     if let Err(e) = manager_tx.send(WebNNMsg::ComputeResult(ctx_id, outputs)) {
                         warn!("webnn ML thread: failed to send ComputeResult: {:?}", e);
                     }
                     continue;
-                };
+                }
+
+                let entry = compiled_map.get(&key).expect("checked presence above");
+                let cached_path = entry.compiled_path.as_deref();
+                // clone the underlying GraphInfo so we can mutate it for this run
+                let mut graph_info = entry.graph_info.clone();
+
                 if !try_coreml_execute(
                     &mut graph_info,
                     &inputs_map,
@@ -880,7 +824,21 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
 
                 match compile_result {
                     Ok(Ok((_compiled_url, compiled_path, _temp_mlmodel))) => {
-                        compiled_map.insert(key, (compiled_path.clone(), graph_info));
+                        // insert new entry or update existing info without
+                        // cloning the graph info.
+                        match compiled_map.entry(key) {
+                            std::collections::hash_map::Entry::Vacant(v) => {
+                                v.insert(MlCacheEntry {
+                                    graph_info,
+                                    compiled_path: Some(compiled_path.clone()),
+                                });
+                            },
+                            std::collections::hash_map::Entry::Occupied(mut o) => {
+                                o.get_mut().compiled_path = Some(compiled_path.clone());
+                                // `graph_info` is dropped here because it's not
+                                // needed for an existing entry.
+                            },
+                        }
                         // notify manager so the context can mark the entry ready
                         if let Err(e) =
                             manager_tx.send(WebNNMsg::Compiled(ctx_id, key, compiled_path))
@@ -943,12 +901,13 @@ fn try_coreml_execute(
     debug!("try_coreml_execute: entry");
     use rustnn::GraphConverter;
     use rustnn::converters::CoremlMlProgramConverter;
-    use rustnn::executors::coreml::{
-        CoremlInput, run_coreml_with_inputs_cached, run_coreml_with_inputs_with_weights,
-    };
+    use rustnn::executors::coreml::{CoremlInput, run_coreml_with_inputs_cached};
 
     debug!("webnn manager: Dispatch — attempting CoreML execution");
 
+    // Perfomance TODO: way to many allocations in the below loops;
+    // look into reducing this(maybe use device tensors like pywebnn).
+    // See `scratchpad/webnn_allocs_sample.txt`.
     let mut coreml_inputs: Vec<CoremlInput> = Vec::new();
     for (op_id, _) in inputs_map.iter() {
         if let Some(op) = graph_info.operands.get(*op_id as usize) {

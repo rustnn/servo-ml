@@ -35,56 +35,8 @@ pub(crate) struct MLGraph {
 }
 
 impl MLGraph {
-    pub(crate) fn new_inherited(context: &MLContext) -> MLGraph {
-        // Preserve the original default (empty) constructor used by the JS-facing
-        // `new MLGraph()` binding. Graphs created from a builder should use
-        // `new_inherited_with_info_and_id` / `new_with_info_and_id` below.
-        MLGraph {
-            reflector_: Reflector::new(),
-            context: Dom::from_ref(context),
-            is_destroyed: Cell::new(false),
-            graph_id: GraphId(0),
-            graph_info: DomRefCell::new(GraphInfo {
-                operands: Vec::new(),
-                input_operands: Vec::new(),
-                output_operands: Vec::new(),
-                operations: Vec::new(),
-                constant_operand_ids_to_handles: std::collections::HashMap::new(),
-                id_to_constant_tensor_operand_map: std::collections::HashMap::new(),
-                quantized: false,
-            }),
-        }
-    }
-
-    /// Builder-specific constructor that accepts a `GraphId` and the prepared
-    /// `GraphInfo` produced during the build.  Under the new compile flow the
-    /// `GraphInfo` is supplied by the backend as part of the compile-complete
-    /// notification; script-side callers no longer clone or retain a copy prior
-    /// to compilation.
-    pub(crate) fn new_with_info(
-        graph_id: GraphId,
-        context: &MLContext,
-        graph_info: GraphInfo,
-        global: &GlobalScope,
-        can_gc: CanGc,
-    ) -> DomRoot<MLGraph> {
-        reflect_dom_object(
-            Box::new(MLGraph::new_inherited_with_info(
-                context, graph_id, graph_info,
-            )),
-            global,
-            can_gc,
-        )
-    }
-
-    /// Internal helper used by the public constructors above.  The caller
-    /// must provide a `graph_id`; callers that don't care about the id can
-    /// pass `GraphId(0)`.
-    fn new_inherited_with_info(
-        context: &MLContext,
-        graph_id: GraphId,
-        graph_info: GraphInfo,
-    ) -> MLGraph {
+    /// Internal helper: create a graph with supplied id and info.
+    fn new_inherited(context: &MLContext, graph_id: GraphId, graph_info: GraphInfo) -> MLGraph {
         MLGraph {
             reflector_: Reflector::new(),
             context: Dom::from_ref(context),
@@ -96,10 +48,16 @@ impl MLGraph {
 
     pub(crate) fn new(
         context: &MLContext,
+        graph_id: GraphId,
+        graph_info: GraphInfo,
         global: &GlobalScope,
         can_gc: CanGc,
     ) -> DomRoot<MLGraph> {
-        reflect_dom_object(Box::new(MLGraph::new_inherited(context)), global, can_gc)
+        reflect_dom_object(
+            Box::new(MLGraph::new_inherited(context, graph_id, graph_info)),
+            global,
+            can_gc,
+        )
     }
 
     pub(crate) fn context(&self) -> Dom<MLContext> {

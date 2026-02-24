@@ -54,6 +54,17 @@ Design notes
 - The manager makes a best-effort attempt to zero‑fill output tensors if no
   backend is available, preventing script-side reads from hanging; real
   backends should replace this no-op behavior.
+- Recent refactors moved all model caching off the manager thread and
+  into the ML worker itself.  The manager no longer retains any `GraphInfo`
+  or compiled‑paths; it simply converts and forwards compile requests.  The
+  ML thread keeps a map from `GraphId` to a small `MlCacheEntry` containing
+  the `GraphInfo` and optional compiled path.  Dispatch messages now carry
+  only the graph id and tensor data, significantly reducing manager memory
+  pressure and avoiding cross-thread cloning of the graph description.
+- Script-side callbacks for compilation (`ContextMessage::CompileResult`) only
+  supply the `GraphId`.  Script code keeps a clone of the `GraphInfo` when
+  `build()` is invoked so that it can validate dispatch arguments later; the
+  manager never forwards the blob.
 - In multiprocess mode manager threads started with Constellation run in
   the Constellation process (not the Script/content process).
 

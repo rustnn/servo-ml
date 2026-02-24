@@ -58,10 +58,11 @@ pub enum ContextMessage {
     ReadTensorResult(ContextId, u32, Result<Vec<u8>, ()>),
 
     /// Notification that a graph build has completed compilation.  Arguments
-    /// are the originating context, the `GraphId` that was provided by script
-    /// when `build()` was called, and the `GraphInfo` supplied earlier to the
-    /// backend.  The promise resolver can immediately create an `MLGraph`.
-    CompileResult(ContextId, GraphId, GraphInfo),
+    /// are the originating context and the `GraphId` that was provided by
+    /// script when `build()` was called.  Script-side consumers do not receive
+    /// a `GraphInfo` because the ML thread retains the authoritative copy; new
+    /// `MLGraph` objects created after compile start with an empty info.
+    CompileResult(ContextId, GraphId),
 }
 
 impl malloc_size_of::MallocSizeOf for ContextMessage {

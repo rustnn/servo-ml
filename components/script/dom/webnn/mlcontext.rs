@@ -62,14 +62,15 @@ pub(crate) struct MLContext {
     next_graph_id: crate::dom::bindings::trace::NoTrace<std::cell::Cell<u32>>,
 
     /// Promises returned by `MLGraphBuilder.build()` that are waiting for a
-    /// compile-complete notification.  We no longer retain the associated
-    /// `GraphInfo` (it is shipped to the backend and later returned with the
-    /// CompileResult), so the map only needs to track the promise itself.  The
-    /// key is the numeric identifier (`GraphId.0`) assigned by the context
-    /// during `build()`; using `u32` here avoids confusion with the tracing
-    /// macros.
+    /// compile-complete notification.  We also keep a clone of the
+    /// `GraphInfo` supplied by the builder so that validation can run
+    /// during `MLContext::Dispatch` once compilation completes.  The map
+    /// value tuple is `(promise, graph_info)`; the graph id key is the
+    /// numeric identifier (`GraphId.0`) assigned by the context during
+    /// `build()`.  Using `u32` here avoids confusion with the tracing macros.
+    #[no_trace]
     #[ignore_malloc_size_of = "contains Rc<Promise>/DOM refs which lack MallocConditionalSizeOf"]
-    pending_builds: DomRefCell<HashMapTracedValues<u32, Rc<Promise>>>,
+    pending_builds: DomRefCell<HashMapTracedValues<u32, (Rc<Promise>, rustnn::graph::GraphInfo)>>,
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlcontext-contexttype-slot>
     context_type: String,
@@ -184,12 +185,18 @@ impl MLContext {
 
     /// Record a pending build so that `compile_callback` can resolve the
     /// associated promise once the manager notifies us that compilation has
-    /// finished.
-    /// Record a pending graph build.  The associated `GraphInfo` will be
-    /// consumed later by `compile_callback` when the backend notifies us that
-    /// compilation has completed.
-    pub(crate) fn register_build(&self, graph_id: GraphId, promise: Rc<Promise>) {
-        self.pending_builds.borrow_mut().insert(graph_id.0, promise);
+    /// finished.  We also stash a *clone* of the builder's `GraphInfo` so
+    /// that `Dispatch` side validation can access operand descriptors once the
+    /// graph object is constructed.
+    pub(crate) fn register_build(
+        &self,
+        graph_id: GraphId,
+        graph_info: rustnn::graph::GraphInfo,
+        promise: Rc<Promise>,
+    ) {
+        self.pending_builds
+            .borrow_mut()
+            .insert(graph_id.0, (promise, graph_info));
     }
 
     /// Final step of the script-side compile callback flow.  This implements
@@ -206,17 +213,13 @@ impl MLContext {
     ///
     /// The compile-complete notification originates from the manager thread
     /// via `ContextMessage::CompileResult` and is routed through `ML::compile_callback`.
-    pub(crate) fn compile_callback(
-        &self,
-        graph_id: GraphId,
-        graph_info: rustnn::graph::GraphInfo,
-        can_gc: CanGc,
-    ) {
+    pub(crate) fn compile_callback(&self, graph_id: GraphId, can_gc: CanGc) {
         let maybe = self.pending_builds.borrow_mut().remove(&graph_id.0);
-        if let Some(promise) = maybe {
-            // create the DOM graph lazily now that compile has finished.
+        if let Some((promise, graph_info)) = maybe {
+            // create the DOM graph lazily now that compile has finished;
+            // include the stored GraphInfo for validation.
             let global = &self.global();
-            let graph = MLGraph::new_with_info(graph_id, self, graph_info, global, can_gc);
+            let graph = MLGraph::new(self, graph_id, graph_info, global, can_gc);
             promise.resolve_native(&graph, can_gc);
         } else {
             warn!("compile_callback: unknown graph id {:?}", graph_id);

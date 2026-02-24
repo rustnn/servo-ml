@@ -832,14 +832,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // generate a unique id for the graph
         let graph_id = self.context().next_graph_id();
 
-        // record the promise on the context; we no longer keep the GraphInfo
-        // locally.  It will be shipped to the backend in the next message and
-        // then returned to us in the compile callback.
+        // record the promise **and a copy of the GraphInfo** on the context.
+        // The stored info will be used later when the compile callback runs
+        // so that the MLGraph created for the script thread carries the same
+        // descriptor data needed for dispatch validation.
         let p = Promise::new(global, can_gc);
-        self.context().register_build(graph_id, p.clone());
+        self.context()
+            .register_build(graph_id, graph_info.clone(), p.clone());
 
-        // send compile request to the manager.  Move `graph_info` into the
-        // message rather than cloning it; script-side storage has been dropped.
+        // send compile request to the manager.  Move the original `graph_info`
+        // into the message; the backend/thread cache owns that copy.
         let cb = self
             .global()
             .as_window()

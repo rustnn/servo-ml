@@ -83,10 +83,10 @@ impl ML {
                     }));
                 },
 
-                ContextMessage::CompileResult(ctx_id, graph_id, graph_info) => {
+                ContextMessage::CompileResult(ctx_id, graph_id) => {
                     task_source.queue(task!(compile_result_to_ml: move || {
                         let ml = trusted_ml.root();
-                        ml.compile_callback(ctx_id, graph_id, graph_info, CanGc::note());
+                        ml.compile_callback(ctx_id, graph_id, CanGc::note());
                     }));
                 },
             }
@@ -141,16 +141,9 @@ impl ML {
 
     /// Route a compile-complete notification to the correct MLContext so it can
     /// resolve any promises queued by `MLGraphBuilder.build()`.  The backend
-    /// now returns the original `GraphInfo` along with the build identifier so
-    /// the script does not have to keep its own copy while compilation is
-    /// in-flight.
-    pub(crate) fn compile_callback(
-        &self,
-        context_id: ContextId,
-        graph_id: GraphId,
-        graph_info: rustnn::graph::GraphInfo,
-        can_gc: CanGc,
-    ) {
+    /// only returns the graph identifier; script code no longer retains or
+    /// receives the `GraphInfo` during compilation.
+    pub(crate) fn compile_callback(&self, context_id: ContextId, graph_id: GraphId, can_gc: CanGc) {
         let maybe_ctx = {
             let contexts = self.contexts.borrow();
             contexts.get(&context_id).cloned()
@@ -159,7 +152,7 @@ impl ML {
             warn!("compile_callback: unknown context {:?}", context_id);
             return;
         };
-        ctx.compile_callback(graph_id, graph_info, can_gc);
+        ctx.compile_callback(graph_id, can_gc);
     }
 
     pub(crate) fn new(global: &GlobalScope, can_gc: CanGc) -> DomRoot<ML> {
