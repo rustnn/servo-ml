@@ -725,15 +725,18 @@ enum MlMsg {
 // and then sends the resulting tensor bytes back to the caller.
 fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
     debug!("ml_loop: starting");
-    // map from graph id -> cached information retained on the compute thread.
-    // The entry holds the original GraphInfo so compute messages need only
-    // supply the graph id.  The compiled model path is filled in once the
-    // compile operation completes.
+    // map from (context id, graph id) -> cached information retained on the
+    // compute thread.  In the protocol GraphId values are only unique within
+    // their originating context, so we must include the context id in the key
+    // to avoid collisions when two different contexts happen to reuse the
+    // same numeric identifier.  The entry holds the original GraphInfo so
+    // compute messages need only supply the two-part key.  The compiled model
+    // path is filled in once the compile operation completes.
     struct MlCacheEntry {
         graph_info: rustnn::graph::GraphInfo,
         compiled_path: Option<PathBuf>,
     }
-    let mut compiled_map: HashMap<GraphId, MlCacheEntry> = HashMap::new();
+    let mut compiled_map: HashMap<(ContextId, GraphId), MlCacheEntry> = HashMap::new();
     while let Ok(msg) = rx.recv() {
         debug!("ml_loop: received message {:?}", msg);
         match msg {
@@ -748,8 +751,9 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                 let mut outputs = HashMap::new();
 
                 // if we haven't seen a compile for this graph yet the ML thread
-                // can't execute anything; generate zeroed outputs and bail.
-                if compiled_map.get(&key).is_none() {
+                // can't execute anything; generate zeroed outputs and bail.  Note
+                // that we key the cache by context as well as graph id.
+                if compiled_map.get(&(ctx_id, key)).is_none() {
                     for (_op_id, tensor_id) in outputs_map.iter() {
                         // Without graph info we can't inspect shape here, so
                         // fall back to zero-length buffers (same as previous
@@ -762,7 +766,9 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                     continue;
                 }
 
-                let entry = compiled_map.get(&key).expect("checked presence above");
+                let entry = compiled_map
+                    .get(&(ctx_id, key))
+                    .expect("checked presence above");
                 let cached_path = entry.compiled_path.as_deref();
                 // clone the underlying GraphInfo so we can mutate it for this run
                 let mut graph_info = entry.graph_info.clone();
@@ -826,7 +832,7 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                     Ok(Ok((_compiled_url, compiled_path, _temp_mlmodel))) => {
                         // insert new entry or update existing info without
                         // cloning the graph info.
-                        match compiled_map.entry(key) {
+                        match compiled_map.entry((ctx_id, key)) {
                             std::collections::hash_map::Entry::Vacant(v) => {
                                 v.insert(MlCacheEntry {
                                     graph_info,
