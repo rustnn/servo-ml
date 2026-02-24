@@ -131,12 +131,21 @@ dictionary MLTensorLimits {
   MLRankRange rankRange;
 };
 
+// Support limits for operators with a single tensor input and a single tensor
+// output.  The spec uses this for many elementwise ops and for `cast`.
+dictionary MLSingleInputSupportLimits {
+  MLTensorLimits input;
+  MLTensorLimits output;
+};
+
 dictionary MLOpSupportLimits {
   MLDataTypeList preferredInputLayout;
   [EnforceRange] unsigned long long maxTensorByteLength;
   MLTensorLimits input;
   MLTensorLimits constant;
   MLTensorLimits output;
+  // Per-operator support limit members; tests expect `cast` to exist.
+  MLSingleInputSupportLimits cast;
 };
 
 

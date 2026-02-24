@@ -180,7 +180,8 @@ impl WebNNManager {
             WebNNMsg::Compile(cb, graph_id, ctx_id, graph_info) => {
                 if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
                     // register graph (possibly compiling or caching) and record callback
-                    let key = ctx.get_or_compile(ctx_id, graph_id, graph_info, Some((graph_id, cb)));
+                    let key =
+                        ctx.get_or_compile(ctx_id, graph_id, graph_info, Some((graph_id, cb)));
                     // put a compile step on the timeline so subsequent ops wait
                     ctx.enqueue_or_run(PendingOp::Compile(key));
                 } else {
@@ -876,19 +877,17 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                 let compile_result = std::panic::catch_unwind(|| unsafe {
                     prepare_compiled_model_with_weights(&model_bytes, weights.as_deref(), None)
                 });
-                
 
                 match compile_result {
                     Ok(Ok((_compiled_url, compiled_path, _temp_mlmodel))) => {
                         compiled_map.insert(key, (compiled_path.clone(), graph_info));
                         // notify manager so the context can mark the entry ready
-                        if let Err(e) = manager_tx.send(WebNNMsg::Compiled(ctx_id, key, compiled_path)) {
-                            warn!(
-                                "webnn ML thread: failed to send Compiled: {:?}",
-                                e
-                            );
+                        if let Err(e) =
+                            manager_tx.send(WebNNMsg::Compiled(ctx_id, key, compiled_path))
+                        {
+                            warn!("webnn ML thread: failed to send Compiled: {:?}", e);
                         }
-                    }
+                    },
                     Ok(Err(e)) => {
                         warn!("webnn ML thread: compile failed for key {}: {:?}", key, e);
                         if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(
@@ -896,12 +895,9 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                             key,
                             format!("{:?}", e),
                         )) {
-                            warn!(
-                                "webnn ML thread: failed to send CompileFailed: {:?}",
-                                e
-                            );
+                            warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
                         }
-                    }
+                    },
                     Err(panic_payload) => {
                         // Conversion from panic payload to string is best-effort.
                         let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
@@ -911,21 +907,15 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                         } else {
                             "unknown panic".to_string()
                         };
-                        warn!(
-                            "webnn ML thread: compile panicked for key {}: {}",
-                            key, msg
-                        );
+                        warn!("webnn ML thread: compile panicked for key {}: {}", key, msg);
                         if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(
                             ctx_id,
                             key,
                             format!("panic: {}", msg),
                         )) {
-                            warn!(
-                                "webnn ML thread: failed to send CompileFailed: {:?}",
-                                e
-                            );
+                            warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
                         }
-                    }
+                    },
                 }
             },
             MlMsg::Exit => {
@@ -1017,7 +1007,10 @@ fn try_coreml_execute(
         // previous path; ensure we have a cached model directory.  If this
         // assertion ever trips in release it indicates a programming error
         // where dispatch was allowed to run without compilation.
-        debug_assert!(cached_compiled.is_some(), "dispatch without cached compiled model");
+        debug_assert!(
+            cached_compiled.is_some(),
+            "dispatch without cached compiled model"
+        );
         let path = cached_compiled.expect("cached model path");
         debug!(
             "try_coreml_execute: running cached compiled model at {:?}",

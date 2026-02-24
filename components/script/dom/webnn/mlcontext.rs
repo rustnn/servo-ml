@@ -15,7 +15,8 @@ use crate::dom::bindings::buffer_source::{BufferSource, HeapBufferSource, create
 use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLContextLostInfo, MLContextMethods, MLNamedTensors, MLOpSupportLimits, MLOperandDataType,
-    MLOperandDescriptor, MLPowerPreference, MLRankRange, MLTensorDescriptor, MLTensorLimits,
+    MLOperandDescriptor, MLPowerPreference, MLRankRange, MLSingleInputSupportLimits,
+    MLTensorDescriptor, MLTensorLimits,
 };
 use crate::dom::bindings::codegen::UnionTypes::ArrayBufferViewOrArrayBuffer;
 use crate::dom::bindings::error::{Error, Fallible};
@@ -188,9 +189,7 @@ impl MLContext {
     /// consumed later by `compile_callback` when the backend notifies us that
     /// compilation has completed.
     pub(crate) fn register_build(&self, graph_id: GraphId, promise: Rc<Promise>) {
-        self.pending_builds
-            .borrow_mut()
-            .insert(graph_id.0, promise);
+        self.pending_builds.borrow_mut().insert(graph_id.0, promise);
     }
 
     /// Final step of the script-side compile callback flow.  This implements
@@ -1004,9 +1003,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // - ban very large tensors to avoid exhausting the GPU process
         //   (the "large inputs" tests use ~137 MB per tensor)
 
-        let data_types = Some(vec![
-            MLOperandDataType::Float32,
-        ]);
+        let data_types = Some(vec![MLOperandDataType::Float32]);
         // limit the size to something comfortably smaller than the large-input
         // tests in wpt (/6000×6000 float32 ≈ 144 000 000 bytes).
         // Pick a value comfortably below the ~144 MB used by the
@@ -1014,30 +1011,27 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // will skip that case entirely rather than ever dispatch it.
         let max_bytes = Some(50_000_000u64);
 
+        let tensor_limits = |dt: Option<Vec<MLOperandDataType>>| MLTensorLimits {
+            dataTypes: dt,
+            rankRange: Some(MLRankRange {
+                min: Some(1),
+                max: Some(4),
+            }),
+        };
+
+        // cast uses same input/output limits as ordinary tensors for now.
+        let cast_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
         MLOpSupportLimits {
-            constant: Some(MLTensorLimits {
-                dataTypes: data_types.clone(),
-                rankRange: Some(MLRankRange {
-                    min: Some(1),
-                    max: Some(4),
-                }),
-            }),
-            input: Some(MLTensorLimits {
-                dataTypes: data_types.clone(),
-                rankRange: Some(MLRankRange {
-                    min: Some(1),
-                    max: Some(4),
-                }),
-            }),
+            constant: Some(tensor_limits(data_types.clone())),
+            input: Some(tensor_limits(data_types.clone())),
             maxTensorByteLength: max_bytes,
-            output: Some(MLTensorLimits {
-                dataTypes: data_types,
-                rankRange: Some(MLRankRange {
-                    min: Some(1),
-                    max: Some(4),
-                }),
-            }),
+            output: Some(tensor_limits(data_types.clone())),
             preferredInputLayout: None,
+            cast: Some(cast_limits),
         }
     }
 
