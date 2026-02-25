@@ -18,6 +18,14 @@ components/script/dom/webnn — implementation notes (minimal)
 
 - The `MLContext` exposes a `timeline` concept in the spec. In this codebase model the timeline should be implemented as steps enqueued to a backend/task queue. See the `webnn` top-level component for more info. 
 
+- Context identifiers (`ContextId`) are defined in `components/shared/base/id.rs` as
+  `MLContextId` via the `namespace_id!` helper.  This makes them globally unique across
+  worker threads even when they share the same `PipelineId`.  All other WebNN objects
+  (graphs, tensors, etc.) are scoped to their context and never used on their own, so the
+  system relies on the context id to guarantee global uniqueness.  Avoid generating
+  additional global ids outside the context namespace; always propagate the owning
+  `ContextId` along with any tensor/graph identifiers.
+
 Important: this README is subsystem-specific — read `components/script/README.md` and `AGENTS.md` first. Keep this file focused on WebNN-specific anchors and TODOs.
 
 - The `scratchpad/` top-level directory contains the source code for `rustnn`, as well as that of `pywebnn`. The latter is basically to Python what this crate is to the Web. Use this example. 

@@ -13,5 +13,6 @@ path = "src/lib.rs"
 serde = { workspace = true }
 base = { workspace = true }
 malloc_size_of = { workspace = true }
+malloc_size_of_derive = { workspace = true }
 profile_traits = { workspace = true }
 rustnn = { git = "https://github.com/gterzian/rustnn" }

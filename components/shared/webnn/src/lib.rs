@@ -3,16 +3,11 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-use base::id::PipelineId;
+// An MLContext identifier.  Defined in `base::id` alongside other
+// pipeline-scoped ids; it uses the usual namespace machinery to stay unique
+// across workers.
+pub use base::id::MLContextId as ContextId;
 use serde::{Deserialize, Serialize};
-
-/// A simple identifier for a WebNN context. Contains the originating
-/// `PipelineId` and a per-pipeline context counter.
-#[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]
-pub struct ContextId {
-    pub pipeline_id: PipelineId,
-    pub counter: u32,
-}
 
 /// Unique identifier for a graph object supplied by script.  Builders
 /// allocate these from their context and embed them in outgoing messages
@@ -26,12 +21,6 @@ pub struct GraphId(pub u32);
 impl std::fmt::Display for GraphId {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         write!(f, "{}", self.0)
-    }
-}
-
-impl malloc_size_of::MallocSizeOf for ContextId {
-    fn size_of(&self, _ops: &mut malloc_size_of::MallocSizeOfOps) -> usize {
-        0
     }
 }
 

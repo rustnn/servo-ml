@@ -24,9 +24,6 @@ pub(crate) struct ML {
     /// Map of active contexts created via this ML object.
     contexts: DomRefCell<HashMapTracedValues<ContextId, Dom<MLContext>>>,
 
-    /// Per-GlobalScope counter used to create ContextId.counter values.
-    next_context_counter: Cell<u32>,
-
     /// Persistent GenericCallback used to route backend context-level replies into ML.
     #[no_trace]
     create_tensor_cb: RefCell<Option<GenericCallback<ContextMessage>>>,
@@ -37,7 +34,6 @@ impl ML {
         ML {
             reflector_: Reflector::new(),
             contexts: Default::default(),
-            next_context_counter: Cell::new(1),
             create_tensor_cb: RefCell::new(None),
         }
     }
@@ -172,14 +168,10 @@ impl ML {
         // a single persistent callback and reuse it for all contexts.
         let _cb = self.get_or_setup_callback(&self.global());
 
-        // Create a new ContextId (pipeline-scoped counter).
-        let pipeline_id = self.global().pipeline_id();
-        let counter = self.next_context_counter.get();
-        self.next_context_counter.set(counter.wrapping_add(1));
-        let ctx_id = ContextId {
-            pipeline_id,
-            counter,
-        };
+        // Create a new ContextId.  The type itself handles cross-thread
+        // uniqueness (see shared/webnn/src/lib.rs) so we don't need a
+        // per-Global counter anymore.
+        let ctx_id = ContextId::new();
 
         // Create the DOM-side MLContext with the new id.
         let ctx = MLContext::new(

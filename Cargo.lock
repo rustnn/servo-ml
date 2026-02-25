@@ -11694,6 +11694,7 @@ name = "webnn_traits"
 version = "0.0.1"
 dependencies = [
  "base",
+ "malloc_size_of_derive",
  "profile_traits",
  "rustnn",
  "serde",

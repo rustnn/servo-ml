@@ -36,7 +36,13 @@ use crate::script_runtime::CanGc;
 pub(crate) struct MLContext {
     reflector_: Reflector,
 
-    /// Unique identifier for this context (pipeline + counter).
+    /// Unique identifier for this context.  This ID is the root of the WebNN
+    /// namespace: tensor ids, graph ids, and other numbers are only ever used
+    /// together with their owning context, so global uniqueness is achieved as
+    /// long as context ids themselves never collide.  The implementation uses
+    /// the pipeline-namespace helper (see `PipelineId`) to ensure different
+    /// worker threads sharing the same pipeline cannot accidentally reuse the
+    /// same ID.
     #[no_trace]
     context_id: ContextId,
 
