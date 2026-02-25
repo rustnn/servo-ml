@@ -17,8 +17,8 @@ Do not use cargo, use `./mach` commands.
 - `components/<component>/dom/<subdir>/README.md` — subsystem-level guidance (keep *very* minimal; include only subsystem-specific notes, spec anchors, and TODOs).
 
 **Agent pre-task checklist (MANDATORY)**
-- Step A: Read and add to your working context the README chain *for the task* in this order: `AGENTS.md` → `components/<component>/README.md` → `components/<component>/dom/<subdir>/README.md` (if present) → `specs/<spec_name>/index.bs`.
-- Step B: Confirm in your first reply which README(s) you loaded and which `specs/.../index.bs` section(s) you will follow.
+- Step A: Read and add to your working context the README chain *for the task* in this order: `AGENTS.md` → `components/<component>/README.md` → `components/<component>/dom/<subdir>/README.md` .
+- Step B: Confirm in your first reply which README(s) you loaded.
 - Step C: If any required README or spec is missing or ambiguous, stop and ask a clarifying question before changing code.
 - Step D: Follow the documented conventions in those READMEs (for example the `components/script/README.md` "Documenting your work" rules) when implementing and commenting code.
 
