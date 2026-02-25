@@ -674,26 +674,11 @@ fn run_manager(receiver: GenericReceiver<WebNNMsg>, manager_tx: GenericSender<We
         warn!("webnn manager: failed to notify ML thread of exit: {:?}", e);
     }
 
-    // we want to join the ML thread but only block for a short time.
-    // spawning a small helper thread lets us use a channel's recv_timeout
-    // rather than busy‑polling.
-    let (done_tx, done_rx) = channel::bounded(1);
-    let joiner = thread::spawn(move || {
+    // Attempt to join the ML thread during shutdown.
+    if ml_handle.is_finished() {
         if let Err(e) = ml_handle.join() {
             warn!("webnn manager: ML thread join panicked: {:?}", e);
         }
-        if let Err(e) = done_tx.send(()) {
-            warn!("webnn manager: failed to signal join completion: {:?}", e);
-        }
-    });
-
-    if let Err(e) = done_rx.recv_timeout(std::time::Duration::from_millis(100)) {
-        warn!("webnn manager: ML join helper timeout or error: {:?}", e);
-    }
-    // if the helper is still alive we don't care; dropping its handle will
-    // detach it.  otherwise, join it to clean up.
-    if let Err(e) = joiner.join() {
-        warn!("webnn manager: join helper thread panicked: {:?}", e);
     }
 }
 
