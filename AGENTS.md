@@ -15,7 +15,6 @@ Do not use cargo, use `./mach` commands.
 - `AGENTS.md` — top-level agent orientation and cross-cutting rules (this file).
 - `components/<component>/README.md` — component-level guidance and the consolidation point for component-wide lessons (for example `components/script/README.md`).
 - `components/<component>/dom/<subdir>/README.md` — subsystem-level guidance (keep *very* minimal; include only subsystem-specific notes, spec anchors, and TODOs).
-- `specs/<spec_name>/index.bs` — the authoritative spec for algorithms and internal-slot definitions.
 
 **Agent pre-task checklist (MANDATORY)**
 - Step A: Read and add to your working context the README chain *for the task* in this order: `AGENTS.md` → `components/<component>/README.md` → `components/<component>/dom/<subdir>/README.md` (if present) → `specs/<spec_name>/index.bs`.
