@@ -273,14 +273,13 @@ impl Context {
             "webnn manager: CreateTensor ctx={:?} id={} len={}",
             ctx_id, tensor_id, byte_length
         );
-        let mut buffer: Vec<u8> = Vec::with_capacity(byte_length);
-        let n_f32 = byte_length / 4;
-        for _ in 0..n_f32 {
-            buffer.extend_from_slice(&0.0f32.to_le_bytes());
-        }
-        if byte_length % 4 != 0 {
-            buffer.extend(std::iter::repeat(0u8).take(byte_length % 4));
-        }
+        // The backend stores tensors as raw bytes.  All data types are
+        // represented as little-endian numerical values when interpreted by
+        // the consumer, but from the manager's point of view the buffer is
+        // untyped.  Zeroing can therefore be done with a simple byte
+        // sequence – there is no need to assume float32 or any other element
+        // size.
+        let buffer = vec![0u8; byte_length];
         self.tensor_store
             .insert(tensor_id, std::sync::Arc::new(buffer));
         if let Err(e) = callback.send(ContextMessage::CreateTensorResult(
