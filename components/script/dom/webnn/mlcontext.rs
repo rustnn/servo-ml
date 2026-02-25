@@ -28,7 +28,7 @@ use crate::dom::globalscope::GlobalScope;
 use crate::dom::promise::Promise;
 use crate::dom::webnn::MLGraph;
 use crate::dom::webnn::ml::ML;
-use crate::dom::webnn::mltensor::MLTensor;
+use crate::dom::webnn::mltensor::{MLTensor, PendingRead};
 use crate::script_runtime::CanGc;
 
 #[dom_struct]
@@ -319,18 +319,19 @@ impl MLContext {
             }
         };
 
-        // Pop the first pending promise that requested a read.
-        let maybe_promise = tensor_dom.take_first_pending_promise();
-        let Some(promise) = maybe_promise else {
-            warn!(
-                "read_tensor_callback: no pending promise for tensor {}",
-                tensor_id
-            );
-            return;
+        // Dequeue the first pending read entry and break it apart.
+        let maybe_entry = tensor_dom.take_first_pending_read();
+        let (promise, mut maybe_out) = match maybe_entry {
+            Some(PendingRead::Read(p)) => (p, None),
+            Some(PendingRead::ReadByob { promise: p, output }) => (p, Some(output)),
+            None => {
+                warn!(
+                    "read_tensor_callback: no pending promise for tensor {}",
+                    tensor_id
+                );
+                return;
+            },
         };
-
-        // Pop the corresponding pending BYOB output (if any).
-        let mut maybe_out = tensor_dom.take_first_pending_out();
 
         // If the context is lost, reject with InvalidStateError (timeline-abort case).
         if self.is_lost() {
@@ -693,7 +694,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
 
         // Step 6: Let |promise| be a new promise in |realm| and append it to tensor.[[pendingPromises]].
         let p = Promise::new(global, can_gc);
-        tensor.append_pending_promise(p.clone());
+        tensor.append_pending_read(p.clone());
 
         // Step 7: Enqueue timeline steps to |tensor|.[[context]]'s [[timeline]].
         // Implementation: request the backend to copy out the tensor bytes and reply via
@@ -716,8 +717,8 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
                 .send(WebNNMsg::ReadTensor(cb, self.context_id, id))
         {
             error!("WebNN ReadTensor send failed ({:?})", e);
-            // Clean up the pending promise and reject it with an Operation error.
-            tensor.remove_pending_promise(Rc::as_ptr(&p) as *const Promise);
+            // Clean up the pending request and reject it with an Operation error.
+            tensor.remove_pending_read(Rc::as_ptr(&p) as *const Promise);
             p.reject_error(Error::Operation(None), can_gc);
         }
 
@@ -770,12 +771,8 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 7: Let |promise| be a new promise in |realm|.
         let p = Promise::new(global, can_gc);
 
-        // Step 8: Append |promise| to |tensor|.[[pendingPromises]].
-        tensor.append_pending_promise(p.clone());
-
-        // Move the caller-provided `outputData` into the tensor's pending-out slot
-        // (the union is `JSTraceable` so it is safe to store across the async reply).
-        tensor.set_last_pending_out(output_data);
+        // Step 8: Queue |promise| along with the BYOB buffer.
+        tensor.append_pending_read_byob(p.clone(), output_data);
 
         // Step 9: Enqueue timeline steps to |tensor|.[[context]]'s [[timeline]]:
         // 9.1 Run these steps, abort when this is lost.
@@ -786,9 +783,9 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Implementation note: BYOB *validation* and the timeline copy remain TODO (see Step 6).
         // The timeline *enqueue* for BYOB reads is implemented here — this method requests backend
         // bytes via `WebNNMsg::ReadTensor` (same as the non-BYOB `ReadTensor` overload). The backend
-        // reply is routed to `MLContext::read_tensor_callback`, which will consume the stored
-        // pending BYOB `outputData` (via `MLTensor::take_first_pending_out`) and then resolve or
-        // reject the associated promise. Do NOT resolve |promise| synchronously in this method.
+        // reply is routed to `MLContext::read_tensor_callback`, which will dequeue the pending
+        // request and optionally grab the BYOB buffer from the resulting `PendingRead`, then
+        // resolve or reject the associated promise. Do NOT resolve |promise| synchronously in this method.
 
         // Request the bytes from the manager. `tensor_id` is guaranteed non-zero by the constructor.
         let id = tensor.tensor_id();
@@ -800,8 +797,8 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
                 .send(WebNNMsg::ReadTensor(cb, self.context_id, id))
         {
             error!("WebNN ReadTensor send failed ({:?})", e);
-            // Clean up the pending promise and reject it with an Operation error.
-            tensor.remove_pending_promise(Rc::as_ptr(&p) as *const Promise);
+            // Clean up the pending request and reject it with an Operation error.
+            tensor.remove_pending_read(Rc::as_ptr(&p) as *const Promise);
             p.reject_error(Error::Operation(None), can_gc);
         }
 

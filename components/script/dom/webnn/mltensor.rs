@@ -1,3 +1,4 @@
+use std::collections::VecDeque;
 use std::rc::Rc;
 
 use dom_struct::dom_struct;
@@ -13,6 +14,30 @@ use crate::dom::globalscope::GlobalScope;
 use crate::dom::promise::Promise;
 use crate::dom::webnn::mlcontext::MLContext;
 use crate::script_runtime::CanGc;
+
+/// Internal queue entry representing a pending read operation for this tensor.
+///
+/// This enum is used by `MLTensor.pending_reads`.  It replaces the previous
+/// pair of `[[pendingPromises]]`/`[[pendingOut]]` slots to keep the two pieces of
+/// information together and avoid the risk of mis‑alignment or accidental
+/// overwrites (for example, via `set_last_pending_out`).
+///
+/// Internal helper enum – not measured by malloc_size_of since the queue is
+/// ignored entirely on the tensor object.
+#[derive(JSTraceable)]
+pub(crate) enum PendingRead {
+    /// A normal `readTensor()` request; the callback should resolve the promise
+    /// with the returned bytes.
+    Read(Rc<Promise>),
+
+    /// A BYOB overload.  The `output` buffer supplied by script will receive the
+    /// bytes when the backend reply arrives and the promise is resolved with
+    /// `undefined`.
+    ReadByob {
+        promise: Rc<Promise>,
+        output: ArrayBufferViewOrArrayBuffer,
+    },
+}
 
 #[dom_struct]
 /// <https://webmachinelearning.github.io/webnn/#dom-mltensor>
@@ -37,16 +62,12 @@ pub(crate) struct MLTensor {
     /// <https://webmachinelearning.github.io/webnn/#dom-mltensordescriptor-writable>
     writable: bool,
 
-    /// <https://webmachinelearning.github.io/webnn/#dom-mltensor-pendingpromises-slot>
-    #[conditional_malloc_size_of]
-    pending_promises: DomRefCell<Vec<Rc<Promise>>>,
-
-    /// Pending BYOB output `outputData` values corresponding (by FIFO index) to `[[pendingPromises]]`.
-    /// <https://webmachinelearning.github.io/webnn/#api-mlcontext-readtensor-byob>
-    #[ignore_malloc_size_of = "ArrayBufferViewOrArrayBuffer"]
-    pending_out: DomRefCell<
-        Vec<Option<crate::dom::bindings::codegen::UnionTypes::ArrayBufferViewOrArrayBuffer>>,
-    >,
+    /// A FIFO queue of pending read requests (both normal and BYOB).
+    ///
+    /// This field is ignored for malloc-size accounting; it only holds transient
+    /// promise/buffer pairs that live on the timeline queue.
+    #[ignore_malloc_size_of = "transient queue, not included in malloc stats"]
+    pending_reads: DomRefCell<VecDeque<PendingRead>>,
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mltensor-isdestroyed-slot>
     is_destroyed: bool,
@@ -72,8 +93,7 @@ impl MLTensor {
             shape,
             readable,
             writable,
-            pending_promises: DomRefCell::new(Vec::new()),
-            pending_out: DomRefCell::new(Vec::new()),
+            pending_reads: DomRefCell::new(VecDeque::new()),
             is_destroyed: false,
             is_constant: false,
         }
@@ -119,51 +139,44 @@ impl MLTensor {
         self.tensor_id.0.set(id);
     }
 
-    pub(crate) fn append_pending_promise(&self, p: Rc<Promise>) {
-        // Keep `pending_promises` and `pending_out` FIFO-aligned by appending
-        // a `None` placeholder for the BYOB slot (filled by the BYOB overload).
-        self.pending_promises.borrow_mut().push(p);
-        self.pending_out.borrow_mut().push(None);
+    /// Append an ordinary (non-BYOB) read request to the queue.
+    pub(crate) fn append_pending_read(&self, p: Rc<Promise>) {
+        self.pending_reads
+            .borrow_mut()
+            .push_back(PendingRead::Read(p));
     }
 
-    // Pop and return the first pending promise (used by callback resolution).
-    pub(crate) fn take_first_pending_promise(&self) -> Option<Rc<Promise>> {
-        let mut v = self.pending_promises.borrow_mut();
-        if v.is_empty() {
-            None
-        } else {
-            Some(v.remove(0))
-        }
+    /// Append a BYOB read request along with the provided output buffer.
+    pub(crate) fn append_pending_read_byob(
+        &self,
+        p: Rc<Promise>,
+        out: ArrayBufferViewOrArrayBuffer,
+    ) {
+        self.pending_reads
+            .borrow_mut()
+            .push_back(PendingRead::ReadByob {
+                promise: p,
+                output: out,
+            });
     }
 
-    // Pop and return the first pending BYOB `outputData` (used by callback resolution).
-    pub(crate) fn take_first_pending_out(&self) -> Option<ArrayBufferViewOrArrayBuffer> {
-        let mut v = self.pending_out.borrow_mut();
-        if v.is_empty() { None } else { v.remove(0) }
+    /// Pop and return the first queued read entry.
+    pub(crate) fn take_first_pending_read(&self) -> Option<PendingRead> {
+        self.pending_reads.borrow_mut().pop_front()
     }
 
-    // Set the last pending_out entry (used by BYOB overload immediately after appending a promise).
-    pub(crate) fn set_last_pending_out(&self, out: ArrayBufferViewOrArrayBuffer) {
-        let mut v = self.pending_out.borrow_mut();
-        if let Some(slot) = v.last_mut() {
-            *slot = Some(out);
-        } else {
-            v.push(Some(out));
-        }
-    }
-
-    // Remove a pending promise reference (used by timeline task when resolve/reject).
-    pub(crate) fn remove_pending_promise(&self, to_remove: *const Promise) {
-        let mut promises = self.pending_promises.borrow_mut();
-        if let Some(pos) = promises.iter().position(|p| Rc::as_ptr(p) == to_remove) {
-            promises.remove(pos);
-            let mut outs = self.pending_out.borrow_mut();
-            if pos < outs.len() {
-                outs.remove(pos);
-            }
-        } else {
-            // Fallback behaviour: remove any matching entries.
-            promises.retain(|p| Rc::as_ptr(p) != to_remove);
+    /// Remove any queued request whose promise pointer matches `to_remove`.
+    /// Because the queue is strictly FIFO and the only way elements are removed
+    /// is via `remove_pending_read` itself, the entry (if present) will always be
+    /// found at or near the front.  We therefore only scan once and delete the
+    /// matching position; there's no need for a fallback `retain` pass.
+    pub(crate) fn remove_pending_read(&self, to_remove: *const Promise) {
+        let mut reads = self.pending_reads.borrow_mut();
+        if let Some(pos) = reads.iter().position(|r| match r {
+            PendingRead::Read(p) => Rc::as_ptr(p) == to_remove,
+            PendingRead::ReadByob { promise, .. } => Rc::as_ptr(promise) == to_remove,
+        }) {
+            reads.remove(pos);
         }
     }
 
