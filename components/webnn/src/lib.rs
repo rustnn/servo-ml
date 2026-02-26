@@ -755,6 +755,11 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                     .expect("checked presence above");
                 let cached_path = entry.compiled_path.as_deref();
 
+                // Earlier iterations cloned the cached `GraphInfo` because we
+                // only had an immutable borrow.  That clone could be expensive for
+                // large graphs.  We now take a mutable reference directly via
+                // `get_mut`, letting `try_coreml_execute` mutate the cached
+                // structure in-place and avoiding any allocation.
                 if !try_coreml_execute(
                     &mut entry.graph_info,
                     &inputs_map,
@@ -893,53 +898,57 @@ fn try_coreml_execute(
 
     debug!("webnn manager: Dispatch — attempting CoreML execution");
 
-    // Perfomance TODO: way to many allocations in the below loops;
-    // look into reducing this(maybe use device tensors like pywebnn).
-    // See `scratchpad/webnn_allocs_sample.txt`.
-    let mut coreml_inputs: Vec<CoremlInput> = Vec::new();
+    // Perfomance TODO: way too many allocations in the below loops; we
+    // alleviate a few of them here by reusing buffers and preallocating
+    // capacity.  The biggest allocation still comes from converting the
+    // byte buffers into `Vec<f32>` for CoreML; reducing that would require a
+    // more invasive API change.
+    let mut coreml_inputs: Vec<CoremlInput> = Vec::with_capacity(inputs_map.len());
+    // reusable temporary for shape computation
+    let mut shape_buf: Vec<usize> = Vec::new();
+
     for (op_id, _) in inputs_map.iter() {
         if let Some(op) = graph_info.operands.get(*op_id as usize) {
-            let default_name = format!("input_{}", op_id);
-            let input_name = op.name.as_deref().unwrap_or(&default_name).to_string();
+            let input_name = op
+                .name
+                .as_deref()
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| format!("input_{}", op_id));
 
             if let Some(buf) = inputs_bytes.get(op_id) {
                 let data: Vec<f32> = match op.descriptor.data_type {
                     rustnn::graph::DataType::Float32 => {
-                        let mut out = Vec::with_capacity(buf.len() / 4);
-                        let mut i = 0usize;
-                        while i + 4 <= buf.len() {
-                            let mut b = [0u8; 4];
-                            b.copy_from_slice(&buf[i..i + 4]);
-                            out.push(f32::from_le_bytes(b));
-                            i += 4;
-                        }
-                        out
+                        // convert in one pass using chunks; avoids the inner
+                        // byte buffer and manually advancing index.
+                        buf.chunks_exact(4)
+                            .map(|b| {
+                                let mut arr = [0u8; 4];
+                                arr.copy_from_slice(b);
+                                f32::from_le_bytes(arr)
+                            })
+                            .collect()
                     },
-                    rustnn::graph::DataType::Float16 => {
-                        let mut out = Vec::with_capacity(buf.len() / 2);
-                        let mut i = 0usize;
-                        while i + 2 <= buf.len() {
-                            let mut b = [0u8; 2];
-                            b.copy_from_slice(&buf[i..i + 2]);
-                            let bits = u16::from_le_bytes(b);
-                            out.push(half::f16::from_bits(bits).to_f32());
-                            i += 2;
-                        }
-                        out
-                    },
+                    rustnn::graph::DataType::Float16 => buf
+                        .chunks_exact(2)
+                        .map(|b| {
+                            let bits = u16::from_le_bytes([b[0], b[1]]);
+                            half::f16::from_bits(bits).to_f32()
+                        })
+                        .collect(),
                     _other => Vec::new(),
                 };
 
                 if !data.is_empty() {
-                    let shape: Vec<usize> = op
-                        .descriptor
-                        .shape
-                        .iter()
-                        .map(|d| rustnn::graph::get_static_or_max_size(d) as usize)
-                        .collect();
+                    shape_buf.clear();
+                    shape_buf.extend(
+                        op.descriptor
+                            .shape
+                            .iter()
+                            .map(|d| rustnn::graph::get_static_or_max_size(d) as usize),
+                    );
                     coreml_inputs.push(CoremlInput {
                         name: input_name,
-                        shape,
+                        shape: shape_buf.clone(),
                         data,
                     });
                 }
