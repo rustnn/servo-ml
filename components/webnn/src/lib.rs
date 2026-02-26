@@ -751,14 +751,12 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                 }
 
                 let entry = compiled_map
-                    .get(&(ctx_id, key))
+                    .get_mut(&(ctx_id, key))
                     .expect("checked presence above");
                 let cached_path = entry.compiled_path.as_deref();
-                // clone the underlying GraphInfo so we can mutate it for this run
-                let mut graph_info = entry.graph_info.clone();
 
                 if !try_coreml_execute(
-                    &mut graph_info,
+                    &mut entry.graph_info,
                     &inputs_map,
                     &inputs_bytes,
                     &outputs_map,
@@ -768,7 +766,7 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                     debug!("ml_loop: coreml execution failed, zeroing outputs");
                     // coreml either not available or failed, generate zeros
                     for (op_id, tensor_id) in outputs_map.iter() {
-                        if let Some(operand) = graph_info.operands.get(*op_id as usize) {
+                        if let Some(operand) = entry.graph_info.operands.get(*op_id as usize) {
                             let element_count: usize =
                                 operand.descriptor.shape.iter().fold(1usize, |acc, d| {
                                     acc.saturating_mul(
