@@ -406,41 +406,30 @@ impl Context {
         build_request: Option<(GraphId, GenericCallback<ContextMessage>)>,
     ) -> GraphId {
         // caller already gave us ownership of the graph info; mutate it
-        // directly to resolve constants before converting.
+        // directly to resolve constants before sending the graph to the
+        // compute thread.
         self.resolve_constant_operands(&mut graph_info);
-        use rustnn::converters::CoremlMlProgramConverter;
-        // convert once; the resulting bytes are used by the backend for
-        // compilation and dispatch.  The script-supplied `graph_id` acts as the
-        // cache key instead of hashing the bytes.
-        let converter = CoremlMlProgramConverter;
-        if let Ok(converted) = converter.convert(&graph_info) {
-            // record any build callback so we can notify when this graph
-            // finishes compiling.
-            if let Some((gid, cb)) = build_request {
-                self.script_build_request.entry(gid).or_default().push(cb);
-            }
 
-            // avoid reconverting the same graph repeatedly
-            if !self.seen_graphs.contains(&graph_id) {
-                self.seen_graphs.insert(graph_id);
-                // send compile request to ML thread with graph info for the
-                // worker's own cache
-                if let Err(e) = self.compute_tx.send(MlMsg::Compile {
-                    ctx_id,
-                    key: graph_id,
-                    model_bytes: converted.data,
-                    weights: converted.weights_data,
-                    graph_info,
-                }) {
-                    warn!("webnn manager: failed to send compile message: {:?}", e);
-                }
-            } else {
-            }
-            graph_id
-        } else {
-            warn!("get_or_compile: conversion failed");
-            graph_id
+        // record any build callback so we can notify when this graph
+        // finishes compiling.
+        if let Some((gid, cb)) = build_request {
+            self.script_build_request.entry(gid).or_default().push(cb);
         }
+
+        // forward compile request if we haven't already issued one for this
+        // cache key.  The compute thread will perform the actual
+        // conversion/compilation.
+        if !self.seen_graphs.contains(&graph_id) {
+            self.seen_graphs.insert(graph_id);
+            if let Err(e) = self.compute_tx.send(MlMsg::Compile {
+                ctx_id,
+                key: graph_id,
+                graph_info,
+            }) {
+                warn!("webnn manager: failed to send compile message: {:?}", e);
+            }
+        }
+        graph_id
     }
 
     fn compute(
@@ -635,8 +624,6 @@ enum MlMsg {
     Compile {
         ctx_id: ContextId,
         key: GraphId,
-        model_bytes: Vec<u8>,
-        weights: Option<Vec<u8>>,
         graph_info: rustnn::graph::GraphInfo,
     },
     Exit,
@@ -728,73 +715,76 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
             MlMsg::Compile {
                 ctx_id,
                 key,
-                model_bytes,
-                weights,
                 graph_info,
             } => {
-                // compile the model and record the returned path
-                // we no longer need to pre‑allocate a cache directory; the
-                // helper will give us the location of the compiled model.
-                // sanity‑check the model bytes in debug builds; an empty buffer
-                // would trip the CoreML FFI and is almost certainly a bug.
-                debug_assert!(!model_bytes.is_empty(), "compile: empty model bytes");
+                // perform conversion on the compute thread
+                use rustnn::converters::CoremlMlProgramConverter;
 
-                // The `prepare_compiled_model_with_weights` helper is marked
-                // `unsafe` because it crosses the CoreML FFI boundary.  Exercise
-                // extra care by catching panics so a corrupted model can't abort
-                // the ML thread and bring down the browser process.
-                let compile_result = std::panic::catch_unwind(|| unsafe {
-                    prepare_compiled_model_with_weights(&model_bytes, weights.as_deref(), None)
-                });
+                let converter = CoremlMlProgramConverter;
+                match converter.convert(&graph_info) {
+                    Ok(converted) => {
+                        let compile_result = std::panic::catch_unwind(|| unsafe {
+                            prepare_compiled_model_with_weights(
+                                &converted.data,
+                                converted.weights_data.as_deref(),
+                                None,
+                            )
+                        });
 
-                match compile_result {
-                    Ok(Ok((_compiled_url, compiled_path, _temp_mlmodel))) => {
-                        // insert new entry or update existing info without
-                        // cloning the graph info.
-                        match compiled_map.entry((ctx_id, key)) {
-                            std::collections::hash_map::Entry::Vacant(v) => {
-                                v.insert(MlCacheEntry {
-                                    graph_info,
-                                    compiled_path: Some(compiled_path.clone()),
-                                });
+                        match compile_result {
+                            Ok(Ok((_compiled_url, compiled_path, _temp_mlmodel))) => {
+                                match compiled_map.entry((ctx_id, key)) {
+                                    std::collections::hash_map::Entry::Vacant(v) => {
+                                        v.insert(MlCacheEntry {
+                                            graph_info,
+                                            compiled_path: Some(compiled_path.clone()),
+                                        });
+                                    },
+                                    std::collections::hash_map::Entry::Occupied(mut o) => {
+                                        o.get_mut().compiled_path = Some(compiled_path.clone());
+                                    },
+                                }
+                                if let Err(e) =
+                                    manager_tx.send(WebNNMsg::Compiled(ctx_id, key, compiled_path))
+                                {
+                                    warn!("webnn ML thread: failed to send Compiled: {:?}", e);
+                                }
                             },
-                            std::collections::hash_map::Entry::Occupied(mut o) => {
-                                o.get_mut().compiled_path = Some(compiled_path.clone());
-                                // `graph_info` is dropped here because it's not
-                                // needed for an existing entry.
+                            Ok(Err(e)) => {
+                                warn!("webnn ML thread: compile failed for key {}: {:?}", key, e);
+                                if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(
+                                    ctx_id,
+                                    key,
+                                    format!("{:?}", e),
+                                )) {
+                                    warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
+                                }
                             },
-                        }
-                        // notify manager so the context can mark the entry ready
-                        if let Err(e) =
-                            manager_tx.send(WebNNMsg::Compiled(ctx_id, key, compiled_path))
-                        {
-                            warn!("webnn ML thread: failed to send Compiled: {:?}", e);
+                            Err(panic_payload) => {
+                                let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                                    s.to_string()
+                                } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                                    s.clone()
+                                } else {
+                                    "unknown panic".to_string()
+                                };
+                                warn!("webnn ML thread: compile panicked for key {}: {}", key, msg);
+                                if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(
+                                    ctx_id,
+                                    key,
+                                    format!("panic: {}", msg),
+                                )) {
+                                    warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
+                                }
+                            },
                         }
                     },
-                    Ok(Err(e)) => {
-                        warn!("webnn ML thread: compile failed for key {}: {:?}", key, e);
+                    Err(_) => {
+                        warn!("webnn ML thread: conversion failed for key {:?}", key);
                         if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(
                             ctx_id,
                             key,
-                            format!("{:?}", e),
-                        )) {
-                            warn!("webnn ML thread: failed to senmpileFailed: {:?}", e);
-                        }
-                    },
-                    Err(panic_payload) => {
-                        // Conversion from panic payload to string is best-effort.
-                        let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
-                            s.to_string()
-                        } else if let Some(s) = panic_payload.downcast_ref::<String>() {
-                            s.clone()
-                        } else {
-                            "unknown panic".to_string()
-                        };
-                        warn!("webnn ML thread: compile panicked for key {}: {}", key, msg);
-                        if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(
-                            ctx_id,
-                            key,
-                            format!("panic: {}", msg),
+                            "conversion failed".to_string(),
                         )) {
                             warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
                         }
@@ -821,7 +811,6 @@ fn try_coreml_execute(
     cached_compiled: Option<&std::path::Path>,
     outputs_store: &mut HashMap<u32, Vec<u8>>,
 ) -> bool {
-    use rustnn::GraphConverter;
     use rustnn::converters::CoremlMlProgramConverter;
     use rustnn::executors::coreml::{CoremlInput, run_coreml_with_inputs_cached};
 
