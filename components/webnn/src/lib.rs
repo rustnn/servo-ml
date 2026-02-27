@@ -643,6 +643,9 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
     struct MlCacheEntry {
         graph_info: rustnn::graph::GraphInfo,
         compiled_path: Option<PathBuf>,
+        // bytes produced by conversion; reused during compute to avoid
+        // repeating the convert step.  Always present once entry exists.
+        converted_program: Vec<u8>,
     }
     let mut compiled_map: HashMap<(ContextId, GraphId), MlCacheEntry> = HashMap::new();
     while let Ok(msg) = rx.recv() {
@@ -677,16 +680,16 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                     .expect("checked presence above");
                 let cached_path = entry.compiled_path.as_deref();
 
-                // Earlier iterations cloned the cached `GraphInfo` because we
-                // only had an immutable borrow.  That clone could be expensive for
-                // large graphs.  We now take a mutable reference directly via
-                // `get_mut`, letting `try_coreml_execute` mutate the cached
-                // structure in-place and avoiding any allocation.
+                // pass preconverted program bytes so try_coreml_execute can
+                // operate without performing its own conversion.
+                let program_bytes = entry.converted_program.as_slice();
+
                 if !try_coreml_execute(
                     &entry.graph_info,
                     &inputs_map,
                     &inputs_bytes,
                     &outputs_map,
+                    program_bytes,
                     cached_path,
                     &mut outputs,
                 ) {
@@ -738,10 +741,15 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                                         v.insert(MlCacheEntry {
                                             graph_info,
                                             compiled_path: Some(compiled_path.clone()),
+                                            converted_program: converted.data.clone(),
+                                            // weights not tracked
                                         });
                                     },
                                     std::collections::hash_map::Entry::Occupied(mut o) => {
-                                        o.get_mut().compiled_path = Some(compiled_path.clone());
+                                        let entry = o.get_mut();
+                                        entry.compiled_path = Some(compiled_path.clone());
+                                        entry.converted_program = converted.data.clone();
+                                        // weights not tracked
                                     },
                                 }
                                 if let Err(e) =
@@ -808,10 +816,10 @@ fn try_coreml_execute(
     inputs_map: &HashMap<u32, u32>,
     inputs_bytes: &HashMap<u32, Vec<u8>>,
     outputs_map: &HashMap<u32, u32>,
+    program_bytes: &[u8],
     cached_compiled: Option<&std::path::Path>,
     outputs_store: &mut HashMap<u32, Vec<u8>>,
 ) -> bool {
-    use rustnn::converters::CoremlMlProgramConverter;
     use rustnn::executors::coreml::{CoremlInput, run_coreml_with_inputs_cached};
 
     // Perfomance TODO: way too many allocations in the below loops; we
@@ -872,76 +880,73 @@ fn try_coreml_execute(
         }
     }
 
-    let converter = CoremlMlProgramConverter;
-    if let Ok(converted) = converter.convert(graph_info) {
-        // at this point the graph should already have been compiled on a
-        // previous path; ensure we have a cached model directory.  If this
-        // assertion ever trips in release it indicates a programming error
-        // where dispatch was allowed to run without compilation.
-        debug_assert!(
-            cached_compiled.is_some(),
-            "dispatch without cached compiled model"
-        );
-        let path = cached_compiled.expect("cached model path");
-        let run_result = run_coreml_with_inputs_cached(&converted.data, coreml_inputs, Some(path));
-        if let Ok(attempts) = run_result {
-            if let Some(outputs) = attempts
-                .iter()
-                .find_map(|a| a.result.as_ref().ok().cloned())
-            {
-                for (op_id, tensor_id) in outputs_map.iter() {
-                    if let Some(operand) = graph_info.operands.get(*op_id as usize) {
-                        let default_name = format!("output_{}", op_id);
-                        let output_name = operand.name.as_deref().unwrap_or(&default_name);
+    // at this point the graph should already have been compiled on a
+    // previous path; ensure we have a cached model directory.  If this
+    // assertion ever trips in release it indicates a programming error
+    // where dispatch was allowed to run without compilation.
+    debug_assert!(
+        cached_compiled.is_some(),
+        "dispatch without cached compiled model"
+    );
+    let path = cached_compiled.expect("cached model path");
+    let run_result = run_coreml_with_inputs_cached(program_bytes, coreml_inputs, Some(path));
+    if let Ok(attempts) = run_result {
+        if let Some(outputs) = attempts
+            .iter()
+            .find_map(|a| a.result.as_ref().ok().cloned())
+        {
+            for (op_id, tensor_id) in outputs_map.iter() {
+                if let Some(operand) = graph_info.operands.get(*op_id as usize) {
+                    let default_name = format!("output_{}", op_id);
+                    let output_name = operand.name.as_deref().unwrap_or(&default_name);
 
-                        if let Some(coreml_out) = outputs.iter().find(|o| o.name == output_name) {
-                            match operand.descriptor.data_type {
-                                rustnn::graph::DataType::Float32 => {
-                                    let mut bytes = Vec::with_capacity(coreml_out.data.len() * 4);
-                                    for &v in coreml_out.data.iter() {
-                                        bytes.extend_from_slice(&v.to_le_bytes());
-                                    }
-                                    outputs_store.insert(*tensor_id, bytes);
-                                },
-                                rustnn::graph::DataType::Float16 => {
-                                    let mut bytes = Vec::with_capacity(coreml_out.data.len() * 2);
-                                    for &v in coreml_out.data.iter() {
-                                        let bits = half::f16::from_f32(v).to_bits();
-                                        bytes.extend_from_slice(&bits.to_le_bytes());
-                                    }
-                                    outputs_store.insert(*tensor_id, bytes);
-                                },
-                                _other => {
-                                    let byte_length = operand
-                                        .descriptor
-                                        .shape
-                                        .iter()
-                                        .fold(1usize, |acc, d| {
-                                            acc.saturating_mul(
-                                                rustnn::graph::get_static_or_max_size(d) as usize,
-                                            )
-                                        })
-                                        .saturating_mul(4usize);
-                                    outputs_store.insert(*tensor_id, vec![0u8; byte_length]);
-                                },
-                            }
-                        } else {
-                            let byte_length = operand
-                                .descriptor
-                                .shape
-                                .iter()
-                                .fold(1usize, |acc, d| {
-                                    acc.saturating_mul(
-                                        rustnn::graph::get_static_or_max_size(d) as usize
-                                    )
-                                })
-                                .saturating_mul(4usize);
-                            outputs_store.insert(*tensor_id, vec![0u8; byte_length]);
+                    if let Some(coreml_out) = outputs.iter().find(|o| o.name == output_name) {
+                        match operand.descriptor.data_type {
+                            rustnn::graph::DataType::Float32 => {
+                                let mut bytes = Vec::with_capacity(coreml_out.data.len() * 4);
+                                for &v in coreml_out.data.iter() {
+                                    bytes.extend_from_slice(&v.to_le_bytes());
+                                }
+                                outputs_store.insert(*tensor_id, bytes);
+                            },
+                            rustnn::graph::DataType::Float16 => {
+                                let mut bytes = Vec::with_capacity(coreml_out.data.len() * 2);
+                                for &v in coreml_out.data.iter() {
+                                    let bits = half::f16::from_f32(v).to_bits();
+                                    bytes.extend_from_slice(&bits.to_le_bytes());
+                                }
+                                outputs_store.insert(*tensor_id, bytes);
+                            },
+                            _other => {
+                                let byte_length = operand
+                                    .descriptor
+                                    .shape
+                                    .iter()
+                                    .fold(1usize, |acc, d| {
+                                        acc.saturating_mul(
+                                            rustnn::graph::get_static_or_max_size(d) as usize
+                                        )
+                                    })
+                                    .saturating_mul(4usize);
+                                outputs_store.insert(*tensor_id, vec![0u8; byte_length]);
+                            },
                         }
+                    } else {
+                        let byte_length = operand
+                            .descriptor
+                            .shape
+                            .iter()
+                            .fold(1usize, |acc, d| {
+                                acc.saturating_mul(
+                                    rustnn::graph::get_static_or_max_size(d) as usize
+                                )
+                            })
+                            .saturating_mul(4usize);
+                        outputs_store.insert(*tensor_id, vec![0u8; byte_length]);
                     }
                 }
-                return true;
             }
+            return true;
         }
     }
     false
@@ -953,6 +958,7 @@ fn try_coreml_execute(
     _inputs_map: &HashMap<u32, u32>,
     _inputs_bytes: &HashMap<u32, Vec<u8>>,
     _outputs_map: &HashMap<u32, u32>,
+    _program_bytes: &[u8],
     _outputs_store: &mut HashMap<u32, Vec<u8>>,
 ) -> bool {
     false
