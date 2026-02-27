@@ -4,7 +4,7 @@ use std::thread;
 
 use base::generic_channel::{GenericReceiver, GenericSender, channel};
 use crossbeam::channel::{self, Receiver, Sender};
-use log::{debug, warn};
+use log::warn;
 use profile_traits::generic_callback::GenericCallback;
 use rustnn::GraphConverter;
 use rustnn::executors::coreml::prepare_compiled_model_with_weights;
@@ -83,19 +83,16 @@ impl WebNNManager {
     }
 
     fn run(&mut self, receiver: GenericReceiver<WebNNMsg>) {
-        debug!("webnn manager started");
         while let Ok(msg) = receiver.recv() {
             if !self.handle_message(msg) {
                 break;
             }
         }
-        debug!("webnn manager stopped");
     }
 
     fn handle_message(&mut self, msg: WebNNMsg) -> bool {
         match msg {
             WebNNMsg::Exit => {
-                debug!("webnn manager exiting");
                 // notify ml thread so it can exit as well
                 if let Err(e) = self.ml_sender.send(MlMsg::Exit) {
                     warn!("webnn manager: failed to send ML exit: {:?}", e);
@@ -103,13 +100,11 @@ impl WebNNManager {
                 false
             },
             WebNNMsg::NewContext(id) => {
-                debug!("webnn manager: NewContext {:?}", id);
                 self.contexts
                     .insert(id, Context::new(self.ml_sender.clone()));
                 true
             },
             WebNNMsg::DestroyContext(id) => {
-                debug!("webnn manager: DestroyContext {:?}", id);
                 // dropping the context automatically discards its tensor store
                 self.contexts.remove(&id);
                 true
@@ -269,10 +264,6 @@ impl Context {
         tensor_id: u32,
         byte_length: usize,
     ) {
-        debug!(
-            "webnn manager: CreateTensor ctx={:?} id={} len={}",
-            ctx_id, tensor_id, byte_length
-        );
         // The backend stores tensors as raw bytes.  All data types are
         // represented as little-endian numerical values when interpreted by
         // the consumer, but from the manager's point of view the buffer is
@@ -291,13 +282,12 @@ impl Context {
         }
     }
 
-    fn handle_create_constant_tensor(&mut self, ctx_id: ContextId, tensor_id: u32, bytes: Vec<u8>) {
-        debug!(
-            "webnn manager: CreateConstantTensor ctx={:?} id={} len={}",
-            ctx_id,
-            tensor_id,
-            bytes.len()
-        );
+    fn handle_create_constant_tensor(
+        &mut self,
+        _ctx_id: ContextId,
+        tensor_id: u32,
+        bytes: Vec<u8>,
+    ) {
         // create the buffer exactly as given; no zeroing required
         self.tensor_store
             .insert(tensor_id, std::sync::Arc::new(bytes));
@@ -311,10 +301,6 @@ impl Context {
         ctx_id: ContextId,
         tensor_id: u32,
     ) {
-        debug!(
-            "webnn manager: ReadTensor ctx={:?} id={}",
-            ctx_id, tensor_id
-        );
         match self.tensor_store.get(&tensor_id) {
             Some(buf) => {
                 if let Err(e) = callback.send(ContextMessage::ReadTensorResult(
@@ -342,13 +328,7 @@ impl Context {
         }
     }
 
-    fn handle_write_tensor(&mut self, ctx_id: ContextId, tensor_id: u32, bytes: Vec<u8>) {
-        debug!(
-            "webnn manager: WriteTensor ctx={:?} id={} len={}",
-            ctx_id,
-            tensor_id,
-            bytes.len()
-        );
+    fn handle_write_tensor(&mut self, _ctx_id: ContextId, tensor_id: u32, bytes: Vec<u8>) {
         self.tensor_store
             .insert(tensor_id, std::sync::Arc::new(bytes));
     }
@@ -425,7 +405,6 @@ impl Context {
         mut graph_info: rustnn::graph::GraphInfo,
         build_request: Option<(GraphId, GenericCallback<ContextMessage>)>,
     ) -> GraphId {
-        debug!("get_or_compile: ctx={:?}", ctx_id);
         // caller already gave us ownership of the graph info; mutate it
         // directly to resolve constants before converting.
         self.resolve_constant_operands(&mut graph_info);
@@ -435,27 +414,14 @@ impl Context {
         // cache key instead of hashing the bytes.
         let converter = CoremlMlProgramConverter;
         if let Ok(converted) = converter.convert(&graph_info) {
-            debug!(
-                "get_or_compile: conversion succeeded for graph {:?}",
-                graph_id
-            );
-
             // record any build callback so we can notify when this graph
             // finishes compiling.
             if let Some((gid, cb)) = build_request {
-                debug!(
-                    "get_or_compile: recording build_request for graph {:?}",
-                    gid
-                );
                 self.script_build_request.entry(gid).or_default().push(cb);
             }
 
             // avoid reconverting the same graph repeatedly
             if !self.seen_graphs.contains(&graph_id) {
-                debug!(
-                    "get_or_compile: inserting new graph {:?} into seen set",
-                    graph_id
-                );
                 self.seen_graphs.insert(graph_id);
                 // send compile request to ML thread with graph info for the
                 // worker's own cache
@@ -469,7 +435,6 @@ impl Context {
                     warn!("webnn manager: failed to send compile message: {:?}", e);
                 }
             } else {
-                debug!("get_or_compile: graph {:?} already seen", graph_id);
             }
             graph_id
         } else {
@@ -486,13 +451,10 @@ impl Context {
         outputs_map: HashMap<u32, u32>,
         compute_tx: &Sender<MlMsg>,
     ) -> bool {
-        debug!("compute: ctx={:?}", _ctx_id);
-
         // The manager no longer keeps a cache; the compute thread owns all
         // graph metadata.  We simply forward the inputs to the ML worker and
         // let it handle missing/uncached graphs (it will zero the outputs).
         let inputs_bytes = self.collect_input_bytes(&inputs_map);
-        debug!("compute: collected {} input buffers", inputs_bytes.len());
 
         let work_outputs = outputs_map.clone();
 
@@ -523,7 +485,6 @@ impl Context {
             return false;
         }
 
-        debug!("compute: message sent successfully");
         true
     }
 
@@ -556,36 +517,28 @@ impl Context {
     }
 
     fn run_now(&mut self, op: PendingOp) {
-        debug!("run_now: op={:?}", op);
         match op {
             PendingOp::CreateTensor(cb, ctx_id, tensor_id, len) => {
-                debug!("run_now: CreateTensor");
                 self.handle_create_tensor(cb, ctx_id, tensor_id, len);
             },
             PendingOp::CreateConstantTensor(ctx_id, tensor_id, bytes) => {
-                debug!("run_now: CreateConstantTensor");
                 self.handle_create_constant_tensor(ctx_id, tensor_id, bytes);
             },
             PendingOp::ReadTensor(cb, ctx_id, tensor_id) => {
-                debug!("run_now: ReadTensor");
                 self.handle_read_tensor(cb, ctx_id, tensor_id);
             },
             PendingOp::WriteTensor(ctx_id, tensor_id, bytes) => {
-                debug!("run_now: WriteTensor");
                 self.handle_write_tensor(ctx_id, tensor_id, bytes);
             },
             PendingOp::Dispatch(ctx_id, key, inputs_map, outputs_map) => {
-                debug!("run_now: Dispatch");
                 self.queue_blocked = true;
                 let compute_chan = self.compute_tx.clone();
                 let started = self.compute(ctx_id, key, inputs_map, outputs_map, &compute_chan);
                 if !started {
-                    debug!("run_now: compute failed to start, clearing queue_blocked");
                     self.queue_blocked = false;
                 }
             },
-            PendingOp::Compile(key) => {
-                debug!("run_now: Compile graph={:?}", key);
+            PendingOp::Compile(_key) => {
                 // block the timeline until the compilation result arrives.
                 self.queue_blocked = true;
                 // we no longer track compiled paths on the manager; the ML
@@ -596,13 +549,7 @@ impl Context {
     }
 
     fn handle_compute_result(&mut self, outputs: HashMap<u32, Vec<u8>>) {
-        debug!("handle_compute_result: received {} tensors", outputs.len());
         for (tensor_id, bytes) in outputs {
-            debug!(
-                "handle_compute_result: inserting tensor {} len={}",
-                tensor_id,
-                bytes.len()
-            );
             self.tensor_store
                 .insert(tensor_id, std::sync::Arc::new(bytes));
         }
@@ -611,18 +558,11 @@ impl Context {
     }
 
     fn process_queue(&mut self) {
-        debug!(
-            "process_queue: starting, queue_blocked={} queue_len={}",
-            self.queue_blocked,
-            self.timeline.len()
-        );
         while !self.queue_blocked {
             if let Some(op) = self.timeline.pop_front() {
-                debug!("process_queue: running op {:?}", op);
                 self.run_now(op);
                 // loop again unless a dispatch set queue_blocked true
             } else {
-                debug!("process_queue: queue empty");
                 break;
             }
         }
@@ -651,7 +591,6 @@ pub fn new_webnn_manager() -> (GenericSender<WebNNMsg>, std::thread::JoinHandle<
 }
 
 fn run_manager(receiver: GenericReceiver<WebNNMsg>, manager_tx: GenericSender<WebNNMsg>) {
-    debug!("run_manager: starting");
     // create dedicated channel for ML work
     let (ml_tx, ml_rx): (Sender<MlMsg>, Receiver<MlMsg>) = channel::unbounded();
 
@@ -666,7 +605,6 @@ fn run_manager(receiver: GenericReceiver<WebNNMsg>, manager_tx: GenericSender<We
     let mut manager = WebNNManager::new(ml_tx.clone());
     manager.run(receiver);
 
-    debug!("run_manager: manager.run returned");
     // manager.run has returned (likely due to Exit).  make sure the ML thread
     // is told to exit in case we didn't already send the message above.
     if let Err(e) = ml_tx.send(MlMsg::Exit) {
@@ -708,7 +646,6 @@ enum MlMsg {
 // executes `try_coreml_execute` (or generates zeroed outputs if that fails),
 // and then sends the resulting tensor bytes back to the caller.
 fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
-    debug!("ml_loop: starting");
     // map from (context id, graph id) -> cached information retained on the
     // compute thread.  In the protocol GraphId values are only unique within
     // their originating context, so we must include the context id in the key
@@ -722,7 +659,6 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
     }
     let mut compiled_map: HashMap<(ContextId, GraphId), MlCacheEntry> = HashMap::new();
     while let Ok(msg) = rx.recv() {
-        debug!("ml_loop: received message {:?}", msg);
         match msg {
             MlMsg::Compute {
                 ctx_id,
@@ -731,7 +667,6 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                 inputs_bytes,
                 outputs_map,
             } => {
-                debug!("ml_loop: Compute ctx={:?} graph={:?}", ctx_id, key);
                 let mut outputs = HashMap::new();
 
                 // if we haven't seen a compile for this graph yet the ML thread
@@ -768,7 +703,6 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                     cached_path,
                     &mut outputs,
                 ) {
-                    debug!("ml_loop: coreml execution failed, zeroing outputs");
                     // coreml either not available or failed, generate zeros
                     for (op_id, tensor_id) in outputs_map.iter() {
                         if let Some(operand) = entry.graph_info.operands.get(*op_id as usize) {
@@ -784,7 +718,6 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                         }
                     }
                 } else {
-                    debug!("ml_loop: coreml execution succeeded");
                 }
                 // send the outputs back to the manager instead of using the
                 // one‑shot response channel.
@@ -799,7 +732,6 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                 weights,
                 graph_info,
             } => {
-                debug!("ml_loop: Compile ctx={:?} graph={:?}", ctx_id, key);
                 // compile the model and record the returned path
                 // we no longer need to pre‑allocate a cache directory; the
                 // helper will give us the location of the compiled model.
@@ -870,12 +802,10 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                 }
             },
             MlMsg::Exit => {
-                debug!("ml_loop: Exit received, breaking");
                 break;
             },
         }
     }
-    debug!("ml_loop: exiting");
 }
 
 // Common implementation for attempting a CoreML execution.  If it succeeds
@@ -891,12 +821,9 @@ fn try_coreml_execute(
     cached_compiled: Option<&std::path::Path>,
     outputs_store: &mut HashMap<u32, Vec<u8>>,
 ) -> bool {
-    debug!("try_coreml_execute: entry");
     use rustnn::GraphConverter;
     use rustnn::converters::CoremlMlProgramConverter;
     use rustnn::executors::coreml::{CoremlInput, run_coreml_with_inputs_cached};
-
-    debug!("webnn manager: Dispatch — attempting CoreML execution");
 
     // Perfomance TODO: way too many allocations in the below loops; we
     // alleviate a few of them here by reusing buffers and preallocating
@@ -958,7 +885,6 @@ fn try_coreml_execute(
 
     let converter = CoremlMlProgramConverter;
     if let Ok(converted) = converter.convert(graph_info) {
-        debug!("try_coreml_execute: conversion succeeded");
         // at this point the graph should already have been compiled on a
         // previous path; ensure we have a cached model directory.  If this
         // assertion ever trips in release it indicates a programming error
@@ -968,17 +894,12 @@ fn try_coreml_execute(
             "dispatch without cached compiled model"
         );
         let path = cached_compiled.expect("cached model path");
-        debug!(
-            "try_coreml_execute: running cached compiled model at {:?}",
-            path
-        );
         let run_result = run_coreml_with_inputs_cached(&converted.data, coreml_inputs, Some(path));
         if let Ok(attempts) = run_result {
             if let Some(outputs) = attempts
                 .iter()
                 .find_map(|a| a.result.as_ref().ok().cloned())
             {
-                debug!("try_coreml_execute: got outputs from coreml");
                 for (op_id, tensor_id) in outputs_map.iter() {
                     if let Some(operand) = graph_info.operands.get(*op_id as usize) {
                         let default_name = format!("output_{}", op_id);
@@ -1016,10 +937,6 @@ fn try_coreml_execute(
                                 },
                             }
                         } else {
-                            debug!(
-                                "try_coreml_execute: missing output {} from coreml",
-                                output_name
-                            );
                             let byte_length = operand
                                 .descriptor
                                 .shape
@@ -1038,7 +955,6 @@ fn try_coreml_execute(
             }
         }
     }
-    debug!("try_coreml_execute: falling back, returning false");
     false
 }
 
