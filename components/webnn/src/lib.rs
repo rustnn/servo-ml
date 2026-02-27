@@ -761,7 +761,7 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                 // `get_mut`, letting `try_coreml_execute` mutate the cached
                 // structure in-place and avoiding any allocation.
                 if !try_coreml_execute(
-                    &mut entry.graph_info,
+                    &entry.graph_info,
                     &inputs_map,
                     &inputs_bytes,
                     &outputs_map,
@@ -846,7 +846,7 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                             key,
                             format!("{:?}", e),
                         )) {
-                            warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
+                            warn!("webnn ML thread: failed to senmpileFailed: {:?}", e);
                         }
                     },
                     Err(panic_payload) => {
@@ -884,7 +884,7 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
 
 #[cfg(target_os = "macos")]
 fn try_coreml_execute(
-    graph_info: &mut rustnn::graph::GraphInfo,
+    graph_info: &rustnn::graph::GraphInfo,
     inputs_map: &HashMap<u32, u32>,
     inputs_bytes: &HashMap<u32, Vec<u8>>,
     outputs_map: &HashMap<u32, u32>,
