@@ -976,7 +976,6 @@ fn try_coreml_execute(
     );
     let path = cached_compiled.expect("cached model path");
     let run_result = run_coreml_with_inputs_cached(program_bytes, coreml_inputs, Some(path));
-    debug!("Run results: {:?}", run_result);
     if let Ok(attempts) = run_result {
         if let Some(outputs) = attempts
             .iter()

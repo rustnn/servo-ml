@@ -16,7 +16,7 @@ use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLArgMinMaxOptions, MLBatchNormalizationOptions, MLClampOptions, MLConv2dFilterOperandLayout,
     MLConv2dOptions, MLGemmOptions, MLGraphBuilderMethods, MLInputOperandLayout, MLOperandDataType,
-    MLOperandDescriptor, MLOperatorOptions,
+    MLOperandDescriptor, MLOperatorOptions, MLTriangularOptions,
 };
 use crate::dom::bindings::error::{Error, Fallible};
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
@@ -1189,6 +1189,96 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             });
         }
 
+        let operand = create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        );
+        Ok(operand)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-triangular>
+    fn Triangular(
+        &self,
+        input: &MLOperand,
+        options: &MLTriangularOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If this can not build, then throw an "InvalidStateError" DOMException.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If validating operand with this and input returns false, then throw a TypeError.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: If input's rank is not one of its allowed ranks, then throw a TypeError.
+        let in_shape = input.descriptor_shape();
+        if let Err(e) = rustnn::shape_inference::infer_triangular_shape(&in_shape) {
+            return Err(Error::Type(e.to_string()));
+        }
+
+        // Step 4.1: Let output be the result of copying an MLOperand given input.
+        let out_dtype_str = input.descriptor_data_type();
+        let out_dtype_enum = match out_dtype_str {
+            "float32" => MLOperandDataType::Float32,
+            "float16" => MLOperandDataType::Float16,
+            "int32" => MLOperandDataType::Int32,
+            "uint32" => MLOperandDataType::Uint32,
+            "int64" => MLOperandDataType::Int64,
+            "uint64" => MLOperandDataType::Uint64,
+            "int8" => MLOperandDataType::Int8,
+            "uint8" => MLOperandDataType::Uint8,
+            _ => MLOperandDataType::Float32,
+        };
+        let desc = MLOperandDescriptor {
+            dataType: out_dtype_enum,
+            shape: in_shape.clone(),
+        };
+
+        let rust_operand =
+            self.create_rust_operand(out_dtype_str, in_shape.clone(), OperandKind::Output, None);
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 4.2: Let operator be an operator for the "triangular" operation, given options.
+        let attributes = serde_json::json!({
+            "upper": options.upper,
+            "diagonal": options.diagonal,
+        });
+
+        let label = {
+            let l = options.parent.label.clone();
+            if l.is_empty() {
+                None
+            } else {
+                Some(l.clone().to_string())
+            }
+        };
+
+        // Step 4.3-4.5: Record operator->input/output graph connections.
+        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
+            let input_id = input
+                .id()
+                .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+
+            gi.operations.push(Operation {
+                op_type: "triangular".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes,
+                label,
+            });
+        }
+
+        // Step 5: Return output.
         let operand = create_an_mloperand(
             self,
             Some(&desc),

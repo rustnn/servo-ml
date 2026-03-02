@@ -119,6 +119,11 @@ dictionary MLGemmOptions : MLOperatorOptions {
   boolean bTranspose = false;
 };
 
+dictionary MLTriangularOptions : MLOperatorOptions {
+  boolean upper = true;
+  [EnforceRange] long diagonal = 0;
+};
+
 dictionary MLRankRange {
   unsigned long min;
   unsigned long max;
@@ -146,6 +151,7 @@ dictionary MLOpSupportLimits {
   MLTensorLimits output;
   // Per-operator support limit members; tests expect `cast` to exist.
   MLSingleInputSupportLimits cast;
+  MLSingleInputSupportLimits triangular;
 };
 
 
@@ -209,6 +215,7 @@ partial interface MLGraphBuilder {
                                        optional MLBatchNormalizationOptions options = {});
   [Throws] MLOperand cast(MLOperand input, MLOperandDataType dataType, optional MLOperatorOptions options = {});
   [Throws] MLOperand clamp(MLOperand input, optional MLClampOptions options = {});
+  [Throws] MLOperand triangular(MLOperand input, optional MLTriangularOptions options = {});
   [Throws] MLOperand concat(sequence<MLOperand> inputs, [EnforceRange] unsigned long axis, optional MLOperatorOptions options = {});
   [Throws] MLOperand conv2d(MLOperand input, MLOperand filter, optional MLConv2dOptions options = {});
 };
