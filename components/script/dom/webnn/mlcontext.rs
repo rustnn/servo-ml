@@ -478,6 +478,12 @@ impl MLContext {
                     },
 
                     "int32" => {
+                        // Backend produces little-endian i32 bytes (see webnn/src/lib.rs).
+                        // Mirror that here by reconstructing each 4-byte chunk via
+                        // `i32::from_le_bytes` before handing the data to the JS
+                        // typed array helper.  This ensures negative values are
+                        // preserved and matches the behaviour of the reference
+                        // `dispatch_example` helper.
                         if bytes.len() % 4 != 0 {
                             promise.reject_error(Error::Operation(None), can_gc);
                             return;
@@ -1009,7 +1015,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // - ban very large tensors to avoid exhausting the GPU process
         //   (the "large inputs" tests use ~137 MB per tensor)
 
-        let data_types = Some(vec![MLOperandDataType::Float32]);
+        let data_types = Some(vec![MLOperandDataType::Float32, MLOperandDataType::Int32]);
         // limit the size to something comfortably smaller than the large-input
         // tests in wpt (/6000×6000 float32 ≈ 144 000 000 bytes).
         // Pick a value comfortably below the ~144 MB used by the
@@ -1127,14 +1133,8 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
                 // Compare data type
                 let op_dtype_str = match op.descriptor.data_type {
                     rustnn::graph::DataType::Float32 => "float32",
-                    rustnn::graph::DataType::Float16 => "float16",
                     rustnn::graph::DataType::Int32 => "int32",
-                    rustnn::graph::DataType::Uint32 => "uint32",
-                    rustnn::graph::DataType::Int8 => "int8",
-                    rustnn::graph::DataType::Uint8 => "uint8",
-                    rustnn::graph::DataType::Int64 => "int64",
-                    rustnn::graph::DataType::Uint64 => "uint64",
-                    _ => "float32",
+                    _ => return Err(Error::Type("Data type not supported".to_owned())),
                 };
                 if tensor.data_type() != op_dtype_str {
                     return Err(Error::Type("input tensor descriptor mismatch".to_owned()));
@@ -1168,14 +1168,8 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             if let Some(op) = gi.operands.get(op_id as usize) {
                 let op_dtype_str = match op.descriptor.data_type {
                     rustnn::graph::DataType::Float32 => "float32",
-                    rustnn::graph::DataType::Float16 => "float16",
                     rustnn::graph::DataType::Int32 => "int32",
-                    rustnn::graph::DataType::Uint32 => "uint32",
-                    rustnn::graph::DataType::Int8 => "int8",
-                    rustnn::graph::DataType::Uint8 => "uint8",
-                    rustnn::graph::DataType::Int64 => "int64",
-                    rustnn::graph::DataType::Uint64 => "uint64",
-                    _ => "float32",
+                    _ => return Err(Error::Type("Data type not supported".to_owned())),
                 };
                 if tensor.data_type() != op_dtype_str {
                     return Err(Error::Type("output tensor descriptor mismatch".to_owned()));

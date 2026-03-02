@@ -30,6 +30,8 @@ Important: this README is subsystem-specific — read `components/script/README.
 
 - The `scratchpad/` top-level directory contains the source code for `rustnn`, as well as that of `pywebnn`. The latter is basically to Python what this crate is to the Web. Use this example. 
 
+- **Backend datatype support:** the CoreML executor now handles `Int32` outputs (output floats from CoreML are truncated to `i32`), and inputs of type `Int32` are promoted to `float32` before dispatch. The script-side read callback reconstructs little-endian `i32` values and returns an `Int32Array`; the conversion matches the backend logic. This mirrors the behaviour of the reference `dispatch_example` in the `skills/` directory.
+
 Overview — how WebNN is wired in Servo
 
 - Message type and API surface

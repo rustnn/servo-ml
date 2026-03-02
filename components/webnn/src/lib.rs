@@ -4,10 +4,76 @@ use std::thread;
 
 use base::generic_channel::{GenericReceiver, GenericSender, channel};
 use crossbeam::channel::{self, Receiver, Sender};
-use log::warn;
+use log::{debug, warn};
 use profile_traits::generic_callback::GenericCallback;
 use rustnn::GraphConverter;
-use rustnn::executors::coreml::prepare_compiled_model_with_weights;
+use rustnn::executors::coreml::{CoremlOutput, prepare_compiled_model_with_weights};
+
+// helper for converting a CoreML output (or lack thereof) into the byte
+// buffer we store in the manager's tensor store.  Handles all supported
+// data types and falls back to a zeroed buffer when the output is missing.
+fn process_coreml_outputs(
+    operand: &rustnn::graph::Operand,
+    coreml_out: Option<CoremlOutput>,
+) -> Vec<u8> {
+    if let Some(coreml_out) = coreml_out {
+        match operand.descriptor.data_type {
+            rustnn::graph::DataType::Float32 => {
+                let mut bytes = Vec::with_capacity(coreml_out.data.len() * 4);
+                for &v in coreml_out.data.iter() {
+                    bytes.extend_from_slice(&v.to_le_bytes());
+                }
+                bytes
+            },
+            rustnn::graph::DataType::Float16 => {
+                let mut bytes = Vec::with_capacity(coreml_out.data.len() * 2);
+                for &v in coreml_out.data.iter() {
+                    let bits = half::f16::from_f32(v).to_bits();
+                    bytes.extend_from_slice(&bits.to_le_bytes());
+                }
+                bytes
+            },
+            rustnn::graph::DataType::Int32 => {
+                // CoreML emits a float array even for integer outputs.  In
+                // practice the values appear as tiny denormals whose underlying
+                // bit pattern encodes the integer we want (1e-45 == 0x0000_0001).
+                // Casting to i32 would convert numerically (producing 0); instead
+                // reinterpret the bits directly.
+                let mut bytes = Vec::with_capacity(coreml_out.data.len() * 4);
+                for &v in coreml_out.data.iter() {
+                    // reinterpret the raw bits as a signed integer
+                    let bits = v.to_bits();
+                    let iv = i32::from_ne_bytes(bits.to_ne_bytes());
+                    bytes.extend_from_slice(&iv.to_le_bytes());
+                }
+                bytes
+            },
+            _other => {
+                let byte_length = operand
+                    .descriptor
+                    .shape
+                    .iter()
+                    .fold(1usize, |acc, d| {
+                        acc.saturating_mul(rustnn::graph::get_static_or_max_size(d) as usize)
+                    })
+                    .saturating_mul(4usize);
+                vec![0u8; byte_length]
+            },
+        }
+    } else {
+        // no CoreML output at all -> zero buffer
+        let byte_length = operand
+            .descriptor
+            .shape
+            .iter()
+            .fold(1usize, |acc, d| {
+                acc.saturating_mul(rustnn::graph::get_static_or_max_size(d) as usize)
+            })
+            .saturating_mul(4usize);
+        vec![0u8; byte_length]
+    }
+}
+
 // Required to materialize constant operands during dispatch.
 use rustnn::graph::ConstantData;
 use webnn_traits::{ContextId, ContextMessage, GraphId, WebNNMsg};
@@ -669,6 +735,7 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                         // behaviour when the entry was missing).
                         outputs.insert(*tensor_id, Vec::new());
                     }
+                    debug!("Failed to find compiled_map");
                     if let Err(e) = manager_tx.send(WebNNMsg::ComputeResult(ctx_id, outputs)) {
                         warn!("webnn ML thread: failed to send ComputeResult: {:?}", e);
                     }
@@ -684,6 +751,8 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                 // operate without performing its own conversion.
                 let program_bytes = entry.converted_program.as_slice();
 
+                debug!("Starg coreml for {:?} {:?}", ctx_id, inputs_bytes.len());
+
                 if !try_coreml_execute(
                     &entry.graph_info,
                     &inputs_map,
@@ -693,6 +762,7 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                     cached_path,
                     &mut outputs,
                 ) {
+                    warn!("CoreML failed");
                     // coreml either not available or failed, generate zeros
                     for (op_id, tensor_id) in outputs_map.iter() {
                         if let Some(operand) = entry.graph_info.operands.get(*op_id as usize) {
@@ -709,6 +779,7 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                     }
                 } else {
                 }
+                debug!("Compute result for {:?}", ctx_id);
                 // send the outputs back to the manager instead of using the
                 // one‑shot response channel.
                 if let Err(e) = manager_tx.send(WebNNMsg::ComputeResult(ctx_id, outputs)) {
@@ -859,8 +930,23 @@ fn try_coreml_execute(
                             half::f16::from_bits(bits).to_f32()
                         })
                         .collect(),
+                    // Int32 inputs are promoted to float32 for CoreML.  We
+                    // simply cast each i32 element to f32 here rather than
+                    // attempting to preserve integer semantics; CoreML
+                    // typically works in floating point anyway.
+                    rustnn::graph::DataType::Int32 => buf
+                        .chunks_exact(4)
+                        .map(|b| {
+                            let mut arr = [0u8; 4];
+                            arr.copy_from_slice(b);
+                            let iv = i32::from_le_bytes(arr);
+                            iv as f32
+                        })
+                        .collect(),
                     _other => Vec::new(),
                 };
+
+                debug!("Converted input: {:?}", data);
 
                 if !data.is_empty() {
                     shape_buf.clear();
@@ -890,60 +976,44 @@ fn try_coreml_execute(
     );
     let path = cached_compiled.expect("cached model path");
     let run_result = run_coreml_with_inputs_cached(program_bytes, coreml_inputs, Some(path));
+    debug!("Run results: {:?}", run_result);
     if let Ok(attempts) = run_result {
         if let Some(outputs) = attempts
             .iter()
             .find_map(|a| a.result.as_ref().ok().cloned())
         {
+            // Build a list of outputs we'll consume as we iterate.  The
+            // outer block above already performed validation; we just need a
+            // single loop that handles name mismatches gracefully.
+            let mut remaining_outputs: Vec<CoremlOutput> = outputs.clone();
             for (op_id, tensor_id) in outputs_map.iter() {
                 if let Some(operand) = graph_info.operands.get(*op_id as usize) {
                     let default_name = format!("output_{}", op_id);
                     let output_name = operand.name.as_deref().unwrap_or(&default_name);
 
-                    if let Some(coreml_out) = outputs.iter().find(|o| o.name == output_name) {
-                        match operand.descriptor.data_type {
-                            rustnn::graph::DataType::Float32 => {
-                                let mut bytes = Vec::with_capacity(coreml_out.data.len() * 4);
-                                for &v in coreml_out.data.iter() {
-                                    bytes.extend_from_slice(&v.to_le_bytes());
-                                }
-                                outputs_store.insert(*tensor_id, bytes);
-                            },
-                            rustnn::graph::DataType::Float16 => {
-                                let mut bytes = Vec::with_capacity(coreml_out.data.len() * 2);
-                                for &v in coreml_out.data.iter() {
-                                    let bits = half::f16::from_f32(v).to_bits();
-                                    bytes.extend_from_slice(&bits.to_le_bytes());
-                                }
-                                outputs_store.insert(*tensor_id, bytes);
-                            },
-                            _other => {
-                                let byte_length = operand
-                                    .descriptor
-                                    .shape
-                                    .iter()
-                                    .fold(1usize, |acc, d| {
-                                        acc.saturating_mul(
-                                            rustnn::graph::get_static_or_max_size(d) as usize
-                                        )
-                                    })
-                                    .saturating_mul(4usize);
-                                outputs_store.insert(*tensor_id, vec![0u8; byte_length]);
-                            },
-                        }
+                    debug!("Output name: {:?}", output_name);
+
+                    let maybe_coreml = remaining_outputs
+                        .iter()
+                        .position(|o| o.name == output_name)
+                        .map(|idx| remaining_outputs.remove(idx));
+
+                    let coreml_out = if let Some(o) = maybe_coreml {
+                        Some(o)
                     } else {
-                        let byte_length = operand
-                            .descriptor
-                            .shape
-                            .iter()
-                            .fold(1usize, |acc, d| {
-                                acc.saturating_mul(
-                                    rustnn::graph::get_static_or_max_size(d) as usize
-                                )
-                            })
-                            .saturating_mul(4usize);
-                        outputs_store.insert(*tensor_id, vec![0u8; byte_length]);
-                    }
+                        if remaining_outputs.is_empty() {
+                            None
+                        } else {
+                            debug!(
+                                "CoreML output name '{}' not found, using next positional output",
+                                output_name
+                            );
+                            Some(remaining_outputs.remove(0))
+                        }
+                    };
+
+                    let bytes = process_coreml_outputs(operand, coreml_out);
+                    outputs_store.insert(*tensor_id, bytes);
                 }
             }
             return true;
