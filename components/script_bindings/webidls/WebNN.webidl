@@ -119,6 +119,10 @@ dictionary MLGemmOptions : MLOperatorOptions {
   boolean bTranspose = false;
 };
 
+dictionary MLTransposeOptions : MLOperatorOptions {
+  sequence<[EnforceRange] unsigned long> permutation;
+};
+
 dictionary MLTriangularOptions : MLOperatorOptions {
   boolean upper = true;
   [EnforceRange] long diagonal = 0;
@@ -151,6 +155,7 @@ dictionary MLOpSupportLimits {
   MLTensorLimits output;
   // Per-operator support limit members; tests expect `cast` to exist.
   MLSingleInputSupportLimits cast;
+  MLSingleInputSupportLimits transpose;
   MLSingleInputSupportLimits triangular;
 };
 
@@ -230,6 +235,7 @@ partial interface MLGraphBuilder {
   [Throws] MLOperand pow(MLOperand a, MLOperand b, optional MLOperatorOptions options = {});
   [Throws] MLOperand matmul(MLOperand a, MLOperand b);
   [Throws] MLOperand gemm(MLOperand a, MLOperand b, optional MLGemmOptions options = {});
+  [Throws] MLOperand transpose(MLOperand input, optional MLTransposeOptions options = {});
 };
 
 [SecureContext, Exposed=(Window, Worker)]

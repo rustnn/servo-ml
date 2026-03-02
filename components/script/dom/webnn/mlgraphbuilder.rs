@@ -16,7 +16,7 @@ use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLArgMinMaxOptions, MLBatchNormalizationOptions, MLClampOptions, MLConv2dFilterOperandLayout,
     MLConv2dOptions, MLGemmOptions, MLGraphBuilderMethods, MLInputOperandLayout, MLOperandDataType,
-    MLOperandDescriptor, MLOperatorOptions, MLTriangularOptions,
+    MLOperandDescriptor, MLOperatorOptions, MLTransposeOptions, MLTriangularOptions,
 };
 use crate::dom::bindings::error::{Error, Fallible};
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
@@ -409,6 +409,52 @@ fn create_an_mloperand(
     operand
 }
 
+/// <https://webmachinelearning.github.io/webnn/#api-mloperand-create>
+fn copy_an_mloperand(
+    operand: &MLOperand,
+    descriptor_override: Option<&MLOperandDescriptor>,
+    operand_id: Option<u32>,
+    can_gc: CanGc,
+) -> DomRoot<MLOperand> {
+    // Step 1: Let |builder| be |operand|.[[builder]].
+    let builder = operand.builder();
+
+    // Step 2: Let |realm| be |builder|'s relevant realm.
+    let global = builder.global();
+
+    // Step 3: Let |result| be a new MLOperand in |realm|.
+    // Step 4: Set |result|.[[builder]] to |builder|.
+    // Step 5: Set |result|.[[descriptor]] to |operand|.[[descriptor]].
+    let copied_desc = MLOperandDescriptor {
+        dataType: match operand.descriptor_data_type() {
+            "float32" => MLOperandDataType::Float32,
+            "float16" => MLOperandDataType::Float16,
+            "int32" => MLOperandDataType::Int32,
+            "uint32" => MLOperandDataType::Uint32,
+            "int64" => MLOperandDataType::Int64,
+            "uint64" => MLOperandDataType::Uint64,
+            "int8" => MLOperandDataType::Int8,
+            "uint8" => MLOperandDataType::Uint8,
+            _ => MLOperandDataType::Float32,
+        },
+        shape: operand.descriptor_shape().clone(),
+    };
+
+    // Note: this binding computes output descriptors eagerly for operator results,
+    // so callers may provide an override descriptor instead of the copied descriptor.
+    let descriptor = descriptor_override.unwrap_or(&copied_desc);
+
+    // Step 6: If |operand|.[[name]] exists, then set |result|.[[name]] to |operand|.[[name]].
+    let name = operand.name();
+
+    let result = MLOperand::new(
+        &builder, &global, descriptor, name, false, false, operand_id, can_gc,
+    );
+
+    // Step 7: Return |result|.
+    result
+}
+
 impl MLGraphBuilder {
     /// Element-wise binary op helper implementations: add, sub, mul, div, max, min, pow
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-binary>
@@ -595,6 +641,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         buffer: ArrayBufferViewOrArrayBuffer,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
+        println!("Constant");
         // Step 1: If this can not build, then return an InvalidStateError.
         if !self.can_build() {
             return Err(Error::InvalidState(None));
@@ -663,6 +710,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 4.2: DOM operands are no longer kept by the builder; backend bookkeeping
         // for the operand (id and bytes) must be persisted in `graph_info`.
         // Step 5: Return |operand|.
+        println!("COnstant succes");
         Ok(operand)
     }
 
@@ -1054,16 +1102,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             });
         }
 
-        let operand = create_an_mloperand(
-            self,
-            Some(&desc),
-            None,
-            None,
-            false,
-            false,
-            Some(output_id),
-            can_gc,
-        );
+        // Note: the spec's copy-an-mloperand algorithm copies input's descriptor,
+        // but Cast changes output dataType. This binding applies an override descriptor
+        // so DOM-visible output metadata matches the cast result.
+        let operand = copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc);
         Ok(operand)
     }
 
@@ -1129,23 +1171,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             }
         }
 
-        // Make graph connections per the spec: output has same descriptor as input.
+        // Make graph connections per the spec: output is copied from input.
         let in_shape = input.descriptor_shape();
-        let out_dtype_enum = match in_dtype {
-            "float32" => MLOperandDataType::Float32,
-            "float16" => MLOperandDataType::Float16,
-            "int32" => MLOperandDataType::Int32,
-            "uint32" => MLOperandDataType::Uint32,
-            "int64" => MLOperandDataType::Int64,
-            "uint64" => MLOperandDataType::Uint64,
-            "int8" => MLOperandDataType::Int8,
-            "uint8" => MLOperandDataType::Uint8,
-            _ => MLOperandDataType::Float32,
-        };
-        let desc = MLOperandDescriptor {
-            dataType: out_dtype_enum,
-            shape: in_shape.clone(),
-        };
 
         // Ensure input has backend id.
         let input_id = match input.id() {
@@ -1189,16 +1216,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             });
         }
 
-        let operand = create_an_mloperand(
-            self,
-            Some(&desc),
-            None,
-            None,
-            false,
-            false,
-            Some(output_id),
-            can_gc,
-        );
+        // Step 8.1: Let |output| be the result of copying an MLOperand given |input|.
+        let operand = copy_an_mloperand(input, None, Some(output_id), can_gc);
         Ok(operand)
     }
 
@@ -1227,21 +1246,6 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 4.1: Let output be the result of copying an MLOperand given input.
         let out_dtype_str = input.descriptor_data_type();
-        let out_dtype_enum = match out_dtype_str {
-            "float32" => MLOperandDataType::Float32,
-            "float16" => MLOperandDataType::Float16,
-            "int32" => MLOperandDataType::Int32,
-            "uint32" => MLOperandDataType::Uint32,
-            "int64" => MLOperandDataType::Int64,
-            "uint64" => MLOperandDataType::Uint64,
-            "int8" => MLOperandDataType::Int8,
-            "uint8" => MLOperandDataType::Uint8,
-            _ => MLOperandDataType::Float32,
-        };
-        let desc = MLOperandDescriptor {
-            dataType: out_dtype_enum,
-            shape: in_shape.clone(),
-        };
 
         let rust_operand =
             self.create_rust_operand(out_dtype_str, in_shape.clone(), OperandKind::Output, None);
@@ -1279,16 +1283,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // Step 5: Return output.
-        let operand = create_an_mloperand(
-            self,
-            Some(&desc),
-            None,
-            None,
-            false,
-            false,
-            Some(output_id),
-            can_gc,
-        );
+        let operand = copy_an_mloperand(input, None, Some(output_id), can_gc);
         Ok(operand)
     }
 
@@ -2213,6 +2208,110 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             Some(output_id),
             can_gc,
         );
+        Ok(operand)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-transpose>
+    fn Transpose(
+        &self,
+        input: &MLOperand,
+        options: &MLTransposeOptions,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If this can not build, then throw an "InvalidStateError" DOMException.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If MLGraphBuilder/validating operand with this and |input| returns false, then throw a TypeError.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        let input_shape = input.descriptor_shape();
+        let input_rank = input_shape.len();
+
+        // Step 3: If |options|.permutation does not exist, then let |options|.permutation be
+        // the reversed sequence of all indices for |input|'s shape.
+        // Step 4: Otherwise validate permutation shape/range/uniqueness constraints.
+        let permutation: Vec<u32> = match options.permutation.as_ref() {
+            Some(permutation) => permutation.clone(),
+            None => (0..input_rank as u32).rev().collect(),
+        };
+
+        // Step 4.1: If |permutation|'s size is not equal to |input|'s rank, then throw a TypeError.
+        // Step 4.2: If any value is out of range [0, |input|'s rank), then throw a TypeError.
+        // Step 4.3: If |permutation| contains duplicate values, then throw a TypeError.
+        let output_shape = match rustnn::shape_inference::infer_transpose_shape(
+            &input_shape,
+            Some(permutation.as_slice()),
+        ) {
+            Ok(shape) => shape,
+            Err(e) => return Err(Error::Type(e.to_string())),
+        };
+
+        // Step 5.1: Let |output| be the result of copying an MLOperand given |input|.
+        let out_dtype_str = input.descriptor_data_type();
+        let out_dtype_enum = match out_dtype_str {
+            "float32" => MLOperandDataType::Float32,
+            "float16" => MLOperandDataType::Float16,
+            "int32" => MLOperandDataType::Int32,
+            "uint32" => MLOperandDataType::Uint32,
+            "int64" => MLOperandDataType::Int64,
+            "uint64" => MLOperandDataType::Uint64,
+            "int8" => MLOperandDataType::Int8,
+            "uint8" => MLOperandDataType::Uint8,
+            _ => MLOperandDataType::Float32,
+        };
+        let desc = MLOperandDescriptor {
+            dataType: out_dtype_enum,
+            shape: output_shape.clone(),
+        };
+
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+
+        let rust_operand = self.create_rust_operand(
+            out_dtype_str,
+            output_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Note: the implementation allocates the backend output id before Step 5.1 so
+        // graph-connection metadata can reference the output operand during operator recording.
+
+        // Step 5.2: Let |operator| be an operator for the "transpose" operation, given |options|.
+        // Step 5.3-5.5: Record operator input/output connections.
+        let attributes = serde_json::json!({
+            "permutation": permutation,
+        });
+
+        let label = {
+            let l = options.parent.label.clone();
+            if l.is_empty() {
+                None
+            } else {
+                Some(l.clone().to_string())
+            }
+        };
+
+        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
+            gi.operations.push(Operation {
+                op_type: "transpose".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes,
+                label,
+            });
+        }
+
+        // Step 5.1: Let |output| be the result of copying an MLOperand given |input|.
+        let operand = copy_an_mloperand(input, Some(&desc), Some(output_id), CanGc::note());
+
+        // Step 6: Return |output|.
         Ok(operand)
     }
 }

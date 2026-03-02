@@ -1042,6 +1042,11 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             output: Some(tensor_limits(data_types.clone())),
         };
 
+        let transpose_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
         MLOpSupportLimits {
             constant: Some(tensor_limits(data_types.clone())),
             input: Some(tensor_limits(data_types.clone())),
@@ -1049,6 +1054,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             output: Some(tensor_limits(data_types.clone())),
             preferredInputLayout: None,
             cast: Some(cast_limits),
+            transpose: Some(transpose_limits),
             triangular: Some(triangular_limits),
         }
     }
@@ -1065,6 +1071,13 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             return Err(Error::Type(
                 "graph does not belong to this context".to_owned(),
             ));
+        }
+
+        println!("Inputs: {:?}", inputs.len());
+
+        // Note: spec doesn't mention this, but the backend crashes on empty in- or outputs.
+        if inputs.is_empty() || outputs.is_empty() {
+            return Err(Error::Type("Empty data".to_owned()));
         }
 
         // Step 2: If |graph|.[[isDestroyed]] is true, then throw an InvalidStateError.
@@ -1201,11 +1214,14 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             let name_str = name.as_ref();
             let op_id = find_operand_id(name_str).expect("validated above");
             let tensor_id = tensor.tensor_id();
+            println!("Input tensor id: {:?}", tensor_id);
             if tensor_id == 0 {
                 return Err(Error::Type("input tensor has no backend id".to_owned()));
             }
             input_pairs.push((op_id, tensor_id));
         }
+
+        println!("Input pairs: {:?}", input_pairs);
 
         let mut output_pairs: Vec<(u32, u32)> = Vec::new();
         for (name, tensor) in outputs.iter() {
