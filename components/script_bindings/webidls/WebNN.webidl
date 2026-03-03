@@ -226,6 +226,8 @@ partial interface MLGraphBuilder {
 };
 
 partial interface MLGraphBuilder {
+  [Throws] MLOperand tan(MLOperand input, optional MLOperatorOptions options = {});
+  [Throws] MLOperand tanh(MLOperand input, optional MLOperatorOptions options = {});
   [Throws] MLOperand add(MLOperand a, MLOperand b, optional MLOperatorOptions options = {});
   [Throws] MLOperand sub(MLOperand a, MLOperand b, optional MLOperatorOptions options = {});
   [Throws] MLOperand mul(MLOperand a, MLOperand b, optional MLOperatorOptions options = {});
@@ -241,6 +243,8 @@ partial interface MLGraphBuilder {
 };
 
 partial dictionary MLOpSupportLimits {
+  MLSingleInputSupportLimits tan;
+  MLSingleInputSupportLimits tanh;
   MLSingleInputSupportLimits tile;
 };
 

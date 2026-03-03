@@ -455,10 +455,156 @@ fn copy_an_mloperand(
     result
 }
 
+/// <https://webmachinelearning.github.io/webnn/#bidirectionally-broadcasting>
+fn bidirectionally_broadcast_shapes(shape_a: &[u32], shape_b: &[u32]) -> Option<Vec<u32>> {
+    // Step 1: Let |sizeA| be |shapeA|'s [=list/size=].
+    let size_a = shape_a.len();
+
+    // Step 2: Let |sizeB| be |shapeB|'s [=list/size=].
+    let size_b = shape_b.len();
+
+    // Step 3: Let |outputSize| be the maximum of |sizeA| and |sizeB|.
+    let output_size = std::cmp::max(size_a, size_b);
+
+    // Step 4: Let |paddedA| be a [=list/clone=] of |shapeA|.
+    let mut padded_a = shape_a.to_vec();
+
+    // Step 5: While |paddedA|'s [=list/size=] is less than |outputSize|, [=list/prepend=] 1 to |paddedA|.
+    while padded_a.len() < output_size {
+        padded_a.insert(0, 1);
+    }
+
+    // Step 6: Let |paddedB| be a [=list/clone=] of |shapeB|.
+    let mut padded_b = shape_b.to_vec();
+
+    // Step 7: While |paddedB|'s [=list/size=] is less than |outputSize|, [=list/prepend=] 1 to |paddedB|.
+    while padded_b.len() < output_size {
+        padded_b.insert(0, 1);
+    }
+
+    // Step 8: Let |outputShape| be a new [=/list=].
+    let mut output_shape = Vec::with_capacity(output_size);
+
+    // Step 9: [=list/For each=] |index| in [=the range=] 0 to |outputSize|, exclusive:
+    for index in 0..output_size {
+        // Step 9.1: Let |dimA| be |paddedA|[|index|].
+        let dim_a = padded_a[index];
+
+        // Step 9.2: Let |dimB| be |paddedB|[|index|].
+        let dim_b = padded_b[index];
+
+        // Step 9.3: If |dimA| is not equal to |dimB|, and |dimA| is not equal to 1, and |dimB| is not equal to 1, then return failure.
+        if dim_a != dim_b && dim_a != 1 && dim_b != 1 {
+            return None;
+        }
+
+        // Step 9.4: [=list/Append=] the maximum of |dimA| and |dimB| to |outputShape|.
+        output_shape.push(std::cmp::max(dim_a, dim_b));
+    }
+
+    // Step 10: Return |outputShape|.
+    Some(output_shape)
+}
+
 impl MLGraphBuilder {
-    /// Element-wise binary op helper implementations: add, sub, mul, div, max, min, pow
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-binary>
-    fn binary_elementwise_op(
+    /// <https://webmachinelearning.github.io/webnn/#mlgraphbuilder-element-wise-unary-op>
+    fn create_an_element_wise_unary_operation(
+        &self,
+        op_name: &str,
+        input: &MLOperand,
+        allowed_data_types: Option<&[&str]>,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: [=Assert=]: |op| is one of "abs", "ceil", "cos", "erf", "exp", "floor", "identity", "log", "neg", "reciprocal", "roundEven", "sin", "sign", "sqrt", "tan".
+        debug_assert!(
+            [
+                "abs",
+                "ceil",
+                "cos",
+                "erf",
+                "exp",
+                "floor",
+                "identity",
+                "log",
+                "neg",
+                "reciprocal",
+                "roundEven",
+                "sin",
+                "sign",
+                "sqrt",
+                "tan",
+            ]
+            .contains(&op_name)
+        );
+
+        // Step 2: If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 3: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 4: If |allowedDataTypes| is given and it does not [=list/contain=] |input|'s [=MLOperand/dataType=], then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if let Some(allowed_data_types) = allowed_data_types {
+            if !allowed_data_types.contains(&input_data_type) {
+                return Err(Error::Type("unsupported input dataType".to_owned()));
+            }
+        }
+
+        // Step 5: *Make graph connections:*
+        // Step 5.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
+        // Note: implementation allocates backend output id before creating the DOM operand
+        // so operator metadata can point to concrete input/output ids.
+        let input_shape = input.descriptor_shape();
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 5.2: Let |operator| be an [=operator=] for the |op| operation given |options|.
+        let label = {
+            let value = options.label.clone();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.clone().to_string())
+            }
+        };
+
+        // Step 5.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // Step 5.4: Set |operator|'s [=operator/input=] to |input|.
+        // Step 5.5: Set |operator|'s [=operator/output=] to |output|.
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: op_name.to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({}),
+                label,
+            });
+        }
+
+        // Step 5.1: Let |output| be the result of copying an MLOperand given |input|.
+        let output = copy_an_mloperand(input, None, Some(output_id), can_gc);
+
+        // Step 6: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#mlgraphbuilder-element-wise-binary-op>
+    fn create_an_element_wise_binary_operation(
         &self,
         op_name: &str,
         a: &MLOperand,
@@ -466,7 +612,9 @@ impl MLGraphBuilder {
         options_label: Option<String>,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        // Step 1: [Assert]: |op| is one of "add", "sub", "mul", "div", "max", "min", "pow".
+        // Step 1: [=Assert=]: |op| is one of "add", "sub", "mul", "div", "max", "min", "pow".
+        debug_assert!(["add", "sub", "mul", "div", "max", "min", "pow"].contains(&op_name));
+
         // Step 2: If this can not build, then throw an InvalidStateError.
         if !self.can_build() {
             return Err(Error::InvalidState(None));
@@ -484,17 +632,15 @@ impl MLGraphBuilder {
             return Err(Error::Type("input dataType must match".to_owned()));
         }
 
-        // Step 5: Let |outputShape| be the result of bidirectionally broadcasting |a|.shape and |b|.shape.
-        //         If that returns failure, then throw a TypeError.
-        let out_shape = match rustnn::shape_inference::broadcast_shapes(
-            a.descriptor_shape(),
-            b.descriptor_shape(),
-        ) {
-            Ok(s) => s,
-            Err(e) => return Err(Error::Type(e.to_string())),
-        };
+        // Step 5: Let |outputShape| be the result of [=bidirectionally broadcasting=] |a|'s [=MLOperand/shape=] and |b|'s [=MLOperand/shape=].
+        // Step 6: If |outputShape| is failure, then throw a TypeError.
+        let out_shape =
+            bidirectionally_broadcast_shapes(a.descriptor_shape(), b.descriptor_shape())
+                .ok_or_else(|| {
+                    Error::Type("shapes are not bidirectionally broadcastable".to_owned())
+                })?;
 
-        // Step 6: Let |descriptor| be the result of creating an MLOperandDescriptor given |a|'s dataType and |outputShape|.
+        // Step 7: Let |outputDescriptor| be the result of creating an MLOperandDescriptor given |a|'s [=MLOperand/dataType=] and |outputShape|.
         let out_dtype_enum = match a_dtype {
             "float32" => MLOperandDataType::Float32,
             "float16" => MLOperandDataType::Float16,
@@ -512,7 +658,13 @@ impl MLGraphBuilder {
             shape: out_shape.clone(),
         };
 
-        // Step 7: Make graph connections — create backend operand, operator record and return output.
+        // Step 8: *Make graph connections:*
+        // Step 8.1: Let |output| be the result of creating an MLOperand given this and |outputDescriptor|.
+        // Step 8.2: Let |operator| be an operator for the |op| operation, given |options|.
+        // Step 8.3: Set |operator|'s [=operator/inputs=] to « |a|, |b| ».
+        // Step 8.4: Set |operator|'s [=operator/output=] to |output|.
+        // Note: implementation allocates backend ids before creating the DOM output object
+        // so operation records can reference concrete input/output operand ids.
         let a_id = a
             .id()
             .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
@@ -550,6 +702,8 @@ impl MLGraphBuilder {
             Some(output_id),
             can_gc,
         );
+
+        // Step 9: Return |output|.
         Ok(operand)
     }
 }
@@ -1890,6 +2044,98 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(operand)
     }
 
+    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-unary>
+    fn Tan(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "tan", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16"];
+        let output = self.create_an_element_wise_unary_operation(
+            "tan",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-tanh-method>
+    fn Tanh(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-tanh)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if input_data_type != "float32" && input_data_type != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // Step 4: *Make graph connections:*
+        // Step 4.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
+        // Note: implementation allocates backend output id before creating the DOM operand
+        // so operator metadata can point to concrete input/output ids.
+        let input_shape = input.descriptor_shape();
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 4.2: Let |operator| be an [=operator=] for the "tanh" operation, given |options|.
+        let label = {
+            let value = options.label.clone();
+            if value.is_empty() {
+                None
+            } else {
+                Some(value.clone().to_string())
+            }
+        };
+
+        // Step 4.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // Step 4.4: Set |operator|'s [=operator/input=] to |input|.
+        // Step 4.5: Set |operator|'s [=operator/output=] to |output|.
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "tanh".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({}),
+                label,
+            });
+        }
+
+        // Step 4.1: Let |output| be the result of copying an MLOperand given |input|.
+        let output = copy_an_mloperand(input, None, Some(output_id), can_gc);
+
+        // Step 5: Return |output|.
+        Ok(output)
+    }
+
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-binary>
     fn Add(
         &self,
@@ -1903,7 +2149,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         //    1. If that throws an error, then rethrow the error.
         // 2. Return |output|.
         let label = options.label.clone().to_string();
-        self.binary_elementwise_op("add", a, b, Some(label), can_gc)
+        self.create_an_element_wise_binary_operation("add", a, b, Some(label), can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-binary>
@@ -1919,7 +2165,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         //    1. If that throws an error, then rethrow the error.
         // 2. Return |output|.
         let label = options.label.clone().to_string();
-        self.binary_elementwise_op("sub", a, b, Some(label), can_gc)
+        self.create_an_element_wise_binary_operation("sub", a, b, Some(label), can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-binary>
@@ -1935,7 +2181,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         //    1. If that throws an error, then rethrow the error.
         // 2. Return |output|.
         let label = options.label.clone().to_string();
-        self.binary_elementwise_op("mul", a, b, Some(label), can_gc)
+        self.create_an_element_wise_binary_operation("mul", a, b, Some(label), can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-binary>
@@ -1951,7 +2197,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         //    1. If that throws an error, then rethrow the error.
         // 2. Return |output|.
         let label = options.label.clone().to_string();
-        self.binary_elementwise_op("div", a, b, Some(label), can_gc)
+        self.create_an_element_wise_binary_operation("div", a, b, Some(label), can_gc)
     }
 
     fn Max(
@@ -1966,7 +2212,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         //    1. If that throws an error, then rethrow the error.
         // 2. Return |output|.
         let label = options.label.clone().to_string();
-        self.binary_elementwise_op("max", a, b, Some(label), can_gc)
+        self.create_an_element_wise_binary_operation("max", a, b, Some(label), can_gc)
     }
 
     fn Min(
@@ -1981,7 +2227,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         //    1. If that throws an error, then rethrow the error.
         // 2. Return |output|.
         let label = options.label.clone().to_string();
-        self.binary_elementwise_op("min", a, b, Some(label), can_gc)
+        self.create_an_element_wise_binary_operation("min", a, b, Some(label), can_gc)
     }
 
     fn Pow(
@@ -1996,7 +2242,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         //    1. If that throws an error, then rethrow the error.
         // 2. Return |output|.
         let label = options.label.clone().to_string();
-        self.binary_elementwise_op("pow", a, b, Some(label), can_gc)
+        self.create_an_element_wise_binary_operation("pow", a, b, Some(label), can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-matmul>
@@ -2249,11 +2495,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 6: For each |index| in the range 0 to |outputShape|'s list/size, exclusive:
         // Step 6.1: Set |outputShape|[|index|] to |outputShape|[|index|] * |repetitions|[|index|].
         // Note: the multiplication loop is delegated to rustnn::shape_inference::infer_tile_shape.
-        let output_shape = match rustnn::shape_inference::infer_tile_shape(&input_shape, &repetitions)
-        {
-            Ok(shape) => shape,
-            Err(e) => return Err(Error::Type(e.to_string())),
-        };
+        let output_shape =
+            match rustnn::shape_inference::infer_tile_shape(&input_shape, &repetitions) {
+                Ok(shape) => shape,
+                Err(e) => return Err(Error::Type(e.to_string())),
+            };
 
         // Step 7: Let |outputDescriptor| be the result of creating an MLOperandDescriptor
         // given |input|'s MLOperand/dataType and |outputShape|.

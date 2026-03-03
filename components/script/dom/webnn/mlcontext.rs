@@ -1052,6 +1052,16 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             output: Some(tensor_limits(data_types.clone())),
         };
 
+        let tan_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
+        let tanh_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
         MLOpSupportLimits {
             constant: Some(tensor_limits(data_types.clone())),
             input: Some(tensor_limits(data_types.clone())),
@@ -1059,6 +1069,8 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             output: Some(tensor_limits(data_types.clone())),
             preferredInputLayout: None,
             cast: Some(cast_limits),
+            tan: Some(tan_limits),
+            tanh: Some(tanh_limits),
             tile: Some(tile_limits),
             transpose: Some(transpose_limits),
             triangular: Some(triangular_limits),
