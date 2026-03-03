@@ -226,6 +226,20 @@ partial interface MLGraphBuilder {
 };
 
 partial interface MLGraphBuilder {
+  [Throws] MLOperand abs(MLOperand input, optional MLOperatorOptions options = {});
+  [Throws] MLOperand ceil(MLOperand input, optional MLOperatorOptions options = {});
+  [Throws] MLOperand cos(MLOperand input, optional MLOperatorOptions options = {});
+  [Throws] MLOperand erf(MLOperand input, optional MLOperatorOptions options = {});
+  [Throws] MLOperand exp(MLOperand input, optional MLOperatorOptions options = {});
+  [Throws] MLOperand floor(MLOperand input, optional MLOperatorOptions options = {});
+  [Throws] MLOperand identity(MLOperand input, optional MLOperatorOptions options = {});
+  [Throws] MLOperand log(MLOperand input, optional MLOperatorOptions options = {});
+  [Throws] MLOperand neg(MLOperand input, optional MLOperatorOptions options = {});
+  [Throws] MLOperand reciprocal(MLOperand input, optional MLOperatorOptions options = {});
+  [Throws] MLOperand roundEven(MLOperand input, optional MLOperatorOptions options = {});
+  [Throws] MLOperand sin(MLOperand input, optional MLOperatorOptions options = {});
+  [Throws] MLOperand sign(MLOperand input, optional MLOperatorOptions options = {});
+  [Throws] MLOperand sqrt(MLOperand input, optional MLOperatorOptions options = {});
   [Throws] MLOperand tan(MLOperand input, optional MLOperatorOptions options = {});
   [Throws] MLOperand tanh(MLOperand input, optional MLOperatorOptions options = {});
   [Throws] MLOperand add(MLOperand a, MLOperand b, optional MLOperatorOptions options = {});
@@ -243,6 +257,20 @@ partial interface MLGraphBuilder {
 };
 
 partial dictionary MLOpSupportLimits {
+  MLSingleInputSupportLimits abs;
+  MLSingleInputSupportLimits ceil;
+  MLSingleInputSupportLimits cos;
+  MLSingleInputSupportLimits erf;
+  MLSingleInputSupportLimits exp;
+  MLSingleInputSupportLimits floor;
+  MLSingleInputSupportLimits identity;
+  MLSingleInputSupportLimits log;
+  MLSingleInputSupportLimits neg;
+  MLSingleInputSupportLimits reciprocal;
+  MLSingleInputSupportLimits roundEven;
+  MLSingleInputSupportLimits sin;
+  MLSingleInputSupportLimits sign;
+  MLSingleInputSupportLimits sqrt;
   MLSingleInputSupportLimits tan;
   MLSingleInputSupportLimits tanh;
   MLSingleInputSupportLimits tile;

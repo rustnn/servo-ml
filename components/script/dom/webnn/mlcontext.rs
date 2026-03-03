@@ -1057,18 +1057,102 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             output: Some(tensor_limits(data_types.clone())),
         };
 
+        let abs_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
+        let ceil_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
+        let cos_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
+        let erf_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
+        let exp_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
+        let floor_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
+        let identity_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
+        let log_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
+        let neg_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
+        let reciprocal_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
+        let round_even_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
+        let sin_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
+        let sign_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
+        let sqrt_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
         let tanh_limits = MLSingleInputSupportLimits {
             input: Some(tensor_limits(data_types.clone())),
             output: Some(tensor_limits(data_types.clone())),
         };
 
         MLOpSupportLimits {
+            abs: Some(abs_limits),
+            ceil: Some(ceil_limits),
             constant: Some(tensor_limits(data_types.clone())),
+            cos: Some(cos_limits),
+            erf: Some(erf_limits),
+            exp: Some(exp_limits),
+            floor: Some(floor_limits),
+            identity: Some(identity_limits),
             input: Some(tensor_limits(data_types.clone())),
+            log: Some(log_limits),
             maxTensorByteLength: max_bytes,
+            neg: Some(neg_limits),
             output: Some(tensor_limits(data_types.clone())),
             preferredInputLayout: None,
             cast: Some(cast_limits),
+            reciprocal: Some(reciprocal_limits),
+            roundEven: Some(round_even_limits),
+            sin: Some(sin_limits),
+            sign: Some(sign_limits),
+            sqrt: Some(sqrt_limits),
             tan: Some(tan_limits),
             tanh: Some(tanh_limits),
             tile: Some(tile_limits),

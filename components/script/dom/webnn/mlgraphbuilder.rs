@@ -718,7 +718,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         MLGraphBuilder::new(context, global, can_gc)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-input>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-input>
     fn Input(
         &self,
         name: DOMString,
@@ -788,7 +788,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(operand)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-constant-buffer>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-constant-descriptor-buffer>
     fn Constant(
         &self,
         descriptor: &MLOperandDescriptor,
@@ -868,7 +868,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(operand)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-constant-tensor>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-constant-tensor>
     fn Constant_(&self, tensor: &MLTensor, can_gc: CanGc) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If tensor.[[context]] is not this.[[context]], throw a TypeError.
         if tensor.context() != self.context() {
@@ -932,7 +932,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(operand)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-build>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-build>
     fn Build(&self, outputs: Record<USVString, DomRoot<MLOperand>>, can_gc: CanGc) -> Rc<Promise> {
         // Step 1: Let |global| be this's relevant global object.
         let global = &self.global();
@@ -1062,7 +1062,6 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         p
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-argminmax>
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-argmin>
     fn ArgMin(
         &self,
@@ -1076,7 +1075,6 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         self.mlgraphbuilder_argminmax_op("argMin", input, axis, options, can_gc)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-argminmax>
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-argmax>
     fn ArgMax(
         &self,
@@ -1090,7 +1088,6 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         self.mlgraphbuilder_argminmax_op("argMax", input, axis, options, can_gc)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-where>
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-where>
     fn Where(
         &self,
@@ -1375,7 +1372,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(operand)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-triangular>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-triangular>
     fn Triangular(
         &self,
         input: &MLOperand,
@@ -2044,7 +2041,309 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(operand)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-unary>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-abs>
+    fn Abs(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "abs", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}}, {{MLOperandDataType/"int64"}}, {{MLOperandDataType/"int32"}}, {{MLOperandDataType/"int8"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16", "int64", "int32", "int8"];
+        let output = self.create_an_element_wise_unary_operation(
+            "abs",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-ceil>
+    fn Ceil(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "ceil", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16"];
+        let output = self.create_an_element_wise_unary_operation(
+            "ceil",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-cos>
+    fn Cos(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "cos", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16"];
+        let output = self.create_an_element_wise_unary_operation(
+            "cos",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-erf>
+    fn Erf(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "erf", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16"];
+        let output = self.create_an_element_wise_unary_operation(
+            "erf",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-exp>
+    fn Exp(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "exp", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16"];
+        let output = self.create_an_element_wise_unary_operation(
+            "exp",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-floor>
+    fn Floor(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "floor", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16"];
+        let output = self.create_an_element_wise_unary_operation(
+            "floor",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-identity>
+    fn Identity(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "identity" |input|, and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let output =
+            self.create_an_element_wise_unary_operation("identity", input, None, options, can_gc)?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-log>
+    fn Log(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "log", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16"];
+        let output = self.create_an_element_wise_unary_operation(
+            "log",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-neg>
+    fn Neg(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "neg", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}}, {{MLOperandDataType/"int64"}}, {{MLOperandDataType/"int32"}}, {{MLOperandDataType/"int8"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16", "int64", "int32", "int8"];
+        let output = self.create_an_element_wise_unary_operation(
+            "neg",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reciprocal>
+    fn Reciprocal(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "reciprocal", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16"];
+        let output = self.create_an_element_wise_unary_operation(
+            "reciprocal",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-roundeven>
+    fn RoundEven(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "roundEven", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16"];
+        let output = self.create_an_element_wise_unary_operation(
+            "roundEven",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-sin>
+    fn Sin(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "sin", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16"];
+        let output = self.create_an_element_wise_unary_operation(
+            "sin",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-sign>
+    fn Sign(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "sign", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}}, {{MLOperandDataType/"int64"}}, {{MLOperandDataType/"int32"}}, {{MLOperandDataType/"int8"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16", "int64", "int32", "int8"];
+        let output = self.create_an_element_wise_unary_operation(
+            "sign",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-sqrt>
+    fn Sqrt(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "sqrt", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16"];
+        let output = self.create_an_element_wise_unary_operation(
+            "sqrt",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-tan>
     fn Tan(
         &self,
         input: &MLOperand,
@@ -2066,7 +2365,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(output)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-tanh-method>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-tanh>
     fn Tanh(
         &self,
         input: &MLOperand,
@@ -2136,7 +2435,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(output)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-binary>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-add>
     fn Add(
         &self,
         a: &MLOperand,
@@ -2152,7 +2451,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         self.create_an_element_wise_binary_operation("add", a, b, Some(label), can_gc)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-binary>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-sub>
     fn Sub(
         &self,
         a: &MLOperand,
@@ -2168,7 +2467,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         self.create_an_element_wise_binary_operation("sub", a, b, Some(label), can_gc)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-binary>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-mul>
     fn Mul(
         &self,
         a: &MLOperand,
@@ -2184,7 +2483,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         self.create_an_element_wise_binary_operation("mul", a, b, Some(label), can_gc)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-binary>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-div>
     fn Div(
         &self,
         a: &MLOperand,
@@ -2200,6 +2499,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         self.create_an_element_wise_binary_operation("div", a, b, Some(label), can_gc)
     }
 
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-max>
     fn Max(
         &self,
         a: &MLOperand,
@@ -2215,6 +2515,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         self.create_an_element_wise_binary_operation("max", a, b, Some(label), can_gc)
     }
 
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-min>
     fn Min(
         &self,
         a: &MLOperand,
@@ -2230,6 +2531,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         self.create_an_element_wise_binary_operation("min", a, b, Some(label), can_gc)
     }
 
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-pow>
     fn Pow(
         &self,
         a: &MLOperand,
@@ -2245,7 +2547,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         self.create_an_element_wise_binary_operation("pow", a, b, Some(label), can_gc)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-matmul>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-matmul>
     fn Matmul(&self, a: &MLOperand, b: &MLOperand, can_gc: CanGc) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If this can not build, then throw an "InvalidStateError" DOMException.
         if !self.can_build() {
@@ -2320,7 +2622,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(operand)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-gemm>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-gemm>
     fn Gemm(
         &self,
         a: &MLOperand,
@@ -2457,7 +2759,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(operand)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-tile>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-tile>
     fn Tile(
         &self,
         input: &MLOperand,
@@ -2575,7 +2877,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(operand)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-transpose>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-transpose>
     fn Transpose(
         &self,
         input: &MLOperand,
