@@ -395,6 +395,24 @@ egui-winit = { git = "https://github.com/emilk/egui.git", rev = "5d8f393335e0517
 # stylo_static_prefs = { path = "../stylo/stylo_static_prefs" }
 # stylo_traits = { path = "../stylo/style_traits" }
 #
+<<<<<<< HEAD
+=======
+# Override rustnn to a local checkout using the same remote URL as the
+# original git dependency. This follows the pattern:
+#
+# [patch."https://github.com/gterzian/rustnn"]
+# rustnn = { path = "/Users/Gregory/Projects/rustnn" }
+#
+#[patch."https://github.com/gterzian/rustnn"]
+#rustnn = { path = "/Users/Gregory/Projects/rustnn" }
+# Or for WebRender:
+#
+# [patch."https://github.com/servo/webrender"]
+# webrender = { path = "../webrender/webrender" }
+# webrender_api = { path = "../webrender/webrender_api" }
+# wr_malloc_size_of = { path = "../webrender/wr_malloc_size_of" }
+#
+>>>>>>> 29d9066e254 (clean up)
 # Or for another Git dependency:
 #
 # [patch."https://github.com/servo/<repository>"]

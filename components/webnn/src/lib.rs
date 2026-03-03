@@ -903,11 +903,6 @@ fn try_coreml_execute(
     let mut shape_buf: Vec<usize> = Vec::new();
 
     for (op_id, _) in inputs_map.iter() {
-        println!(
-            "Graph contains: {:?} {:?}",
-            graph_info.operands.get(*op_id as usize),
-            op_id
-        );
         if let Some(op) = graph_info.operands.get(*op_id as usize) {
             let input_name = op
                 .name
@@ -951,8 +946,6 @@ fn try_coreml_execute(
                     _other => Vec::new(),
                 };
 
-                println!("Converted input: {:?}", data);
-
                 if !data.is_empty() {
                     shape_buf.clear();
                     shape_buf.extend(
@@ -980,7 +973,6 @@ fn try_coreml_execute(
         "dispatch without cached compiled model"
     );
     let path = cached_compiled.expect("cached model path");
-    println!("Start coreml with {:?}", coreml_inputs);
     let run_result = run_coreml_with_inputs_cached(program_bytes, coreml_inputs, Some(path));
     if let Ok(attempts) = run_result {
         if let Some(outputs) = attempts

@@ -795,7 +795,6 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         buffer: ArrayBufferViewOrArrayBuffer,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        println!("Constant");
         // Step 1: If this can not build, then return an InvalidStateError.
         if !self.can_build() {
             return Err(Error::InvalidState(None));
@@ -864,7 +863,6 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 4.2: DOM operands are no longer kept by the builder; backend bookkeeping
         // for the operand (id and bytes) must be persisted in `graph_info`.
         // Step 5: Return |operand|.
-        println!("COnstant succes");
         Ok(operand)
     }
 

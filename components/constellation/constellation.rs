@@ -175,12 +175,7 @@ use style::global_style_data::StyleThreadPool;
 use webgpu::canvas_context::WebGpuExternalImageMap;
 #[cfg(feature = "webgpu")]
 use webgpu_traits::{WebGPU, WebGPURequest};
-<<<<<<< HEAD
-=======
 use webnn_traits::WebNNMsg;
-use webrender_api::ExternalScrollId;
-use webrender_api::units::LayoutVector2D;
->>>>>>> 41d80fb9384 (add basic backend)
 
 use crate::broadcastchannel::BroadcastChannels;
 use crate::browsingcontext::{

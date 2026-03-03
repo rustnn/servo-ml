@@ -106,12 +106,7 @@ use timers::{TimerEventRequest, TimerId, TimerScheduler};
 use url::Position;
 #[cfg(feature = "webgpu")]
 use webgpu_traits::{WebGPUDevice, WebGPUMsg};
-<<<<<<< HEAD
-=======
 use webnn_traits::WebNNMsg;
-use webrender_api::ExternalScrollId;
-use webrender_api::units::LayoutVector2D;
->>>>>>> 41d80fb9384 (add basic backend)
 
 use crate::devtools::DevtoolsState;
 use crate::document_collection::DocumentCollection;
@@ -999,7 +994,6 @@ impl ScriptThread {
             ));
 
         (
-<<<<<<< HEAD
             Rc::new_cyclic(|weak_script_thread| {
                 runtime.set_script_thread(weak_script_thread.clone());
                 Self {
@@ -1013,6 +1007,7 @@ impl ScriptThread {
                     image_cache_factory,
                     resource_threads: state.resource_threads,
                     storage_threads: state.storage_threads,
+                    webnn_sender: state.webnn_sender.clone(),
                     task_queue,
                     background_hang_monitor,
                     closing,
@@ -1048,53 +1043,6 @@ impl ScriptThread {
                     this: weak_script_thread.clone(),
                     devtools_state: Default::default(),
                 }
-=======
-            Rc::new_cyclic(|weak_script_thread| Self {
-                documents: DomRefCell::new(DocumentCollection::default()),
-                last_render_opportunity_time: Default::default(),
-                window_proxies: Default::default(),
-                incomplete_loads: DomRefCell::new(vec![]),
-                incomplete_parser_contexts: IncompleteParserContexts(RefCell::new(vec![])),
-                senders,
-                receivers,
-                image_cache_factory,
-                resource_threads: state.resource_threads,
-                storage_threads: state.storage_threads,
-                webnn_sender: state.webnn_sender.clone(),
-                task_queue,
-                background_hang_monitor,
-                closing,
-                timer_scheduler: Default::default(),
-                microtask_queue,
-                js_runtime,
-                closed_pipelines: DomRefCell::new(FxHashSet::default()),
-                mutation_observers: Default::default(),
-                system_font_service: Arc::new(state.system_font_service.to_proxy()),
-                webgl_chan: state.webgl_chan,
-                #[cfg(feature = "webxr")]
-                webxr_registry: state.webxr_registry,
-                worklet_thread_pool: Default::default(),
-                docs_with_no_blocking_loads: Default::default(),
-                custom_element_reaction_stack: Rc::new(CustomElementReactionStack::new()),
-                paint_api: state.cross_process_paint_api,
-                profile_script_events: opts.debug.profile_script_events,
-                print_pwm: opts.print_pwm,
-                unminify_js: opts.unminify_js,
-                local_script_source: opts.local_script_source.clone(),
-                unminify_css: opts.unminify_css,
-                user_contents_for_manager_id: RefCell::new(user_contents_for_manager_id),
-                player_context: state.player_context,
-                pipeline_to_node_ids: Default::default(),
-                is_user_interacting: Rc::new(Cell::new(false)),
-                #[cfg(feature = "webgpu")]
-                gpu_id_hub,
-                layout_factory,
-                scheduled_update_the_rendering: Default::default(),
-                needs_rendering_update: Arc::new(AtomicBool::new(false)),
-                debugger_global: debugger_global.as_traced(),
-                privileged_urls: state.privileged_urls,
-                this: weak_script_thread.clone(),
->>>>>>> 41d80fb9384 (add basic backend)
             }),
             cx,
         )

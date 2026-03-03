@@ -1175,8 +1175,6 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             ));
         }
 
-        println!("Inputs: {:?}", inputs.len());
-
         // Note: spec doesn't mention this, but the backend crashes on empty in- or outputs.
         if inputs.is_empty() || outputs.is_empty() {
             return Err(Error::Type("Empty data".to_owned()));
@@ -1316,14 +1314,11 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             let name_str = name.as_ref();
             let op_id = find_operand_id(name_str).expect("validated above");
             let tensor_id = tensor.tensor_id();
-            println!("Input tensor id: {:?}", tensor_id);
             if tensor_id == 0 {
                 return Err(Error::Type("input tensor has no backend id".to_owned()));
             }
             input_pairs.push((op_id, tensor_id));
         }
-
-        println!("Input pairs: {:?}", input_pairs);
 
         let mut output_pairs: Vec<(u32, u32)> = Vec::new();
         for (name, tensor) in outputs.iter() {
