@@ -235,7 +235,13 @@ partial interface MLGraphBuilder {
   [Throws] MLOperand pow(MLOperand a, MLOperand b, optional MLOperatorOptions options = {});
   [Throws] MLOperand matmul(MLOperand a, MLOperand b);
   [Throws] MLOperand gemm(MLOperand a, MLOperand b, optional MLGemmOptions options = {});
+  [Throws] MLOperand tile(MLOperand input, sequence<unsigned long> repetitions,
+                          optional MLOperatorOptions options = {});
   [Throws] MLOperand transpose(MLOperand input, optional MLTransposeOptions options = {});
+};
+
+partial dictionary MLOpSupportLimits {
+  MLSingleInputSupportLimits tile;
 };
 
 [SecureContext, Exposed=(Window, Worker)]

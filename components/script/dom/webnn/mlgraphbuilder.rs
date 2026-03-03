@@ -2211,6 +2211,124 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(operand)
     }
 
+    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-tile>
+    fn Tile(
+        &self,
+        input: &MLOperand,
+        repetitions: Vec<u32>,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If this can not build, then throw an "InvalidStateError" DOMException.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If MLGraphBuilder/validating operand with this and |input| returns false, then throw a TypeError.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        let input_shape = input.descriptor_shape();
+
+        // Step 3: If |repetitions|'s list/size is not equal to |input|'s MLOperand/rank, then throw a TypeError.
+        if repetitions.len() != input_shape.len() {
+            return Err(Error::Type(
+                "repetitions size must match input rank".to_owned(),
+            ));
+        }
+
+        // Step 4: If |repetitions|'s values contain 0's, then throw a TypeError.
+        if repetitions.contains(&0) {
+            return Err(Error::Type(
+                "repetitions values must all be greater than 0".to_owned(),
+            ));
+        }
+
+        // Step 5: Let |outputShape| be a copy of |input|'s MLOperand/shape.
+        // Step 6: For each |index| in the range 0 to |outputShape|'s list/size, exclusive:
+        // Step 6.1: Set |outputShape|[|index|] to |outputShape|[|index|] * |repetitions|[|index|].
+        // Note: the multiplication loop is delegated to rustnn::shape_inference::infer_tile_shape.
+        let output_shape = match rustnn::shape_inference::infer_tile_shape(&input_shape, &repetitions)
+        {
+            Ok(shape) => shape,
+            Err(e) => return Err(Error::Type(e.to_string())),
+        };
+
+        // Step 7: Let |outputDescriptor| be the result of creating an MLOperandDescriptor
+        // given |input|'s MLOperand/dataType and |outputShape|.
+        let out_dtype_str = input.descriptor_data_type();
+        let out_dtype_enum = match out_dtype_str {
+            "float32" => MLOperandDataType::Float32,
+            "float16" => MLOperandDataType::Float16,
+            "int32" => MLOperandDataType::Int32,
+            "uint32" => MLOperandDataType::Uint32,
+            "int64" => MLOperandDataType::Int64,
+            "uint64" => MLOperandDataType::Uint64,
+            "int8" => MLOperandDataType::Int8,
+            "uint8" => MLOperandDataType::Uint8,
+            _ => MLOperandDataType::Float32,
+        };
+        let desc = MLOperandDescriptor {
+            dataType: out_dtype_enum,
+            shape: output_shape.clone(),
+        };
+
+        // Step 8: *Make graph connections:*
+        // Step 8.1: Let |output| be the result of creating an MLOperand given |outputDescriptor|.
+        // Step 8.2: Let |operator| be an operator for the "tile" operation, given |options|.
+        // Step 8.3: Set |operator|'s [=operator/input=] to |input|.
+        // Step 8.4: Set |operator|'s [=operator/output=] to |output|.
+        // Note: Implementation allocates backend operand ids before creating the DOM operand
+        // so the operation record can point to concrete input/output ids.
+
+        // Step 8.3: Set |operator|'s [=operator/input=] to |input|.
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+
+        // Step 8.4: Set |operator|'s [=operator/output=] to |output|.
+        let rust_operand = self.create_rust_operand(
+            out_dtype_str,
+            output_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 8.2: Let |operator| be an operator for the "tile" operation, given |options|.
+        let attributes = serde_json::json!({
+            "repetitions": repetitions,
+        });
+
+        let label = {
+            let l = options.label.clone();
+            if l.is_empty() {
+                None
+            } else {
+                Some(l.clone().to_string())
+            }
+        };
+
+        // Step 8.4: Set |operator|'s operator/output to |output|.
+        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
+            gi.operations.push(Operation {
+                op_type: "tile".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes,
+                label,
+            });
+        }
+
+        // Step 8.1: Let |output| be the result of creating an MLOperand given |outputDescriptor|.
+        let operand = copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc);
+
+        // Step 9: Return |output|.
+        Ok(operand)
+    }
+
     /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-transpose>
     fn Transpose(
         &self,

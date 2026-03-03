@@ -32,6 +32,8 @@ Important: this README is subsystem-specific — read `components/script/README.
 
 When implmenting methods of GraphBuilder, read how `PyMLGraphBuilder` in scratchpad uses rustnn, for all other details, look at existing method in this crate. The code in scratchpad is only an example on how to user rustnn, it is not an example on how to implement webnn in this crate. 
 
+- **When adding a new `MLGraphBuilder` operand method:** update the full WebIDL surface from the spec section, not only the `partial interface MLGraphBuilder` method signature. If the spec section also defines companion structures (for example `partial dictionary MLOpSupportLimits` members), add them in `WebNN.webidl` at the same time. In Rust implementations, keep `Step N:` comments in the same order as the spec even if execution order differs for backend-id plumbing; add a `Note:` under the ordered step block explaining the implementation ordering, then repeat the verbatim step comment at the actual code site where it executes. For garbage-collection plumbing, add the method name to `components/script_bindings/codegen/Bindings.conf` (`canGc`) and use the generated `can_gc` argument instead of inserting `CanGc::note()` in new method bodies.
+
 - **Backend datatype support:** the CoreML executor now handles `Int32` outputs (output floats from CoreML are truncated to `i32`), and inputs of type `Int32` are promoted to `float32` before dispatch. The script-side read callback reconstructs little-endian `i32` values and returns an `Int32Array`; the conversion matches the backend logic. This mirrors the behaviour of the reference `dispatch_example` in the `skills/` directory.
 
 Overview — how WebNN is wired in Servo
