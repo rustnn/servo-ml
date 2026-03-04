@@ -64,8 +64,6 @@ pub(crate) struct MLGraphBuilder {
 impl MLGraphBuilder {
     /// Helper: map WebNN data type strings to binding enum variants used by descriptors.
     fn data_type_enum_from_str(data_type: &str) -> MLOperandDataType {
-        // Step 1: Match the WebNN data type string to its MLOperandDataType variant.
-        // Step 2: Fall back to Float32 for implementation-defined unknown values.
         match data_type {
             "float32" => MLOperandDataType::Float32,
             "float16" => MLOperandDataType::Float16,
@@ -80,9 +78,6 @@ impl MLGraphBuilder {
     }
 
     pub(crate) fn new_inherited(context: &MLContext) -> MLGraphBuilder {
-        // Step 1: Initialize reflector and bind this builder to the provided context.
-        // Step 2: Allocate a fresh GraphInfo with empty operands, operations, and constants.
-        // Step 3: Initialize backend operand id allocation at 0.
         MLGraphBuilder {
             reflector_: Reflector::new(),
             context: Dom::from_ref(context),
@@ -104,8 +99,6 @@ impl MLGraphBuilder {
         global: &GlobalScope,
         can_gc: CanGc,
     ) -> DomRoot<MLGraphBuilder> {
-        // Step 1: Create the inherited MLGraphBuilder state.
-        // Step 2: Reflect it into a DOM object in |global| and return it.
         reflect_dom_object(
             Box::new(MLGraphBuilder::new_inherited(context)),
             global,
@@ -114,26 +107,20 @@ impl MLGraphBuilder {
     }
 
     pub(crate) fn context(&self) -> Dom<MLContext> {
-        // Step 1: Return the owning MLContext handle for this builder.
         self.context.clone()
     }
 
     fn can_build(&self) -> bool {
-        // Step 1: Ensure the builder still owns a GraphInfo (has not been consumed by Build()).
-        // Step 2: Ensure the associated context is not lost.
-        // Step 3: Return true only if both conditions hold.
         self.graph_info.borrow().is_some() && !self.context().is_lost()
     }
 
     fn validate_operand(&self, operand: &DomRoot<MLOperand>) -> bool {
-        // Step 1: Return true when |operand| belongs to this builder.
         operand.builder() == Dom::from_ref(self)
     }
 
     /// Internal helper accepting a reference to an MLOperand (used by generated bindings
     /// that pass `&MLOperand` directly).
     fn validate_operand_ref(&self, operand: &MLOperand) -> bool {
-        // Step 1: Return true when |operand| belongs to this builder.
         operand.builder() == Dom::from_ref(self)
     }
 
@@ -371,21 +358,51 @@ impl MLGraphBuilder {
         Ok(operand)
     }
 
-    fn reduce_impl(
+    /// <https://webmachinelearning.github.io/webnn/#mlgraphbuilder-create-reduction-operation>
+    fn create_reduction_operation(
         &self,
         op_name: &str,
         input: &MLOperand,
         options: &MLReduceOptions,
+        allowed_data_types: Option<&[&str]>,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        // Step 1: Validate builder state and input ownership.
+        // Step 1: [=Assert=]: |op| is one of "reduceL1", "reduceL2", "reduceLogSum", "reduceLogSumExp", "reduceMax", "reduceMean", "reduceMin", "reduceProduct", "reduceSum", "reduceSumSquare".
+        debug_assert!(
+            [
+                "reduceL1",
+                "reduceL2",
+                "reduceLogSum",
+                "reduceLogSumExp",
+                "reduceMax",
+                "reduceMean",
+                "reduceMin",
+                "reduceProduct",
+                "reduceSum",
+                "reduceSumSquare",
+            ]
+            .contains(&op_name)
+        );
+
+        // Step 2: If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
         if !self.can_build() {
             return Err(Error::InvalidState(None));
         }
+
+        // Step 3: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
             return Err(Error::Type("invalid operand".to_owned()));
         }
-        // Step 2: Convert options to rustnn ReduceOptions and infer output shape.
+
+        // Step 4: If |allowedDataTypes| is given and it does not [=list/contain=] |input|'s [=MLOperand/dataType=], then [=exception/throw=] a {{TypeError}}.
+        let out_dtype = input.descriptor_data_type();
+        if let Some(allowed_data_types) = allowed_data_types {
+            if !allowed_data_types.contains(&out_dtype) {
+                return Err(Error::Type("unsupported input dataType".to_owned()));
+            }
+        }
+
+        // Step 5: Let |outputShape| be the result of [=MLGraphBuilder/calculating reduction output sizes=] given |input|'s [=MLOperand/shape=], |options|.{{MLReduceOptions/axes}} (if it [=map/exists=]), and |options|.{{MLReduceOptions/keepDimensions}}. If that returns failure, then [=exception/throw=] a {{TypeError}}.
         let reduce_options = rustnn::shape_inference::ReduceOptions {
             axes: options.axes.as_ref().map(|v| v.clone()).unwrap_or_default(),
             keep_dimensions: options.keepDimensions,
@@ -393,17 +410,26 @@ impl MLGraphBuilder {
         let output_shape =
             rustnn::shape_inference::infer_reduce_shape(input.descriptor_shape(), &reduce_options)
                 .map_err(|e| Error::Type(e.to_string()))?;
-        let out_dtype = input.descriptor_data_type();
+
+        // Step 6: Let |desc| be the result of [=creating an MLOperandDescriptor=] given |input|'s [=MLOperand/dataType=] and |outputShape|.
         let desc = MLOperandDescriptor {
             dataType: Self::data_type_enum_from_str(out_dtype),
             shape: output_shape.clone(),
         };
+
         let input_id = input
             .id()
             .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
-        // Step 3: Create output operand id, record reduce operation metadata, and return output operand.
+
+        // Step 7: *Make graph connections:*
+        // Step 7.1: Let |output| be the result of [=creating an MLOperand=] given [=this=] and |desc|.
         let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 7.2: Let |operator| be an [=operator=] for the |op| operation, given |options|.
+        // Step 7.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // Step 7.4: Set |operator|'s [=operator/input=] to |input|.
+        // Step 7.5: Set |operator|'s [=operator/output=] to |output|.
         self.push_unary_operation(
             op_name,
             input_id,
@@ -411,10 +437,22 @@ impl MLGraphBuilder {
             serde_json::json!({"axes": reduce_options.axes, "keepDimensions": reduce_options.keep_dimensions}),
             Self::label_from_operator_options(&options.parent),
         );
-        Ok(copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc))
+
+        // Step 8: Return |output|.
+        Ok(create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        ))
     }
 
-    fn quantize_like_impl(
+    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-quantizelinear>
+    fn create_quantize_or_dequantize_linear_operation(
         &self,
         op_name: &str,
         input: &MLOperand,
@@ -480,7 +518,8 @@ impl MLGraphBuilder {
         ))
     }
 
-    fn scatter_elements_impl(
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-scatterelements>
+    fn create_scatter_elements_operation(
         &self,
         input: &MLOperand,
         indices: &MLOperand,
@@ -558,7 +597,8 @@ impl MLGraphBuilder {
         ))
     }
 
-    fn scatter_nd_impl(
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-scatternd>
+    fn create_scatter_nd_operation(
         &self,
         input: &MLOperand,
         indices: &MLOperand,
@@ -634,7 +674,8 @@ impl MLGraphBuilder {
         ))
     }
 
-    fn pool2d_impl(
+    /// <https://webmachinelearning.github.io/webnn/#mlgraphbuilder-pooling-op>
+    fn create_a_pooling_operation(
         &self,
         op_name: &str,
         input: &MLOperand,
@@ -701,7 +742,8 @@ impl MLGraphBuilder {
         Ok(copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc))
     }
 
-    fn conv_transpose2d_impl(
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-convtranspose2d>
+    fn create_conv_transpose2d_operation(
         &self,
         input: &MLOperand,
         filter: &MLOperand,
@@ -794,7 +836,8 @@ impl MLGraphBuilder {
         ))
     }
 
-    fn split_impl(
+    /// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-split>
+    fn create_split_operation(
         &self,
         input: &MLOperand,
         split_spec: rustnn::shape_inference::SplitSpec,
@@ -4994,7 +5037,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         options: &MLReduceOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        self.reduce_impl("reduceSum", input, options, can_gc)
+        let allowed_data_types = ["float32", "float16", "int32", "uint32", "int64", "uint64"];
+        self.create_reduction_operation(
+            "reduceSum",
+            input,
+            options,
+            Some(&allowed_data_types),
+            can_gc,
+        )
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducemean>
@@ -5004,7 +5054,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         options: &MLReduceOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        self.reduce_impl("reduceMean", input, options, can_gc)
+        let allowed_data_types = ["float32", "float16"];
+        self.create_reduction_operation(
+            "reduceMean",
+            input,
+            options,
+            Some(&allowed_data_types),
+            can_gc,
+        )
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducemax>
@@ -5014,7 +5071,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         options: &MLReduceOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        self.reduce_impl("reduceMax", input, options, can_gc)
+        self.create_reduction_operation("reduceMax", input, options, None, can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducemin>
@@ -5024,7 +5081,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         options: &MLReduceOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        self.reduce_impl("reduceMin", input, options, can_gc)
+        self.create_reduction_operation("reduceMin", input, options, None, can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reduceproduct>
@@ -5034,7 +5091,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         options: &MLReduceOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        self.reduce_impl("reduceProduct", input, options, can_gc)
+        let allowed_data_types = ["float32", "float16", "int32", "uint32", "int64", "uint64"];
+        self.create_reduction_operation(
+            "reduceProduct",
+            input,
+            options,
+            Some(&allowed_data_types),
+            can_gc,
+        )
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducel1>
@@ -5044,7 +5108,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         options: &MLReduceOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        self.reduce_impl("reduceL1", input, options, can_gc)
+        let allowed_data_types = ["float32", "float16", "int32", "uint32", "int64", "uint64"];
+        self.create_reduction_operation(
+            "reduceL1",
+            input,
+            options,
+            Some(&allowed_data_types),
+            can_gc,
+        )
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducel2>
@@ -5054,7 +5125,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         options: &MLReduceOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        self.reduce_impl("reduceL2", input, options, can_gc)
+        let allowed_data_types = ["float32", "float16"];
+        self.create_reduction_operation(
+            "reduceL2",
+            input,
+            options,
+            Some(&allowed_data_types),
+            can_gc,
+        )
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducelogsum>
@@ -5064,7 +5142,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         options: &MLReduceOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        self.reduce_impl("reduceLogSum", input, options, can_gc)
+        let allowed_data_types = ["float32", "float16"];
+        self.create_reduction_operation(
+            "reduceLogSum",
+            input,
+            options,
+            Some(&allowed_data_types),
+            can_gc,
+        )
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducelogsumexp>
@@ -5074,7 +5159,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         options: &MLReduceOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        self.reduce_impl("reduceLogSumExp", input, options, can_gc)
+        let allowed_data_types = ["float32", "float16"];
+        self.create_reduction_operation(
+            "reduceLogSumExp",
+            input,
+            options,
+            Some(&allowed_data_types),
+            can_gc,
+        )
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducesumsquare>
@@ -5084,7 +5176,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         options: &MLReduceOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        self.reduce_impl("reduceSumSquare", input, options, can_gc)
+        let allowed_data_types = ["float32", "float16", "int32", "uint32", "int64", "uint64"];
+        self.create_reduction_operation(
+            "reduceSumSquare",
+            input,
+            options,
+            Some(&allowed_data_types),
+            can_gc,
+        )
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-quantizelinear>
@@ -5096,7 +5195,15 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         options: &MLOperatorOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        self.quantize_like_impl("quantizeLinear", input, scale, zeroPoint, true, options, can_gc)
+        self.create_quantize_or_dequantize_linear_operation(
+            "quantizeLinear",
+            input,
+            scale,
+            zeroPoint,
+            true,
+            options,
+            can_gc,
+        )
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-dequantizelinear>
@@ -5108,7 +5215,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         options: &MLOperatorOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        self.quantize_like_impl(
+        self.create_quantize_or_dequantize_linear_operation(
             "dequantizeLinear",
             input,
             scale,
@@ -5128,7 +5235,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         options: &MLGatherOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        self.scatter_elements_impl(input, indices, updates, options.axis as i32, &options.parent, can_gc)
+        self.create_scatter_elements_operation(
+            input,
+            indices,
+            updates,
+            options.axis as i32,
+            &options.parent,
+            can_gc,
+        )
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-scatternd>
@@ -5140,7 +5254,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         options: &MLOperatorOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        self.scatter_nd_impl(input, indices, updates, options, can_gc)
+        self.create_scatter_nd_operation(input, indices, updates, options, can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-cumulativesum>
@@ -5222,7 +5336,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 1.1: If that throws an error, then rethrow the error.
 
         // Step 2: Return |output|.
-        self.pool2d_impl("averagePool2d", input, options, can_gc)
+        self.create_a_pooling_operation("averagePool2d", input, options, can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-maxpool2d>
@@ -5236,7 +5350,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 1.1: If that throws an error, then rethrow the error.
 
         // Step 2: Return |output|.
-        self.pool2d_impl("maxPool2d", input, options, can_gc)
+        self.create_a_pooling_operation("maxPool2d", input, options, can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-convtranspose2d>
@@ -5251,7 +5365,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 1.1: If that throws an error, then rethrow the error.
 
         // Step 2: Return |output|.
-        self.conv_transpose2d_impl(input, filter, options, can_gc)
+        self.create_conv_transpose2d_operation(input, filter, options, can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-instancenormalization>
@@ -5731,7 +5845,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 1.1: If that throws an error, then rethrow the error.
 
         // Step 2: Return |outputs|.
-        self.split_impl(
+        self.create_split_operation(
             input,
             rustnn::shape_inference::SplitSpec::Count(splits),
             options.axis,
@@ -5752,7 +5866,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 1.1: If that throws an error, then rethrow the error.
 
         // Step 2: Return |outputs|.
-        self.split_impl(
+        self.create_split_operation(
             input,
             rustnn::shape_inference::SplitSpec::Sizes(splits),
             options.axis,
