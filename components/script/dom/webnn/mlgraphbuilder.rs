@@ -2622,67 +2622,56 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             !self.validate_operand_ref(mean) ||
             !self.validate_operand_ref(variance)
         {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
         }
         if options.scale.is_some() {
             if !self.validate_operand_ref(options.scale.as_ref().unwrap()) {
-                return Err(Error::Type("invalid operand".to_owned()));
+                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
             }
         }
         if options.bias.is_some() {
             if !self.validate_operand_ref(options.bias.as_ref().unwrap()) {
-                return Err(Error::Type("invalid operand".to_owned()));
+                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
             }
         }
 
         // Step 3: If input’s dataType is not one of its allowed data types (according to this table), then throw a TypeError.
         let in_dtype = input.descriptor_data_type();
         if in_dtype != "float32" && in_dtype != "float16" {
-            return Err(Error::Type(
-                "input dataType must be 'float32' or 'float16'".to_owned(),
-            ));
+            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
         }
 
         // Step 4: If options.axis is not in the range 0 to input’s rank, exclusive, then throw a TypeError.
         let in_shape = input.descriptor_shape();
         let axis = options.axis as usize;
         if axis >= in_shape.len() {
-            return Err(Error::Type("axis out of range".to_owned()));
+            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
         }
 
         // Step 5: If mean’s dataType is not one of its allowed data types (according to this table), then throw a TypeError.
         if mean.descriptor_data_type() != in_dtype {
-            return Err(Error::Type(
-                "mean must have same dataType as input".to_owned(),
-            ));
+            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
         }
 
         // Step 6: If mean’s shape is not equal to « input’s shape[options.axis] », then throw a TypeError.
         if mean.descriptor_shape().len() != 1 {
-            return Err(Error::Type("mean must be a 1-D tensor".to_owned()));
+            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
         }
         if mean.descriptor_shape()[0] != in_shape[axis] {
-            return Err(Error::Type(
-                "mean size must equal the size of the input dimension denoted by axis".to_owned(),
-            ));
+            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
         }
 
         // Step 7: If variance’s dataType is not one of its allowed data types (according to this table), then throw a TypeError.
         if variance.descriptor_data_type() != in_dtype {
-            return Err(Error::Type(
-                "variance must have same dataType as input".to_owned(),
-            ));
+            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
         }
 
         // Step 8: If variance’s shape is not equal to « input’s shape[options.axis] », then throw a TypeError.
         if variance.descriptor_shape().len() != 1 {
-            return Err(Error::Type("variance must be a 1-D tensor".to_owned()));
+            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
         }
         if variance.descriptor_shape()[0] != in_shape[axis] {
-            return Err(Error::Type(
-                "variance size must equal the size of the input dimension denoted by axis"
-                    .to_owned(),
-            ));
+            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
         }
 
         // Step 9: Set options.epsilon to the result of casting options.epsilon to input’s dataType.
@@ -2693,18 +2682,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 10.2: If options.scale exists and its shape is not equal to « input’s shape[options.axis] », then throw a TypeError.
         if let Some(s) = options.scale.as_ref() {
             if s.descriptor_data_type() != in_dtype {
-                return Err(Error::Type(
-                    "scale must have same dataType as input".to_owned(),
-                ));
+                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
             }
             if s.descriptor_shape().len() != 1 {
-                return Err(Error::Type("scale must be a 1-D tensor".to_owned()));
+                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
             }
             if s.descriptor_shape()[0] != in_shape[axis] {
-                return Err(Error::Type(
-                    "scale size must equal the size of the input dimension denoted by axis"
-                        .to_owned(),
-                ));
+                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
             }
         }
 
@@ -2712,18 +2696,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 11.2: If options.bias exists and its shape is not equal to « input’s shape[options.axis] », then throw a TypeError.
         if let Some(b) = options.bias.as_ref() {
             if b.descriptor_data_type() != in_dtype {
-                return Err(Error::Type(
-                    "bias must have same dataType as input".to_owned(),
-                ));
+                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
             }
             if b.descriptor_shape().len() != 1 {
-                return Err(Error::Type("bias must be a 1-D tensor".to_owned()));
+                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
             }
             if b.descriptor_shape()[0] != in_shape[axis] {
-                return Err(Error::Type(
-                    "bias size must equal the size of the input dimension denoted by axis"
-                        .to_owned(),
-                ));
+                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
             }
         }
 
@@ -2780,16 +2759,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             let mut input_operands = vec![
                 match input.id() {
                     Some(i) => i,
-                    None => return Err(Error::Type("input operand has no backend id".to_owned())),
+                    None => return Err(Error::Type("[batchNormalization_?_123]".to_owned())),
                 },
                 match mean.id() {
                     Some(i) => i,
-                    None => return Err(Error::Type("mean operand has no backend id".to_owned())),
+                    None => return Err(Error::Type("[batchNormalization_?_123]".to_owned())),
                 },
                 match variance.id() {
                     Some(i) => i,
                     None => {
-                        return Err(Error::Type("variance operand has no backend id".to_owned()));
+                        return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
                     },
                 },
             ];
