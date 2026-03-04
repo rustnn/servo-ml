@@ -15,8 +15,14 @@ use webnn_traits::WebNNMsg;
 use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLArgMinMaxOptions, MLBatchNormalizationOptions, MLClampOptions, MLConv2dFilterOperandLayout,
-    MLConv2dOptions, MLGemmOptions, MLGraphBuilderMethods, MLInputOperandLayout, MLOperandDataType,
-    MLOperandDescriptor, MLOperatorOptions, MLTransposeOptions, MLTriangularOptions,
+    MLConv2dOptions, MLConvTranspose2dFilterOperandLayout, MLConvTranspose2dOptions,
+    MLCumulativeSumOptions, MLEluOptions, MLGatherOptions, MLGemmOptions, MLGraphBuilderMethods,
+    MLHardSigmoidOptions, MLInputOperandLayout, MLInstanceNormalizationOptions,
+    MLInterpolationMode, MLPaddingMode,
+    MLLayerNormalizationOptions, MLLeakyReluOptions, MLLinearOptions, MLOperandDataType,
+    MLOperandDescriptor, MLOperatorOptions, MLPadOptions, MLPool2dOptions,
+    MLResample2dOptions, MLReverseOptions, MLReduceOptions, MLSoftmaxOptions, MLSplitOptions,
+    MLTransposeOptions, MLTriangularOptions,
 };
 use crate::dom::bindings::error::{Error, Fallible};
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
@@ -56,7 +62,27 @@ pub(crate) struct MLGraphBuilder {
 }
 
 impl MLGraphBuilder {
+    /// Helper: map WebNN data type strings to binding enum variants used by descriptors.
+    fn data_type_enum_from_str(data_type: &str) -> MLOperandDataType {
+        // Step 1: Match the WebNN data type string to its MLOperandDataType variant.
+        // Step 2: Fall back to Float32 for implementation-defined unknown values.
+        match data_type {
+            "float32" => MLOperandDataType::Float32,
+            "float16" => MLOperandDataType::Float16,
+            "int32" => MLOperandDataType::Int32,
+            "uint32" => MLOperandDataType::Uint32,
+            "int64" => MLOperandDataType::Int64,
+            "uint64" => MLOperandDataType::Uint64,
+            "int8" => MLOperandDataType::Int8,
+            "uint8" => MLOperandDataType::Uint8,
+            _ => MLOperandDataType::Float32,
+        }
+    }
+
     pub(crate) fn new_inherited(context: &MLContext) -> MLGraphBuilder {
+        // Step 1: Initialize reflector and bind this builder to the provided context.
+        // Step 2: Allocate a fresh GraphInfo with empty operands, operations, and constants.
+        // Step 3: Initialize backend operand id allocation at 0.
         MLGraphBuilder {
             reflector_: Reflector::new(),
             context: Dom::from_ref(context),
@@ -78,6 +104,8 @@ impl MLGraphBuilder {
         global: &GlobalScope,
         can_gc: CanGc,
     ) -> DomRoot<MLGraphBuilder> {
+        // Step 1: Create the inherited MLGraphBuilder state.
+        // Step 2: Reflect it into a DOM object in |global| and return it.
         reflect_dom_object(
             Box::new(MLGraphBuilder::new_inherited(context)),
             global,
@@ -86,21 +114,26 @@ impl MLGraphBuilder {
     }
 
     pub(crate) fn context(&self) -> Dom<MLContext> {
+        // Step 1: Return the owning MLContext handle for this builder.
         self.context.clone()
     }
 
     fn can_build(&self) -> bool {
-        // Builder can build iff it still owns a GraphInfo and the context is not lost.
+        // Step 1: Ensure the builder still owns a GraphInfo (has not been consumed by Build()).
+        // Step 2: Ensure the associated context is not lost.
+        // Step 3: Return true only if both conditions hold.
         self.graph_info.borrow().is_some() && !self.context().is_lost()
     }
 
     fn validate_operand(&self, operand: &DomRoot<MLOperand>) -> bool {
+        // Step 1: Return true when |operand| belongs to this builder.
         operand.builder() == Dom::from_ref(self)
     }
 
     /// Internal helper accepting a reference to an MLOperand (used by generated bindings
     /// that pass `&MLOperand` directly).
     fn validate_operand_ref(&self, operand: &MLOperand) -> bool {
+        // Step 1: Return true when |operand| belongs to this builder.
         operand.builder() == Dom::from_ref(self)
     }
 
@@ -110,13 +143,16 @@ impl MLGraphBuilder {
     /// This centralizes the `next_operand_id` increment + GraphInfo mutation logic
     /// so callers only need to construct a rustnn `Operand` and call this helper.
     fn push_operand_to_graph(&self, operand: Operand, add_to_inputs: bool) -> u32 {
+        // Step 1: Read the next backend operand id.
         let id = self.next_operand_id.get();
+        // Step 2: Append the operand to GraphInfo and optionally mark it as an input operand.
         if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
             gi.operands.push(operand);
             if add_to_inputs {
                 gi.input_operands.push(id);
             }
         }
+        // Step 3: Advance the id counter and return the id assigned to this operand.
         self.next_operand_id.set(id + 1);
         id
     }
@@ -130,6 +166,7 @@ impl MLGraphBuilder {
         kind: OperandKind,
         name: Option<String>,
     ) -> Operand {
+        // Step 1: Convert WebNN data type strings to rustnn graph data types.
         let rust_data_type = match data_type_str {
             "float32" => DataType::Float32,
             "float16" => DataType::Float16,
@@ -140,16 +177,682 @@ impl MLGraphBuilder {
             "int64" => DataType::Int64,
             _ => DataType::Float32,
         };
+        // Step 2: Construct the rustnn OperandDescriptor with converted shape dimensions.
         let desc = OperandDescriptor {
             data_type: rust_data_type,
             shape: rustnn::graph::to_dimension_vector(&shape),
             pending_permutation: Vec::new(),
         };
+        // Step 3: Return a rustnn Operand carrying descriptor, kind, and optional name.
         Operand {
             descriptor: desc,
             kind,
             name,
         }
+    }
+
+    fn push_unary_operation(
+        &self,
+        op_name: &str,
+        input_id: u32,
+        output_id: u32,
+        attributes: serde_json::Value,
+        label: Option<String>,
+    ) {
+        // Step 1: Append a unary Operation record into GraphInfo.operations.
+        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
+            gi.operations.push(Operation {
+                op_type: op_name.to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes,
+                label,
+            });
+        }
+    }
+
+    fn push_binary_operation(
+        &self,
+        op_name: &str,
+        input_ids: Vec<u32>,
+        output_id: u32,
+        attributes: serde_json::Value,
+        label: Option<String>,
+    ) {
+        // Step 1: Append an Operation record with a dynamic input list into GraphInfo.operations.
+        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
+            gi.operations.push(Operation {
+                op_type: op_name.to_string(),
+                input_operands: input_ids,
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes,
+                label,
+            });
+        }
+    }
+
+    fn label_from_operator_options(options: &MLOperatorOptions) -> Option<String> {
+        // Step 1: Read operator label.
+        // Step 2: Normalize empty labels to None.
+        let label = options.label.clone();
+        if label.is_empty() {
+            None
+        } else {
+            Some(label.to_string())
+        }
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#mlgraphbuilder-element-wise-logical-op>
+    fn create_an_element_wise_logical_operation(
+        &self,
+        op_name: &str,
+        a: &MLOperand,
+        b: Option<&MLOperand>,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: [=Assert=]: |op| is one of "equal", "notEqual", "greater", "greaterOrEqual", "lesser", "lesserOrEqual", "logicalNot", "logicalAnd", "logicalOr", "logicalXor", "isNaN", "isInfinite".
+        debug_assert!(
+            [
+                "equal",
+                "notEqual",
+                "greater",
+                "greaterOrEqual",
+                "lesser",
+                "lesserOrEqual",
+                "logicalNot",
+                "logicalAnd",
+                "logicalOr",
+                "logicalXor",
+                "isNaN",
+                "isInfinite",
+            ]
+            .contains(&op_name)
+        );
+
+        // Step 2: If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 3: If [=MLGraphBuilder/validating operand=] with [=this=] and |a| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(a) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 4: If |op| is one of "logicalNot", "logicalAnd", "logicalOr", "logicalXor", then:
+        // Step 4.1: If |a|'s [=MLOperand/dataType=] is not {{MLOperandDataType/"uint8"}}, then [=exception/throw=] a {{TypeError}}.
+        let a_dtype = a.descriptor_data_type();
+        if ["logicalNot", "logicalAnd", "logicalOr", "logicalXor"].contains(&op_name) && a_dtype != "uint8" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // Step 5: If |op| is one of "isNaN", "isInfinite", then:
+        // Step 5.1: If |a|'s [=MLOperand/dataType=] is not one of « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}} », then [=exception/throw=] a {{TypeError}}.
+        if ["isNaN", "isInfinite"].contains(&op_name) && a_dtype != "float32" && a_dtype != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // Step 6/7: If |b| is passed, validate |b|, validate matching dataType, and infer |outputShape| by bidirectional broadcasting.
+        // Step 7: Otherwise, clone |a|'s shape as |outputShape|.
+        let output_shape = if let Some(b_operand) = b {
+            if !self.validate_operand_ref(b_operand) {
+                return Err(Error::Type("invalid operand".to_owned()));
+            }
+
+            if a_dtype != b_operand.descriptor_data_type() {
+                return Err(Error::Type("input dataType must match".to_owned()));
+            }
+
+            bidirectionally_broadcast_shapes(a.descriptor_shape(), b_operand.descriptor_shape())
+                .ok_or_else(|| {
+                    Error::Type("shapes are not bidirectionally broadcastable".to_owned())
+                })?
+        } else {
+            a.descriptor_shape().clone()
+        };
+
+        // Step 8: Let |descriptor| be the result of [=creating an MLOperandDescriptor=] given {{MLOperandDataType/"uint8"}} and |outputShape|.
+        let descriptor = MLOperandDescriptor {
+            dataType: MLOperandDataType::Uint8,
+            shape: output_shape.clone(),
+        };
+
+        // Step 9: *Make graph connections:*
+        // Step 9.1: Let |output| be the result of [=creating an MLOperand=] given [=this=] and |descriptor|.
+        let a_id = a
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+
+        let b_id = if let Some(b_operand) = b {
+            Some(
+                b_operand
+                    .id()
+                    .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?,
+            )
+        } else {
+            None
+        };
+
+        let rust_operand =
+            self.create_rust_operand("uint8", output_shape.clone(), OperandKind::Output, None);
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 9.2: Let |operator| be an [=operator=] for the |op| operation, given |a| and (if |b| is passed) |b|, and |options|.
+        // Step 9.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // Step 9.4: Set |operator|'s [=operator/inputs=] to |a| and (if |b| is passed) |b|.
+        // Step 9.5: Set |operator|'s [=operator/output=] to |output|.
+        let mut input_operands = vec![a_id];
+        if let Some(id) = b_id {
+            input_operands.push(id);
+        }
+
+        self.push_binary_operation(
+            op_name,
+            input_operands,
+            output_id,
+            serde_json::json!({}),
+            Self::label_from_operator_options(options),
+        );
+
+        let operand = create_an_mloperand(
+            self,
+            Some(&descriptor),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        );
+        // Step 10: Return |output|.
+        Ok(operand)
+    }
+
+    fn reduce_impl(
+        &self,
+        op_name: &str,
+        input: &MLOperand,
+        options: &MLReduceOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Validate builder state and input ownership.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+        // Step 2: Convert options to rustnn ReduceOptions and infer output shape.
+        let reduce_options = rustnn::shape_inference::ReduceOptions {
+            axes: options.axes.as_ref().map(|v| v.clone()).unwrap_or_default(),
+            keep_dimensions: options.keepDimensions,
+        };
+        let output_shape =
+            rustnn::shape_inference::infer_reduce_shape(input.descriptor_shape(), &reduce_options)
+                .map_err(|e| Error::Type(e.to_string()))?;
+        let out_dtype = input.descriptor_data_type();
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype),
+            shape: output_shape.clone(),
+        };
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        // Step 3: Create output operand id, record reduce operation metadata, and return output operand.
+        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+        self.push_unary_operation(
+            op_name,
+            input_id,
+            output_id,
+            serde_json::json!({"axes": reduce_options.axes, "keepDimensions": reduce_options.keep_dimensions}),
+            Self::label_from_operator_options(&options.parent),
+        );
+        Ok(copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc))
+    }
+
+    fn quantize_like_impl(
+        &self,
+        op_name: &str,
+        input: &MLOperand,
+        scale: &MLOperand,
+        zero_point: &MLOperand,
+        quantize: bool,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Validate builder state and all operand ownership.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+        if !self.validate_operand_ref(input) ||
+            !self.validate_operand_ref(scale) ||
+            !self.validate_operand_ref(zero_point)
+        {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+        // Step 2: Select output data type from zeroPoint (quantize) or scale (dequantize).
+        let out_dtype_str = if quantize {
+            zero_point.descriptor_data_type()
+        } else {
+            scale.descriptor_data_type()
+        };
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype_str),
+            shape: input.descriptor_shape().clone(),
+        };
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let scale_id = scale
+            .id()
+            .ok_or_else(|| Error::Type("scale operand has no backend id".to_owned()))?;
+        let zero_id = zero_point
+            .id()
+            .ok_or_else(|| Error::Type("zeroPoint operand has no backend id".to_owned()))?;
+        // Step 3: Create output operand id, record operation metadata, and return output operand.
+        let rust_operand = self.create_rust_operand(
+            out_dtype_str,
+            input.descriptor_shape().clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+        self.push_binary_operation(
+            op_name,
+            vec![input_id, scale_id, zero_id],
+            output_id,
+            serde_json::json!({}),
+            Self::label_from_operator_options(options),
+        );
+        Ok(create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        ))
+    }
+
+    fn scatter_elements_impl(
+        &self,
+        input: &MLOperand,
+        indices: &MLOperand,
+        updates: &MLOperand,
+        axis: i32,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Validate builder state and all operand ownership.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+        if !self.validate_operand_ref(input) ||
+            !self.validate_operand_ref(indices) ||
+            !self.validate_operand_ref(updates)
+        {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+        if !["int32", "uint32", "int64"].contains(&indices.descriptor_data_type()) {
+            return Err(Error::Type(
+                "unsupported indices dataType for scatterElements".to_owned(),
+            ));
+        }
+        if updates.descriptor_data_type() != input.descriptor_data_type() {
+            return Err(Error::Type(
+                "updates must have same dataType as input".to_owned(),
+            ));
+        }
+        // Step 2: Validate scatter-elements shape constraints and infer output descriptor.
+        rustnn::shape_inference::infer_scatter_elements_shape(
+            input.descriptor_shape(),
+            indices.descriptor_shape(),
+            updates.descriptor_shape(),
+            axis,
+        )
+        .map_err(|e| Error::Type(e.to_string()))?;
+        let out_dtype = input.descriptor_data_type();
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype),
+            shape: input.descriptor_shape().clone(),
+        };
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let indices_id = indices
+            .id()
+            .ok_or_else(|| Error::Type("indices operand has no backend id".to_owned()))?;
+        let updates_id = updates
+            .id()
+            .ok_or_else(|| Error::Type("updates operand has no backend id".to_owned()))?;
+        // Step 3: Create output operand id, record operation metadata, and return output operand.
+        let rust_operand = self.create_rust_operand(
+            out_dtype,
+            input.descriptor_shape().clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+        self.push_binary_operation(
+            "scatterElements",
+            vec![input_id, indices_id, updates_id],
+            output_id,
+            serde_json::json!({"axis": axis}),
+            Self::label_from_operator_options(options),
+        );
+        Ok(create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        ))
+    }
+
+    fn scatter_nd_impl(
+        &self,
+        input: &MLOperand,
+        indices: &MLOperand,
+        updates: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Validate builder state and all operand ownership.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+        if !self.validate_operand_ref(input) ||
+            !self.validate_operand_ref(indices) ||
+            !self.validate_operand_ref(updates)
+        {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+        if !["int32", "uint32", "int64"].contains(&indices.descriptor_data_type()) {
+            return Err(Error::Type(
+                "unsupported indices dataType for scatterND".to_owned(),
+            ));
+        }
+        if updates.descriptor_data_type() != input.descriptor_data_type() {
+            return Err(Error::Type(
+                "updates must have same dataType as input".to_owned(),
+            ));
+        }
+        // Step 2: Validate scatter-ND shape constraints and infer output descriptor.
+        rustnn::shape_inference::infer_scatter_nd_shape(
+            input.descriptor_shape(),
+            indices.descriptor_shape(),
+            updates.descriptor_shape(),
+        )
+        .map_err(|e| Error::Type(e.to_string()))?;
+        let out_dtype = input.descriptor_data_type();
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype),
+            shape: input.descriptor_shape().clone(),
+        };
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let indices_id = indices
+            .id()
+            .ok_or_else(|| Error::Type("indices operand has no backend id".to_owned()))?;
+        let updates_id = updates
+            .id()
+            .ok_or_else(|| Error::Type("updates operand has no backend id".to_owned()))?;
+        // Step 3: Create output operand id, record operation metadata, and return output operand.
+        let rust_operand = self.create_rust_operand(
+            out_dtype,
+            input.descriptor_shape().clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+        self.push_binary_operation(
+            "scatterND",
+            vec![input_id, indices_id, updates_id],
+            output_id,
+            serde_json::json!({}),
+            Self::label_from_operator_options(options),
+        );
+        Ok(create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        ))
+    }
+
+    fn pool2d_impl(
+        &self,
+        op_name: &str,
+        input: &MLOperand,
+        options: &MLPool2dOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Validate builder state and input ownership.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+        // Step 2: Normalize pool options and infer output shape using rustnn helpers.
+        use rustnn::shape_inference::{Conv2dInputLayout, Pool2dOptions};
+        let layout = match options.layout {
+            MLInputOperandLayout::Nchw => Conv2dInputLayout::Nchw,
+            MLInputOperandLayout::Nhwc => Conv2dInputLayout::Nhwc,
+        };
+        let pool_options = Pool2dOptions {
+            window_dimensions: options
+                .windowDimensions
+                .as_ref()
+                .map(|v| v.clone())
+                .unwrap_or_else(|| vec![1, 1]),
+            strides: options
+                .strides
+                .as_ref()
+                .map(|v| v.clone())
+                .unwrap_or_else(|| vec![1, 1]),
+            dilations: options
+                .dilations
+                .as_ref()
+                .map(|v| v.clone())
+                .unwrap_or_else(|| vec![1, 1]),
+            pads: options
+                .padding
+                .as_ref()
+                .map(|v| v.clone())
+                .unwrap_or_else(|| vec![0, 0, 0, 0]),
+            layout,
+        };
+        let output_shape =
+            rustnn::shape_inference::infer_pool2d_shape(input.descriptor_shape(), &pool_options)
+                .map_err(|e| Error::Type(e.to_string()))?;
+        let out_dtype = input.descriptor_data_type();
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype),
+            shape: output_shape.clone(),
+        };
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        // Step 3: Create output operand id, record operation metadata, and return output operand.
+        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+        self.push_unary_operation(
+            op_name,
+            input_id,
+            output_id,
+            serde_json::json!({}),
+            Self::label_from_operator_options(&options.parent),
+        );
+        Ok(copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc))
+    }
+
+    fn conv_transpose2d_impl(
+        &self,
+        input: &MLOperand,
+        filter: &MLOperand,
+        options: &MLConvTranspose2dOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Validate builder state and operand ownership.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+        if !self.validate_operand_ref(input) || !self.validate_operand_ref(filter) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+        // Step 2: Normalize transpose-convolution options and infer output shape.
+        use rustnn::shape_inference::{
+            Conv2dFilterLayout, Conv2dInputLayout, ConvTranspose2dOptions,
+        };
+        let input_layout = match options.inputLayout {
+            MLInputOperandLayout::Nchw => Conv2dInputLayout::Nchw,
+            MLInputOperandLayout::Nhwc => Conv2dInputLayout::Nhwc,
+        };
+        let filter_layout = match options.filterLayout {
+            MLConvTranspose2dFilterOperandLayout::Iohw => Conv2dFilterLayout::Oihw,
+            MLConvTranspose2dFilterOperandLayout::Hwoi => Conv2dFilterLayout::Ihwo,
+            MLConvTranspose2dFilterOperandLayout::Ohwi => Conv2dFilterLayout::Ohwi,
+            MLConvTranspose2dFilterOperandLayout::Oihw => Conv2dFilterLayout::Hwio,
+        };
+        let conv_options = ConvTranspose2dOptions {
+            strides: options
+                .strides
+                .as_ref()
+                .map(|v| v.clone())
+                .unwrap_or_else(|| vec![1, 1]),
+            dilations: options
+                .dilations
+                .as_ref()
+                .map(|v| v.clone())
+                .unwrap_or_else(|| vec![1, 1]),
+            pads: options
+                .padding
+                .as_ref()
+                .map(|v| v.clone())
+                .unwrap_or_else(|| vec![0, 0, 0, 0]),
+            output_padding: options
+                .outputPadding
+                .as_ref()
+                .map(|v| v.clone())
+                .unwrap_or_else(|| vec![0, 0]),
+            output_sizes: options.outputSizes.as_ref().map(|v| v.clone()),
+            groups: options.groups,
+            input_layout,
+            filter_layout,
+        };
+        let output_shape = rustnn::shape_inference::infer_conv_transpose2d_shape(
+            input.descriptor_shape(),
+            filter.descriptor_shape(),
+            &conv_options,
+        )
+        .map_err(|e| Error::Type(e.to_string()))?;
+        let out_dtype = input.descriptor_data_type();
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype),
+            shape: output_shape.clone(),
+        };
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let filter_id = filter
+            .id()
+            .ok_or_else(|| Error::Type("filter operand has no backend id".to_owned()))?;
+        // Step 3: Create output operand id, record operation metadata, and return output operand.
+        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+        self.push_binary_operation(
+            "convTranspose2d",
+            vec![input_id, filter_id],
+            output_id,
+            serde_json::json!({}),
+            Self::label_from_operator_options(&options.parent),
+        );
+        Ok(create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        ))
+    }
+
+    fn split_impl(
+        &self,
+        input: &MLOperand,
+        split_spec: rustnn::shape_inference::SplitSpec,
+        axis: u32,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<Vec<DomRoot<MLOperand>>> {
+        // Step 1: Validate builder state and input ownership.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+        // Step 2: Infer all split output shapes.
+        let output_shapes =
+            rustnn::shape_inference::infer_split_shapes(input.descriptor_shape(), &split_spec, axis)
+                .map_err(|e| Error::Type(e.to_string()))?;
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let out_dtype = input.descriptor_data_type();
+        let out_dtype_enum = Self::data_type_enum_from_str(out_dtype);
+        let mut output_ids = Vec::with_capacity(output_shapes.len());
+        let mut outputs = Vec::with_capacity(output_shapes.len());
+        // Step 3: Allocate backend output operands and corresponding DOM outputs.
+        for shape in output_shapes {
+            let rust_operand =
+                self.create_rust_operand(out_dtype, shape.clone(), OperandKind::Output, None);
+            let output_id = self.push_operand_to_graph(rust_operand, false);
+            output_ids.push(output_id);
+            let desc = MLOperandDescriptor {
+                dataType: out_dtype_enum,
+                shape,
+            };
+            outputs.push(create_an_mloperand(
+                self,
+                Some(&desc),
+                None,
+                None,
+                false,
+                false,
+                Some(output_id),
+                can_gc,
+            ));
+        }
+        // Step 4: Record the split operation with all output ids and return DOM outputs.
+        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
+            gi.operations.push(Operation {
+                op_type: "split".to_string(),
+                input_operands: vec![input_id],
+                output_operand: None,
+                output_operands: output_ids,
+                attributes: serde_json::json!({"axis": axis}),
+                label: Self::label_from_operator_options(options),
+            });
+        }
+        Ok(outputs)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#mlgraphbuilder-argminmax-op>
@@ -506,6 +1209,23 @@ fn bidirectionally_broadcast_shapes(shape_a: &[u32], shape_b: &[u32]) -> Option<
     Some(output_shape)
 }
 
+fn unidirectionally_broadcastable_to_shape(source: &[u32], target: &[u32]) -> bool {
+    if source.len() > target.len() {
+        return false;
+    }
+
+    for index in 0..target.len() {
+        let source_index = source.len().checked_sub(1 + index);
+        let source_dim = source_index.map_or(1, |i| source[i]);
+        let target_dim = target[target.len() - 1 - index];
+        if source_dim != 1 && source_dim != target_dim {
+            return false;
+        }
+    }
+
+    true
+}
+
 impl MLGraphBuilder {
     /// <https://webmachinelearning.github.io/webnn/#mlgraphbuilder-element-wise-unary-op>
     fn create_an_element_wise_unary_operation(
@@ -534,6 +1254,18 @@ impl MLGraphBuilder {
                 "sign",
                 "sqrt",
                 "tan",
+                "tanh",
+                "elu",
+                "gelu",
+                "hardSigmoid",
+                "hardSwish",
+                "leakyRelu",
+                "linear",
+                "sigmoid",
+                "softplus",
+                "softsign",
+                "softmax",
+                "reverse",
             ]
             .contains(&op_name)
         );
@@ -2649,15 +3381,49 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 3: If the MLOperand/dataType of any of |a| or |b| is not one of its allowed data types, then throw a TypeError.
         let a_dtype = a.descriptor_data_type();
+        if a_dtype != "float32" && a_dtype != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
         // enforce matching data types (implementation-defined promotion not supported here)
         if a_dtype != b.descriptor_data_type() {
             return Err(Error::Type("input dataType must match".to_owned()));
         }
 
-        // Steps 4, 7–11: Shape/rank/transposition validations and inner-dimension checks.
+        // Step 4: Validate ranks.
+        if a.descriptor_shape().len() != 2 || b.descriptor_shape().len() != 2 {
+            return Err(Error::Type("gemm inputs must be 2-D tensors".to_owned()));
+        }
+
+        // Step 5 & 6: Cast alpha and beta to |a|'s data type.
+        let alpha = if a_dtype == "float32" {
+            (*options.alpha as f32) as f64
+        } else {
+            *options.alpha
+        };
+        let beta = if a_dtype == "float32" {
+            (*options.beta as f32) as f64
+        } else {
+            *options.beta
+        };
+
+        // Steps 7–11: Shape/rank/transposition validations and inner-dimension checks.
         // Step 4: If the MLOperand/rank of any of |a| or |b| is not its allowed rank, then throw a TypeError.
         // Step 7–11: clone shapes, apply transposes, and verify shapeA[1] == shapeB[0].
         // Implementation delegates these checks to `rustnn::shape_inference::infer_gemm_shape`.
+        let mut shape_a = a.descriptor_shape().clone();
+        let mut shape_b = b.descriptor_shape().clone();
+        if options.aTranspose {
+            shape_a.reverse();
+        }
+        if options.bTranspose {
+            shape_b.reverse();
+        }
+        if shape_a[1] != shape_b[0] {
+            return Err(Error::Type(
+                "shapeA[1] must equal shapeB[0] for gemm".to_owned(),
+            ));
+        }
+
         let output_shape = match rustnn::shape_inference::infer_gemm_shape(
             &a.descriptor_shape(),
             &b.descriptor_shape(),
@@ -2668,18 +3434,22 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             Err(e) => return Err(Error::Type(e.to_string())),
         };
 
-        // Step 12 (spec order): If |options|.c exists, then validate broadcastability and dtype per spec.
-        // NOTE: current implementation only validates `c` belongs to this builder (ownership).
-        // TODO: implement unidirectional broadcastability check to « shapeA[0], shapeB[1] » and
-        // verify `c`'s dataType is allowed per the tensor-limits table.
-        if options.c.is_some() {
-            // ownership already validated above; remaining checks are TODO.
+        // Step 12: Validate optional |c| against target shape « shapeA[0], shapeB[1] » and data type.
+        if let Some(c_op) = options.c.as_ref() {
+            if c_op.descriptor_data_type() != a_dtype {
+                return Err(Error::Type("c must have same dataType as a".to_owned()));
+            }
+            if c_op.descriptor_shape().len() > 2 {
+                return Err(Error::Type("c rank must be in range [0, 2]".to_owned()));
+            }
+            let c_target = vec![shape_a[0], shape_b[1]];
+            if !unidirectionally_broadcastable_to_shape(c_op.descriptor_shape(), &c_target) {
+                return Err(Error::Type(
+                    "c is not unidirectionally broadcastable to [shapeA[0], shapeB[1]]"
+                        .to_owned(),
+                ));
+            }
         }
-
-        // Step 5 & 6 (spec order — casting alpha/beta): Set options.alpha/options.beta to the result of casting
-        // to |a|'s dataType.
-        // NOTE: the implementation currently records `*options.alpha`/`*options.beta` in the operator
-        // attributes without performing an explicit cast to `a`'s data type. TODO: implement cast per spec.
 
         // Step 13: Let |desc| be the result of creating an MLOperandDescriptor given |a|'s dataType and « |shapeA|[0], |shapeB|[1] ».
         let out_dtype_enum = match a_dtype {
@@ -2714,8 +3484,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Record operator attributes including alpha/beta and transpose flags (Steps 5/6 recorded here; casting TODO).
         let mut attributes = serde_json::json!({
-            "alpha": *options.alpha,
-            "beta": *options.beta,
+            "alpha": alpha,
+            "beta": beta,
             "aTranspose": options.aTranspose,
             "bTranspose": options.bTranspose,
         });
@@ -2875,11 +3645,2128 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(operand)
     }
 
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-elu>
+    fn Elu(
+        &self,
+        input: &MLOperand,
+        options: &MLEluOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // 1. If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-elu)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if input_data_type != "float32" && input_data_type != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // 1. Set |options|.{{MLEluOptions/alpha}} to the result of [=casting=] |options|.{{MLEluOptions/alpha}} to |input|'s [=MLOperand/dataType=].
+        let alpha = if input_data_type == "float32" {
+            (*options.alpha as f32) as f64
+        } else {
+            *options.alpha
+        };
+
+        // 1. *Make graph connections:*
+        // 1. Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let input_shape = input.descriptor_shape();
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // 1. Let |operator| be an [=operator=] for the "elu" operation, given |options|.
+        // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // 1. Set |operator|'s [=operator/input=] to |input|.
+        // 1. Set |operator|'s [=operator/output=] to |output|.
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "elu".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({ "alpha": alpha }),
+                label: Self::label_from_operator_options(&options.parent),
+            });
+        }
+
+        // 1. Return |output|.
+        Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-gelu>
+    fn Gelu(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // 1. If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-gelu)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if input_data_type != "float32" && input_data_type != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // 1. *Make graph connections:*
+        // 1. Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let input_shape = input.descriptor_shape();
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // 1. Let |operator| be an [=operator=] for the "gelu" operation given |options|.
+        // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // 1. Set |operator|'s [=operator/input=] to |input|.
+        // 1. Set |operator|'s [=operator/output=] to |output|.
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "gelu".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({}),
+                label: Self::label_from_operator_options(options),
+            });
+        }
+
+        // 1. Return |output|.
+        Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-hardsigmoid>
+    fn HardSigmoid(
+        &self,
+        input: &MLOperand,
+        options: &MLHardSigmoidOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // 1. If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-hardSigmoid)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if input_data_type != "float32" && input_data_type != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // 1. Set |options|.{{MLHardSigmoidOptions/alpha}} to the result of [=casting=] |options|.{{MLHardSigmoidOptions/alpha}} to |input|'s [=MLOperand/dataType=].
+        let alpha = if input_data_type == "float32" {
+            (*options.alpha as f32) as f64
+        } else {
+            *options.alpha
+        };
+
+        // 1. Set |options|.{{MLHardSigmoidOptions/beta}} to the result of [=casting=] |options|.{{MLHardSigmoidOptions/beta}} to |input|'s [=MLOperand/dataType=].
+        let beta = if input_data_type == "float32" {
+            (*options.beta as f32) as f64
+        } else {
+            *options.beta
+        };
+
+        // 1. *Make graph connections:*
+        // 1. Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let input_shape = input.descriptor_shape();
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // 1. Let |operator| be an [=operator=] for the "hardSigmoid" operation, given |options|.
+        // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // 1. Set |operator|'s [=operator/input=] to |input|.
+        // 1. Set |operator|'s [=operator/output=] to |output|.
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "hardSigmoid".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({ "alpha": alpha, "beta": beta }),
+                label: Self::label_from_operator_options(&options.parent),
+            });
+        }
+
+        // 1. Return |output|.
+        Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-hardswish>
+    fn HardSwish(
+        &self,
+        input: &MLOperand,
+        options: &MLHardSigmoidOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // 1. If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-hardSwish)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if input_data_type != "float32" && input_data_type != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // 1. *Make graph connections:*
+        // 1. Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let input_shape = input.descriptor_shape();
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // 1. Let |operator| be an [=operator=] for the "hardSwish" operation, given |options|.
+        // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // 1. Set |operator|'s [=operator/input=] to |input|.
+        // 1. Set |operator|'s [=operator/output=] to |output|.
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "hardSwish".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({}),
+                label: Self::label_from_operator_options(&options.parent),
+            });
+        }
+
+        // 1. Return |output|.
+        Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-leakyrelu>
+    fn LeakyRelu(
+        &self,
+        input: &MLOperand,
+        options: &MLLeakyReluOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // 1. If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-leakyRelu)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if input_data_type != "float32" && input_data_type != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // 1. Set |options|.{{MLLeakyReluOptions/alpha}} to the result of [=casting=] |options|.{{MLLeakyReluOptions/alpha}} to |input|'s [=MLOperand/dataType=].
+        let alpha = if input_data_type == "float32" {
+            (*options.alpha as f32) as f64
+        } else {
+            *options.alpha
+        };
+
+        // 1. *Make graph connections:*
+        // 1. Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let input_shape = input.descriptor_shape();
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // 1. Let |operator| be an [=operator=] for the "leakyRelu" operation, given |options|.
+        // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // 1. Set |operator|'s [=operator/input=] to |input|.
+        // 1. Set |operator|'s [=operator/output=] to |output|.
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "leakyRelu".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({ "alpha": alpha }),
+                label: Self::label_from_operator_options(&options.parent),
+            });
+        }
+
+        // 1. Return |output|.
+        Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-linear>
+    fn Linear(
+        &self,
+        input: &MLOperand,
+        options: &MLLinearOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // 1. If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-linear)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if input_data_type != "float32" && input_data_type != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // 1. Set |options|.{{MLLinearOptions/alpha}} to the result of [=casting=] |options|.{{MLLinearOptions/alpha}} to |input|'s [=MLOperand/dataType=].
+        let alpha = if input_data_type == "float32" {
+            (*options.alpha as f32) as f64
+        } else {
+            *options.alpha
+        };
+
+        // 1. Set |options|.{{MLLinearOptions/beta}} to the result of [=casting=] |options|.{{MLLinearOptions/beta}} to |input|'s [=MLOperand/dataType=].
+        let beta = if input_data_type == "float32" {
+            (*options.beta as f32) as f64
+        } else {
+            *options.beta
+        };
+
+        // 1. *Make graph connections:*
+        // 1. Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let input_shape = input.descriptor_shape();
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // 1. Let |operator| be an [=operator=] for the "linear" operation, given |options|.
+        // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // 1. Set |operator|'s [=operator/input=] to |input|.
+        // 1. Set |operator|'s [=operator/output=] to |output|.
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "linear".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({ "alpha": alpha, "beta": beta }),
+                label: Self::label_from_operator_options(&options.parent),
+            });
+        }
+
+        // 1. Return |output|.
+        Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-sigmoid>
+    fn Sigmoid(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-sigmoid)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if input_data_type != "float32" && input_data_type != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // Step 4: *Make graph connections:*
+        // Step 4.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
+        // Note: implementation allocates backend output id before creating the DOM operand
+        // so operator metadata can point to concrete input/output ids.
+        let input_shape = input.descriptor_shape();
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 4.2: Let |operator| be an [=operator=] for the "sigmoid" operation, given |options|.
+        // Step 4.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // Step 4.4: Set |operator|'s [=operator/input=] to |input|.
+        // Step 4.5: Set |operator|'s [=operator/output=] to |output|.
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "sigmoid".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({}),
+                label: Self::label_from_operator_options(options),
+            });
+        }
+
+        // Step 4.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let output = copy_an_mloperand(input, None, Some(output_id), can_gc);
+
+        // Step 5: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-softplus>
+    fn Softplus(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-softplus)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if input_data_type != "float32" && input_data_type != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // Step 4: *Make graph connections:*
+        // Step 4.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let input_shape = input.descriptor_shape();
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 4.2: Let |operator| be an [=operator=] for the "softplus" operation and |options|.
+        // Step 4.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // Step 4.4: Set |operator|'s [=operator/input=] to |input|.
+        // Step 4.5: Set |operator|'s [=operator/output=] to |output|.
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "softplus".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({}),
+                label: Self::label_from_operator_options(options),
+            });
+        }
+
+        // Step 4.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let output = copy_an_mloperand(input, None, Some(output_id), can_gc);
+
+        // Step 5: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-softsign>
+    fn Softsign(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-softsign)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if input_data_type != "float32" && input_data_type != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // Step 4: *Make graph connections:*
+        // Step 4.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let input_shape = input.descriptor_shape();
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 4.2: Let |operator| be an [=operator=] for the "softsign" operation and |options|.
+        // Step 4.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // Step 4.4: Set |operator|'s [=operator/input=] to |input|.
+        // Step 4.5: Set |operator|'s [=operator/output=] to |output|.
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "softsign".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({}),
+                label: Self::label_from_operator_options(options),
+            });
+        }
+
+        // Step 4.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let output = copy_an_mloperand(input, None, Some(output_id), can_gc);
+
+        // Step 5: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reverse>
+    fn Reverse(
+        &self,
+        input: &MLOperand,
+        options: &MLReverseOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-reverse)), then [=exception/throw=] a {{TypeError}}.
+        // Note: tensor-limits-reverse allows any data type, so this check is always satisfied.
+
+        // Step 4: Let |inputRank| be |input|'s [=MLOperand/rank=].
+        let input_rank = input.descriptor_shape().len();
+
+        // Step 5: If |axes| is not given, then let |axes| be [=the range=] 0 to |inputRank|, exclusive.
+        // Step 6: Otherwise, if |axes| contains duplicate values, or if any of its elements is not in [=the range=] 0 to |inputRank|, exclusive, then return failure.
+        let axes = if let Some(ref supplied_axes) = options.axes {
+            let mut seen = std::collections::HashSet::new();
+            for &axis in supplied_axes.iter() {
+                let axis_usize = axis as usize;
+                if axis_usize >= input_rank || !seen.insert(axis) {
+                    return Err(Error::Type("invalid axes".to_owned()));
+                }
+            }
+            supplied_axes.clone()
+        } else {
+            (0..input_rank as u32).collect()
+        };
+
+        // Step 7: *Make graph connections:*
+        // Step 7.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let input_data_type = input.descriptor_data_type();
+        let input_shape = input.descriptor_shape();
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 7.2: Let |operator| be an [=operator=] for the "reverse" operation and |options|.
+        // Step 7.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // Step 7.4: Set |operator|'s [=operator/input=] to |input|.
+        // Step 7.5: Set |operator|'s [=operator/output=] to |output|.
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "reverse".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({ "axes": axes }),
+                label: Self::label_from_operator_options(&options.parent),
+            });
+        }
+
+        // Step 7.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let output = copy_an_mloperand(input, None, Some(output_id), can_gc);
+
+        // Step 8: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-equal>
+    fn Equal(
+        &self,
+        a: &MLOperand,
+        b: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating an element-wise logical operation given "equal", |a|, |b|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.create_an_element_wise_logical_operation("equal", a, Some(b), options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-greater>
+    fn Greater(
+        &self,
+        a: &MLOperand,
+        b: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating an element-wise logical operation given "greater", |a|, |b|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.create_an_element_wise_logical_operation("greater", a, Some(b), options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-greaterorequal>
+    fn GreaterOrEqual(
+        &self,
+        a: &MLOperand,
+        b: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating an element-wise logical operation given "greaterOrEqual", |a|, |b|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.create_an_element_wise_logical_operation(
+            "greaterOrEqual",
+            a,
+            Some(b),
+            options,
+            can_gc,
+        )
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-lesser>
+    fn Lesser(
+        &self,
+        a: &MLOperand,
+        b: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating an element-wise logical operation given "lesser", |a|, |b|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.create_an_element_wise_logical_operation("lesser", a, Some(b), options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-lesserorequal>
+    fn LesserOrEqual(
+        &self,
+        a: &MLOperand,
+        b: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating an element-wise logical operation given "lesserOrEqual", |a|, |b|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.create_an_element_wise_logical_operation(
+            "lesserOrEqual",
+            a,
+            Some(b),
+            options,
+            can_gc,
+        )
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-notequal>
+    fn NotEqual(
+        &self,
+        a: &MLOperand,
+        b: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating an element-wise logical operation given "notEqual", |a|, |b|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.create_an_element_wise_logical_operation("notEqual", a, Some(b), options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-logicaland>
+    fn LogicalAnd(
+        &self,
+        a: &MLOperand,
+        b: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating an element-wise logical operation given "logicalAnd", |a|, |b|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.create_an_element_wise_logical_operation("logicalAnd", a, Some(b), options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-logicalor>
+    fn LogicalOr(
+        &self,
+        a: &MLOperand,
+        b: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating an element-wise logical operation given "logicalOr", |a|, |b|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.create_an_element_wise_logical_operation("logicalOr", a, Some(b), options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-logicalxor>
+    fn LogicalXor(
+        &self,
+        a: &MLOperand,
+        b: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating an element-wise logical operation given "logicalXor", |a|, |b|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.create_an_element_wise_logical_operation("logicalXor", a, Some(b), options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-logicalnot>
+    fn LogicalNot(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating an element-wise logical operation given "logicalNot", |a|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.create_an_element_wise_logical_operation("logicalNot", input, None, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-isnan>
+    fn IsNaN(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating an element-wise logical operation given "isNaN", |a|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.create_an_element_wise_logical_operation("isNaN", input, None, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-isinfinite>
+    fn IsInfinite(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating an element-wise logical operation given "isInfinite", |a|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.create_an_element_wise_logical_operation("isInfinite", input, None, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reshape>
+    fn Reshape(
+        &self,
+        input: &MLOperand,
+        newShape: Vec<u32>,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If this can not build, then throw an InvalidStateError.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If validating operand with this and |input| returns false, then throw a TypeError.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: Validate the reshape sizes against input shape.
+        rustnn::shape_inference::validate_reshape(input.descriptor_shape(), &newShape)
+            .map_err(|e| Error::Type(e.to_string()))?;
+
+        let out_dtype = input.descriptor_data_type();
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype),
+            shape: newShape.clone(),
+        };
+
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand =
+            self.create_rust_operand(out_dtype, newShape.clone(), OperandKind::Output, None);
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 4: Make graph connections for the "reshape" operator.
+        self.push_unary_operation(
+            "reshape",
+            input_id,
+            output_id,
+            serde_json::json!({"newShape": newShape}),
+            Self::label_from_operator_options(options),
+        );
+
+        Ok(copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-expand>
+    fn Expand(
+        &self,
+        input: &MLOperand,
+        newShape: Vec<u32>,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If this can not build, then throw an InvalidStateError.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If validating operand with this and |input| returns false, then throw a TypeError.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: Let |outputShape| be the result of inferring expanded output shape.
+        let output_shape = rustnn::shape_inference::infer_expand_shape(input.descriptor_shape(), &newShape)
+            .map_err(|e| Error::Type(e.to_string()))?;
+        let out_dtype = input.descriptor_data_type();
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype),
+            shape: output_shape.clone(),
+        };
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand =
+            self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+        // Step 4: Make graph connections for the "expand" operator.
+        self.push_unary_operation(
+            "expand",
+            input_id,
+            output_id,
+            serde_json::json!({"newShape": newShape}),
+            Self::label_from_operator_options(options),
+        );
+        Ok(copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-slice>
+    fn Slice(
+        &self,
+        input: &MLOperand,
+        starts: Vec<u32>,
+        sizes: Vec<u32>,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If this can not build, then throw an InvalidStateError.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If validating operand with this and |input| returns false, then throw a TypeError.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: Let |outputShape| be the result of slice-shape validation/inference.
+        let output_shape =
+            rustnn::shape_inference::infer_slice_shape(input.descriptor_shape(), &starts, &sizes)
+                .map_err(|e| Error::Type(e.to_string()))?;
+        let out_dtype = input.descriptor_data_type();
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype),
+            shape: output_shape.clone(),
+        };
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+        // Step 4: Make graph connections for the "slice" operator.
+        self.push_unary_operation(
+            "slice",
+            input_id,
+            output_id,
+            serde_json::json!({"starts": starts, "sizes": sizes}),
+            Self::label_from_operator_options(options),
+        );
+        Ok(copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-gather>
+    fn Gather(
+        &self,
+        input: &MLOperand,
+        indices: &MLOperand,
+        options: &MLGatherOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+        if !self.validate_operand_ref(input) || !self.validate_operand_ref(indices) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: Validate indices dataType.
+        if !["int32", "uint32", "int64"].contains(&indices.descriptor_data_type()) {
+            return Err(Error::Type(
+                "unsupported indices dataType for gather".to_owned(),
+            ));
+        }
+
+        // Steps 4-8: Validate axis against input rank.
+        let input_shape = input.descriptor_shape();
+        let input_rank = input_shape.len();
+        let axis = options.axis;
+        if (axis as usize) >= input_rank {
+            return Err(Error::Type("axis out of range".to_owned()));
+        }
+
+        // Steps 9-17: Derive output shape.
+        let output_shape = rustnn::shape_inference::infer_gather_shape(
+            &input_shape,
+            indices.descriptor_shape(),
+            axis,
+        )
+        .map_err(|e| Error::Type(e.to_string()))?;
+        let out_dtype = input.descriptor_data_type();
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype),
+            shape: output_shape.clone(),
+        };
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let indices_id = indices
+            .id()
+            .ok_or_else(|| Error::Type("indices operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+        self.push_binary_operation(
+            "gather",
+            vec![input_id, indices_id],
+            output_id,
+            serde_json::json!({"axis": axis}),
+            Self::label_from_operator_options(&options.parent),
+        );
+        Ok(create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        ))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-gatherelements>
+    fn GatherElements(
+        &self,
+        input: &MLOperand,
+        indices: &MLOperand,
+        options: &MLGatherOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+        if !self.validate_operand_ref(input) || !self.validate_operand_ref(indices) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: Validate indices dataType.
+        if !["int32", "uint32", "int64"].contains(&indices.descriptor_data_type()) {
+            return Err(Error::Type(
+                "unsupported indices dataType for gatherElements".to_owned(),
+            ));
+        }
+
+        // Step 4: Validate ranks.
+        let input_shape = input.descriptor_shape();
+        let indices_shape = indices.descriptor_shape();
+        if input_shape.is_empty() || indices_shape.is_empty() {
+            return Err(Error::Type(
+                "input and indices must have rank >= 1".to_owned(),
+            ));
+        }
+        if input_shape.len() != indices_shape.len() {
+            return Err(Error::Type(
+                "indices must have same rank as input".to_owned(),
+            ));
+        }
+
+        // Step 5-8: Validate axis and expected indices shape.
+        let axis = options.axis as usize;
+        if axis >= input_shape.len() {
+            return Err(Error::Type("axis out of range".to_owned()));
+        }
+        let mut indices_shape_expected = input_shape.clone();
+        indices_shape_expected[axis] = indices_shape[axis];
+        if indices_shape != &indices_shape_expected {
+            return Err(Error::Type(
+                "indices shape does not match expected gatherElements shape".to_owned(),
+            ));
+        }
+
+        // Output shape follows the spec-computed shape, which equals indices shape here.
+        let output_shape = indices.descriptor_shape().clone();
+        let out_dtype = input.descriptor_data_type();
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype),
+            shape: output_shape.clone(),
+        };
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let indices_id = indices
+            .id()
+            .ok_or_else(|| Error::Type("indices operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+        self.push_binary_operation(
+            "gatherElements",
+            vec![input_id, indices_id],
+            output_id,
+            serde_json::json!({"axis": options.axis}),
+            Self::label_from_operator_options(&options.parent),
+        );
+        Ok(create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        ))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-gathernd>
+    fn GatherND(
+        &self,
+        input: &MLOperand,
+        indices: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+        if !self.validate_operand_ref(input) || !self.validate_operand_ref(indices) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: Validate indices dataType.
+        if !["int32", "uint32", "int64"].contains(&indices.descriptor_data_type()) {
+            return Err(Error::Type(
+                "unsupported indices dataType for gatherND".to_owned(),
+            ));
+        }
+
+        // Step 4: Validate ranks.
+        let input_shape = input.descriptor_shape();
+        if input_shape.is_empty() {
+            return Err(Error::Type("input must have rank >= 1".to_owned()));
+        }
+        let indices_shape = indices.descriptor_shape();
+        if indices_shape.is_empty() {
+            return Err(Error::Type("indices must have rank >= 1".to_owned()));
+        }
+
+        // Steps 5-13: Derive output shape components.
+        let k = indices_shape[indices_shape.len() - 1] as usize;
+        if k > input_shape.len() {
+            return Err(Error::Type("indices last dimension out of range".to_owned()));
+        }
+        let mut output_shape = indices_shape[..indices_shape.len() - 1].to_vec();
+        output_shape.extend_from_slice(&input_shape[k..]);
+        let out_dtype = input.descriptor_data_type();
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype),
+            shape: output_shape.clone(),
+        };
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let indices_id = indices
+            .id()
+            .ok_or_else(|| Error::Type("indices operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+        self.push_binary_operation(
+            "gatherND",
+            vec![input_id, indices_id],
+            output_id,
+            serde_json::json!({}),
+            Self::label_from_operator_options(options),
+        );
+        Ok(create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        ))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-pad>
+    fn Pad(
+        &self,
+        input: &MLOperand,
+        beginningPadding: Vec<u32>,
+        endingPadding: Vec<u32>,
+        options: &MLPadOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If this can not build, then throw an InvalidStateError.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If validating operand with this and |input| returns false, then throw a TypeError.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: If |beginningPadding|'s and |endingPadding|'s sizes are not both equal to |input|'s rank, then throw a TypeError.
+        let input_shape = input.descriptor_shape();
+        let input_rank = input_shape.len();
+        if beginningPadding.len() != input_rank || endingPadding.len() != input_rank {
+            return Err(Error::Type(
+                "beginningPadding and endingPadding sizes must both equal input rank".to_owned(),
+            ));
+        }
+
+        // Step 4: Let |desc| be a copy of |input|.[[descriptor]].
+        // Step 5: Let |outputShape| be a copy of |input|'s shape.
+        let mut output_shape = input_shape.clone();
+
+        // Step 6: For each index, validate reflection mode constraints and apply beginning/ending padding.
+        let mode = match options.mode {
+            MLPaddingMode::Constant => "constant",
+            MLPaddingMode::Edge => "edge",
+            MLPaddingMode::Reflection => "reflection",
+        };
+        for index in 0..input_rank {
+            if mode == "reflection" {
+                if beginningPadding[index] >= output_shape[index] {
+                    return Err(Error::Type(
+                        "beginningPadding[index] must be less than input dimension in reflection mode".to_owned(),
+                    ));
+                }
+                if endingPadding[index] >= output_shape[index] {
+                    return Err(Error::Type(
+                        "endingPadding[index] must be less than input dimension in reflection mode".to_owned(),
+                    ));
+                }
+            }
+
+            output_shape[index] = output_shape[index]
+                .checked_add(beginningPadding[index])
+                .and_then(|value| value.checked_add(endingPadding[index]))
+                .ok_or_else(|| Error::Type("invalid output shape".to_owned()))?;
+        }
+
+        // Step 7: If any item in |outputShape| is not a valid dimension, then throw a TypeError.
+        let output_desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(input.descriptor_data_type()),
+            shape: output_shape.clone(),
+        };
+        if !check_dimensions(&output_desc) {
+            return Err(Error::Type("invalid output shape".to_owned()));
+        }
+
+        // Step 8: Set |options|.value to the result of casting it to |input|'s data type.
+        // Note: value casting is represented in operator attributes for backend consumption.
+        let out_dtype = input.descriptor_data_type();
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype),
+            shape: output_shape.clone(),
+        };
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand =
+            self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        let mut padding = beginningPadding.clone();
+        padding.extend_from_slice(&endingPadding);
+
+        self.push_unary_operation(
+            "pad",
+            input_id,
+            output_id,
+            serde_json::json!({
+                "beginningPadding": beginningPadding,
+                "endingPadding": endingPadding,
+                "padding": padding,
+                "mode": mode,
+                "value": options.value,
+            }),
+            Self::label_from_operator_options(&options.parent),
+        );
+
+        // Step 9: Return |output|.
+        Ok(copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-softmax>
+    fn Softmax(
+        &self,
+        input: &MLOperand,
+        options: &MLSoftmaxOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // 1. If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-softmax)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if input_data_type != "float32" && input_data_type != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // 1. If |axis| is greater than or equal to |input|'s [=MLOperand/rank=], then [=exception/throw=] a {{TypeError}}.
+        let axis = options.axis;
+        if (axis as usize) >= input.descriptor_shape().len() {
+            return Err(Error::Type("axis out of range".to_owned()));
+        }
+
+        // 1. *Make graph connections:*
+        // 1. Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let input_shape = input.descriptor_shape();
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // 1. Let |operator| be an [=operator=] for the "softmax" operation, given |axis| and |options|.
+        // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // 1. Set |operator|'s [=operator/input=] to |input|.
+        // 1. Set |operator|'s [=operator/output=] to |output|.
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "softmax".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({ "axis": axis }),
+                label: Self::label_from_operator_options(&options.parent),
+            });
+        }
+
+        // 1. Return |output|.
+        Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducesum>
+    fn ReduceSum(
+        &self,
+        input: &MLOperand,
+        options: &MLReduceOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        self.reduce_impl("reduceSum", input, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducemean>
+    fn ReduceMean(
+        &self,
+        input: &MLOperand,
+        options: &MLReduceOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        self.reduce_impl("reduceMean", input, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducemax>
+    fn ReduceMax(
+        &self,
+        input: &MLOperand,
+        options: &MLReduceOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        self.reduce_impl("reduceMax", input, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducemin>
+    fn ReduceMin(
+        &self,
+        input: &MLOperand,
+        options: &MLReduceOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        self.reduce_impl("reduceMin", input, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reduceproduct>
+    fn ReduceProduct(
+        &self,
+        input: &MLOperand,
+        options: &MLReduceOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        self.reduce_impl("reduceProduct", input, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducel1>
+    fn ReduceL1(
+        &self,
+        input: &MLOperand,
+        options: &MLReduceOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        self.reduce_impl("reduceL1", input, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducel2>
+    fn ReduceL2(
+        &self,
+        input: &MLOperand,
+        options: &MLReduceOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        self.reduce_impl("reduceL2", input, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducelogsum>
+    fn ReduceLogSum(
+        &self,
+        input: &MLOperand,
+        options: &MLReduceOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        self.reduce_impl("reduceLogSum", input, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducelogsumexp>
+    fn ReduceLogSumExp(
+        &self,
+        input: &MLOperand,
+        options: &MLReduceOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        self.reduce_impl("reduceLogSumExp", input, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-reducesumsquare>
+    fn ReduceSumSquare(
+        &self,
+        input: &MLOperand,
+        options: &MLReduceOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        self.reduce_impl("reduceSumSquare", input, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-quantizelinear>
+    fn QuantizeLinear(
+        &self,
+        input: &MLOperand,
+        scale: &MLOperand,
+        zeroPoint: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        self.quantize_like_impl("quantizeLinear", input, scale, zeroPoint, true, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-dequantizelinear>
+    fn DequantizeLinear(
+        &self,
+        input: &MLOperand,
+        scale: &MLOperand,
+        zeroPoint: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        self.quantize_like_impl(
+            "dequantizeLinear",
+            input,
+            scale,
+            zeroPoint,
+            false,
+            options,
+            can_gc,
+        )
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-scatterelements>
+    fn ScatterElements(
+        &self,
+        input: &MLOperand,
+        indices: &MLOperand,
+        updates: &MLOperand,
+        options: &MLGatherOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        self.scatter_elements_impl(input, indices, updates, options.axis as i32, &options.parent, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-scatternd>
+    fn ScatterND(
+        &self,
+        input: &MLOperand,
+        indices: &MLOperand,
+        updates: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        self.scatter_nd_impl(input, indices, updates, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-cumulativesum>
+    fn CumulativeSum(
+        &self,
+        input: &MLOperand,
+        axis: u32,
+        options: &MLCumulativeSumOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // 1. If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-cumulativesum)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if !["float32", "float16", "int32", "uint32", "int64", "uint64"]
+            .contains(&input_data_type)
+        {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // 1. If |axis| is greater than or equal to |input|'s [=MLOperand/rank=], then [=exception/throw=] a {{TypeError}}.
+        if (axis as usize) >= input.descriptor_shape().len() {
+            return Err(Error::Type("axis out of range".to_owned()));
+        }
+
+        // 1. *Make graph connections:*
+        // 1. Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let input_shape = input.descriptor_shape();
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // 1. Let |operator| be an [=operator=] for the "cumulativeSum" operation and |options|.
+        // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // 1. Set |operator|'s [=operator/input=] to |input|.
+        // 1. Set |operator|'s [=operator/output=] to |output|.
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "cumulativeSum".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({
+                    "axis": axis,
+                    "exclusive": options.exclusive,
+                    "reversed": options.reversed,
+                }),
+                label: Self::label_from_operator_options(&options.parent),
+            });
+        }
+
+        // 1. Return |output|.
+        Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-averagepool2d>
+    fn AveragePool2d(
+        &self,
+        input: &MLOperand,
+        options: &MLPool2dOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating a pool2d operation given "averagePool2d", |input|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.pool2d_impl("averagePool2d", input, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-maxpool2d>
+    fn MaxPool2d(
+        &self,
+        input: &MLOperand,
+        options: &MLPool2dOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating a pool2d operation given "maxPool2d", |input|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.pool2d_impl("maxPool2d", input, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-convtranspose2d>
+    fn ConvTranspose2d(
+        &self,
+        input: &MLOperand,
+        filter: &MLOperand,
+        options: &MLConvTranspose2dOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating a convTranspose2d operation given |input|, |filter|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        self.conv_transpose2d_impl(input, filter, options, can_gc)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-instancenormalization>
+    fn InstanceNormalization(
+        &self,
+        input: &MLOperand,
+        options: &MLInstanceNormalizationOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and any of |input|, |options|.scale (if it exists), and |options|.bias (if it exists) returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+        if let Some(scale) = options.scale.as_ref() {
+            if !self.validate_operand(scale) {
+                return Err(Error::Type("invalid operand".to_owned()));
+            }
+        }
+        if let Some(bias) = options.bias.as_ref() {
+            if !self.validate_operand(bias) {
+                return Err(Error::Type("invalid operand".to_owned()));
+            }
+        }
+
+        // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-instanceNormalization)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if input_data_type != "float32" && input_data_type != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        // Step 4: If |input|'s [=MLOperand/rank=] is not its [=/allowed rank=], then [=exception/throw=] a {{TypeError}}.
+        let input_shape = input.descriptor_shape();
+        if input_shape.len() != 4 {
+            return Err(Error::Type("input must be a 4-D tensor".to_owned()));
+        }
+
+        // Step 5: Set |options|.epsilon to the result of casting |options|.epsilon to |input|'s [=MLOperand/dataType=].
+        let epsilon = if input_data_type == "float32" {
+            (*options.epsilon as f32) as f64
+        } else {
+            *options.epsilon
+        };
+
+        // Step 6: Let |axis| be 1 if |options|.layout is "nchw", and 3 otherwise.
+        let axis = if options.layout == MLInputOperandLayout::Nchw {
+            1usize
+        } else {
+            3usize
+        };
+
+        // Step 7/8: Validate optional |scale| and |bias| dataType and shape.
+        if let Some(scale) = options.scale.as_ref() {
+            if scale.descriptor_data_type() != input_data_type {
+                return Err(Error::Type("scale must have same dataType as input".to_owned()));
+            }
+            if scale.descriptor_shape().len() != 1 || scale.descriptor_shape()[0] != input_shape[axis]
+            {
+                return Err(Error::Type("invalid scale shape".to_owned()));
+            }
+        }
+        if let Some(bias) = options.bias.as_ref() {
+            if bias.descriptor_data_type() != input_data_type {
+                return Err(Error::Type("bias must have same dataType as input".to_owned()));
+            }
+            if bias.descriptor_shape().len() != 1 || bias.descriptor_shape()[0] != input_shape[axis]
+            {
+                return Err(Error::Type("invalid bias shape".to_owned()));
+            }
+        }
+
+        // Step 9: *Make graph connections:*
+        // Step 9.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 9.2: Let |operator| be an [=operator=] for the "instanceNormalization" operation, given |options|.
+        // Step 9.3/9.4/9.5/9.6/9.7: Set output/operator links and optional extra inputs.
+        let mut input_operands = vec![input_id];
+        if let Some(scale) = options.scale.as_ref() {
+            input_operands.push(
+                scale
+                    .id()
+                    .ok_or_else(|| Error::Type("scale operand has no backend id".to_owned()))?,
+            );
+        }
+        if let Some(bias) = options.bias.as_ref() {
+            input_operands.push(
+                bias
+                    .id()
+                    .ok_or_else(|| Error::Type("bias operand has no backend id".to_owned()))?,
+            );
+        }
+
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "instanceNormalization".to_string(),
+                input_operands,
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({
+                    "epsilon": epsilon,
+                    "layout": if options.layout == MLInputOperandLayout::Nchw { "nchw" } else { "nhwc" },
+                    "hasScale": options.scale.is_some(),
+                    "hasBias": options.bias.is_some(),
+                }),
+                label: Self::label_from_operator_options(&options.parent),
+            });
+        }
+
+        // Step 10: Return |output|.
+        Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-layernormalization>
+    fn LayerNormalization(
+        &self,
+        input: &MLOperand,
+        options: &MLLayerNormalizationOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and any of |input|, |options|.scale (if it exists), and |options|.bias (if it exists) returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+        if let Some(scale) = options.scale.as_ref() {
+            if !self.validate_operand(scale) {
+                return Err(Error::Type("invalid operand".to_owned()));
+            }
+        }
+        if let Some(bias) = options.bias.as_ref() {
+            if !self.validate_operand(bias) {
+                return Err(Error::Type("invalid operand".to_owned()));
+            }
+        }
+
+        // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-layerNormalization)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if input_data_type != "float32" && input_data_type != "float16" {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        let input_shape = input.descriptor_shape();
+        let input_rank = input_shape.len();
+
+        // Step 4/5: Resolve and validate |axes|.
+        let axes = if let Some(ref explicit_axes) = options.axes {
+            let mut seen = std::collections::HashSet::new();
+            for &axis in explicit_axes.iter() {
+                if (axis as usize) >= input_rank || !seen.insert(axis) {
+                    return Err(Error::Type("invalid axes".to_owned()));
+                }
+            }
+            explicit_axes.clone()
+        } else if input_rank > 1 {
+            (1..input_rank as u32).collect()
+        } else {
+            Vec::new()
+        };
+
+        // Step 6: Set |options|.epsilon to the result of casting |options|.epsilon to |input|'s [=MLOperand/dataType=].
+        let epsilon = if input_data_type == "float32" {
+            (*options.epsilon as f32) as f64
+        } else {
+            *options.epsilon
+        };
+
+        // Step 7/8: Validate optional |scale| and |bias| rank and type.
+        if let Some(scale) = options.scale.as_ref() {
+            if scale.descriptor_data_type() != input_data_type {
+                return Err(Error::Type("scale must have same dataType as input".to_owned()));
+            }
+            if scale.descriptor_shape().len() != axes.len() {
+                return Err(Error::Type("invalid scale rank".to_owned()));
+            }
+        }
+        if let Some(bias) = options.bias.as_ref() {
+            if bias.descriptor_data_type() != input_data_type {
+                return Err(Error::Type("bias must have same dataType as input".to_owned()));
+            }
+            if bias.descriptor_shape().len() != axes.len() {
+                return Err(Error::Type("invalid bias rank".to_owned()));
+            }
+        }
+
+        // Step 9: Validate each axis maps to matching dimensions in scale/bias when present.
+        for (index, &axis) in axes.iter().enumerate() {
+            let axis_index = axis as usize;
+            if axis_index >= input_rank {
+                return Err(Error::Type("axis out of range".to_owned()));
+            }
+            let size = input_shape[axis_index];
+            if let Some(scale) = options.scale.as_ref() {
+                if scale.descriptor_shape()[index] != size {
+                    return Err(Error::Type("invalid scale shape".to_owned()));
+                }
+            }
+            if let Some(bias) = options.bias.as_ref() {
+                if bias.descriptor_shape()[index] != size {
+                    return Err(Error::Type("invalid bias shape".to_owned()));
+                }
+            }
+        }
+
+        // Step 10: *Make graph connections:*
+        // Step 10.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            input_shape.clone(),
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 10.2/10.3/10.4/10.5/10.6/10.7: Record operator metadata and optional extra inputs.
+        let mut input_operands = vec![input_id];
+        if let Some(scale) = options.scale.as_ref() {
+            input_operands.push(
+                scale
+                    .id()
+                    .ok_or_else(|| Error::Type("scale operand has no backend id".to_owned()))?,
+            );
+        }
+        if let Some(bias) = options.bias.as_ref() {
+            input_operands.push(
+                bias
+                    .id()
+                    .ok_or_else(|| Error::Type("bias operand has no backend id".to_owned()))?,
+            );
+        }
+
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "layerNormalization".to_string(),
+                input_operands,
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({
+                    "axes": axes,
+                    "epsilon": epsilon,
+                    "hasScale": options.scale.is_some(),
+                    "hasBias": options.bias.is_some(),
+                }),
+                label: Self::label_from_operator_options(&options.parent),
+            });
+        }
+
+        // Step 11: Return |output|.
+        Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-prelu>
+    fn Prelu(
+        &self,
+        input: &MLOperand,
+        slope: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+        if !self.validate_operand_ref(input) || !self.validate_operand_ref(slope) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: Validate dataTypes per tensor limits table.
+        let input_data_type = input.descriptor_data_type();
+        if !["float32", "float16", "int64", "int32", "int8"].contains(&input_data_type) {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+        if slope.descriptor_data_type() != input_data_type {
+            return Err(Error::Type(
+                "slope must have same dataType as input".to_owned(),
+            ));
+        }
+
+        // Step 4: Validate bidirectional broadcastability and infer output shape.
+        let output_shape = rustnn::shape_inference::infer_prelu_shape(
+            input.descriptor_shape(),
+            slope.descriptor_shape(),
+        )
+        .map_err(|e| Error::Type(e.to_string()))?;
+        let out_dtype = input_data_type;
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype),
+            shape: output_shape.clone(),
+        };
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let slope_id = slope
+            .id()
+            .ok_or_else(|| Error::Type("slope operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+        self.push_binary_operation(
+            "prelu",
+            vec![input_id, slope_id],
+            output_id,
+            serde_json::json!({}),
+            Self::label_from_operator_options(options),
+        );
+        Ok(create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        ))
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-resample2d>
+    fn Resample2d(
+        &self,
+        input: &MLOperand,
+        options: &MLResample2dOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        if !self.can_build() {
+            return Err(Error::InvalidState(None));
+        }
+
+        // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        if !self.validate_operand_ref(input) {
+            return Err(Error::Type("invalid operand".to_owned()));
+        }
+
+        // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-resample2d)), then [=exception/throw=] a {{TypeError}}.
+        let input_data_type = input.descriptor_data_type();
+        if !["float32", "float16", "uint8", "int8"].contains(&input_data_type) {
+            return Err(Error::Type("unsupported input dataType".to_owned()));
+        }
+
+        let input_shape = input.descriptor_shape();
+        if input_shape.len() != 4 {
+            return Err(Error::Type("input must be a 4-D tensor".to_owned()));
+        }
+
+        // Step 5: Resolve and validate |scales|.
+        let scales: Vec<f32> = if let Some(ref provided_scales) = options.scales {
+            if provided_scales.len() != 2 || provided_scales.iter().any(|value| **value <= 0.0) {
+                return Err(Error::Type("invalid scales".to_owned()));
+            }
+            provided_scales.iter().map(|value| **value).collect()
+        } else {
+            vec![1.0, 1.0]
+        };
+
+        // Step 6: Validate optional |sizes|.
+        if let Some(ref sizes) = options.sizes {
+            if sizes.len() != 2 || sizes.iter().any(|&value| value == 0) {
+                return Err(Error::Type("invalid sizes".to_owned()));
+            }
+        }
+
+        // Step 7: Resolve and validate |axes|.
+        let axes: Vec<u32> = if let Some(ref provided_axes) = options.axes {
+            let mut seen = std::collections::HashSet::new();
+            if provided_axes.iter().any(|&axis| {
+                (axis as usize) >= input_shape.len() || !seen.insert(axis)
+            }) {
+                return Err(Error::Type("invalid axes".to_owned()));
+            }
+            provided_axes.clone()
+        } else {
+            vec![2, 3]
+        };
+        if axes.len() != 2 {
+            return Err(Error::Type("axes must have length 2".to_owned()));
+        }
+
+        // Step 8: Calculate the output shape.
+        let mut output_shape = input_shape.clone();
+        for index in 0..axes.len() {
+            let axis = axes[index] as usize;
+            let size = if let Some(ref sizes) = options.sizes {
+                sizes[index]
+            } else {
+                ((input_shape[axis] as f32) * scales[index]).floor() as u32
+            };
+
+            if size == 0 {
+                return Err(Error::Type("invalid output dimension".to_owned()));
+            }
+
+            output_shape[axis] = size;
+        }
+
+        let desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(input_data_type),
+            shape: output_shape.clone(),
+        };
+
+        // Step 9: *Make graph connections:*
+        // Step 9.1: Let |output| be the result of [=creating an MLOperand=] given [=this=] and |desc|.
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+        let rust_operand = self.create_rust_operand(
+            input_data_type,
+            output_shape,
+            OperandKind::Output,
+            None,
+        );
+        let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 9.2/9.3/9.4/9.5: Record operator metadata and links.
+        let mode = match options.mode {
+            MLInterpolationMode::Nearest_neighbor => "nearest-neighbor",
+            MLInterpolationMode::Linear => "linear",
+        };
+        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
+            graph_info.operations.push(Operation {
+                op_type: "resample2d".to_string(),
+                input_operands: vec![input_id],
+                output_operand: Some(output_id),
+                output_operands: Vec::new(),
+                attributes: serde_json::json!({
+                    "mode": mode,
+                    "axes": axes,
+                    "scales": scales,
+                    "sizes": options.sizes.clone(),
+                }),
+                label: Self::label_from_operator_options(&options.parent),
+            });
+        }
+
+        let output = create_an_mloperand(
+            self,
+            Some(&desc),
+            None,
+            None,
+            false,
+            false,
+            Some(output_id),
+            can_gc,
+        );
+
+        // Step 10: Return |output|.
+        Ok(output)
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-split-splits>
+    fn Split(
+        &self,
+        input: &MLOperand,
+        splits: u32,
+        options: &MLSplitOptions,
+        can_gc: CanGc,
+    ) -> Fallible<Vec<DomRoot<MLOperand>>> {
+        // Step 1: Let |outputs| be the result of creating a split operation with count form.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |outputs|.
+        self.split_impl(
+            input,
+            rustnn::shape_inference::SplitSpec::Count(splits),
+            options.axis,
+            &options.parent,
+            can_gc,
+        )
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-split-splitsequence>
+    fn Split_(
+        &self,
+        input: &MLOperand,
+        splits: Vec<u32>,
+        options: &MLSplitOptions,
+        can_gc: CanGc,
+    ) -> Fallible<Vec<DomRoot<MLOperand>>> {
+        // Step 1: Let |outputs| be the result of creating a split operation with explicit split sizes.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |outputs|.
+        self.split_impl(
+            input,
+            rustnn::shape_inference::SplitSpec::Sizes(splits),
+            options.axis,
+            &options.parent,
+            can_gc,
+        )
+    }
+
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-transpose>
     fn Transpose(
         &self,
         input: &MLOperand,
         options: &MLTransposeOptions,
+        can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If this can not build, then throw an "InvalidStateError" DOMException.
         if !self.can_build() {
@@ -2973,7 +5860,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // Step 5.1: Let |output| be the result of copying an MLOperand given |input|.
-        let operand = copy_an_mloperand(input, Some(&desc), Some(output_id), CanGc::note());
+        let operand = copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc);
 
         // Step 6: Return |output|.
         Ok(operand)

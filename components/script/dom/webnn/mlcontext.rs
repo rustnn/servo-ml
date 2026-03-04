@@ -1112,6 +1112,11 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             output: Some(tensor_limits(data_types.clone())),
         };
 
+        let pad_limits = MLSingleInputSupportLimits {
+            input: Some(tensor_limits(data_types.clone())),
+            output: Some(tensor_limits(data_types.clone())),
+        };
+
         let sin_limits = MLSingleInputSupportLimits {
             input: Some(tensor_limits(data_types.clone())),
             output: Some(tensor_limits(data_types.clone())),
@@ -1148,6 +1153,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             output: Some(tensor_limits(data_types.clone())),
             preferredInputLayout: None,
             cast: Some(cast_limits),
+            pad: Some(pad_limits),
             reciprocal: Some(reciprocal_limits),
             roundEven: Some(round_even_limits),
             sin: Some(sin_limits),

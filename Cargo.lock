@@ -331,7 +331,7 @@ version = "1.1.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "40c48f72fd53cd289104fc64099abca73db4166ad86ea0b4341abe65af83dadc"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -342,7 +342,7 @@ checksum = "291e6a250ff86cd4a820112fb8898808a366d8f9f58ce16d1f538353ad55747d"
 dependencies = [
  "anstyle",
  "once_cell_polyfill",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -785,7 +785,7 @@ dependencies = [
  "bitflags 2.11.0",
  "cexpr",
  "clang-sys",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "regex",
@@ -2033,7 +2033,7 @@ dependencies = [
  "libc",
  "option-ext",
  "redox_users",
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -2431,7 +2431,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "39cab71617ae0d63f51a36d69f866391735b51691dbda63cf6f96d042b63efeb"
 dependencies = [
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -2993,7 +2993,7 @@ dependencies = [
  "gobject-sys",
  "libc",
  "system-deps 7.0.5",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -3951,15 +3951,7 @@ dependencies = [
  "js-sys",
  "log",
  "wasm-bindgen",
-<<<<<<< HEAD
-<<<<<<< HEAD
  "windows-core 0.62.2",
-=======
- "windows-core 0.58.0",
->>>>>>> a57da02aec9 (support int32)
-=======
- "windows-core 0.61.2",
->>>>>>> 29d9066e254 (clean up)
 ]
 
 [[package]]
@@ -4484,7 +4476,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "4b0f83760fb341a774ed326568e19f5a863af4a952def8c39f9ab92fd95b88e5"
 dependencies = [
  "equivalent",
- "hashbrown 0.16.0",
+ "hashbrown 0.15.5",
  "serde",
  "serde_core",
 ]
@@ -4574,7 +4566,7 @@ checksum = "3640c1c38b8e4e43584d8df18be5fc6b0aa314ce6ebf51b53313d4306cca8e46"
 dependencies = [
  "hermit-abi",
  "libc",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -4951,13 +4943,6 @@ dependencies = [
  "tokio",
  "tracing",
  "url",
-<<<<<<< HEAD
-=======
- "webgl",
- "webgpu",
- "webnn",
- "webnn_traits",
->>>>>>> 41d80fb9384 (add basic backend)
  "webrender",
  "webrender_api",
  "winit",
@@ -5487,7 +5472,7 @@ version = "0.50.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7957b9740744892f114936ab4a57b3f487491bbeafaf8083688b16841a4240e5"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.60.2",
 ]
 
 [[package]]
@@ -6765,8 +6750,8 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "22505a5c94da8e3b7c2996394d1c933236c4d743e81a410bcca4e6989fc066a4"
 dependencies = [
  "bytes",
- "heck 0.5.0",
- "itertools 0.12.1",
+ "heck 0.4.1",
+ "itertools 0.10.5",
  "log",
  "multimap",
  "once_cell",
@@ -6786,7 +6771,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "81bddcdb20abf9501610992b6759a4c888aef7d1a7247ef75e2404275ac24af1"
 dependencies = [
  "anyhow",
- "itertools 0.12.1",
+ "itertools 0.10.5",
  "proc-macro2",
  "quote",
  "syn",
@@ -7328,7 +7313,7 @@ dependencies = [
  "errno",
  "libc",
  "linux-raw-sys 0.11.0",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7385,7 +7370,7 @@ dependencies = [
  "security-framework",
  "security-framework-sys",
  "webpki-root-certs",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -7709,53 +7694,9 @@ dependencies = [
  "encoding_rs",
  "euclid",
  "keyboard-types",
-<<<<<<< HEAD
  "servo-base",
  "servo-script",
  "servo-url",
-=======
- "script",
- "servo_url",
-]
-
-[[package]]
-name = "script_traits"
-version = "0.0.1"
-dependencies = [
- "accesskit",
- "background_hang_monitor_api",
- "base",
- "bluetooth_traits",
- "canvas_traits",
- "constellation_traits",
- "content-security-policy",
- "crossbeam-channel",
- "devtools_traits",
- "embedder_traits",
- "euclid",
- "fonts_traits",
- "keyboard-types",
- "log",
- "malloc_size_of_derive",
- "media",
- "net_traits",
- "paint_api",
- "pixels",
- "profile_traits",
- "rustc-hash 2.1.1",
- "serde",
- "servo_config",
- "servo_malloc_size_of",
- "servo_url",
- "storage_traits",
- "strum",
- "stylo_atoms",
- "stylo_traits",
- "webgpu_traits",
- "webnn_traits",
- "webrender_api",
- "webxr-api",
->>>>>>> 41d80fb9384 (add basic backend)
 ]
 
 [[package]]
@@ -8345,40 +8286,12 @@ dependencies = [
 name = "servo-dom-struct"
 version = "0.0.6"
 dependencies = [
-=======
-name = "serde_with"
-version = "3.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "4fa237f2807440d238e0364a218270b98f767a00d3dada77b1c53ae88940e2e7"
-dependencies = [
- "base64 0.22.1",
- "chrono",
- "hex 0.4.3",
- "indexmap 1.9.3",
- "indexmap 2.11.4",
- "schemars 0.9.0",
- "schemars 1.2.1",
- "serde_core",
- "serde_json",
- "serde_with_macros",
- "time",
-]
-
-[[package]]
-name = "serde_with_macros"
-version = "3.16.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "52a8e3ca0ca629121f70ab50f95249e5a6f925cc0f6ffe8256c45b728875706c"
-dependencies = [
- "darling 0.21.3",
->>>>>>> 24816e683dc (start using rustnn in basic dom algos)
  "proc-macro2",
  "quote",
  "syn",
 ]
 
 [[package]]
-<<<<<<< HEAD
 name = "servo-embedder-traits"
 version = "0.0.6"
 dependencies = [
@@ -8649,8 +8562,6 @@ dependencies = [
 ]
 
 [[package]]
-=======
->>>>>>> 24816e683dc (start using rustnn in basic dom algos)
 name = "servo-media"
 version = "0.0.6"
 dependencies = [
@@ -9518,94 +9429,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
-=======
-name = "servo_config"
-version = "0.0.1"
-dependencies = [
- "serde",
- "serde_json",
- "servo_config_macro",
- "servo_url",
- "stylo_config",
-]
-
-[[package]]
-name = "servo_config_macro"
-version = "0.0.1"
-dependencies = [
- "proc-macro2",
- "quote",
- "syn",
- "synstructure",
-]
-
-[[package]]
-name = "servo_geometry"
-version = "0.0.1"
-dependencies = [
- "app_units",
- "euclid",
- "malloc_size_of_derive",
- "servo_malloc_size_of",
- "webrender",
- "webrender_api",
-]
-
-[[package]]
-name = "servo_malloc_size_of"
-version = "0.0.1"
-dependencies = [
- "accountable-refcell",
- "app_units",
- "atomic_refcell",
- "content-security-policy",
- "crossbeam-channel",
- "euclid",
- "http 1.4.0",
- "indexmap 2.11.4",
- "ipc-channel",
- "keyboard-types",
- "markup5ever",
- "mime",
- "parking_lot",
- "resvg",
- "servo_allocator",
- "servo_arc",
- "smallvec",
- "string_cache",
- "stylo",
- "stylo_dom",
- "stylo_malloc_size_of",
- "taffy",
- "tendril",
- "tokio",
- "unicode-bidi",
- "unicode-script",
- "url",
- "urlpattern",
- "utf-8",
- "uuid",
- "webrender",
- "webrender_api",
- "wr_malloc_size_of",
-]
-
-[[package]]
-name = "servo_url"
-version = "0.0.1"
-dependencies = [
- "encoding_rs",
- "malloc_size_of_derive",
- "serde",
- "servo_arc",
- "servo_malloc_size_of",
- "url",
- "uuid",
-]
-
-[[package]]
->>>>>>> 24816e683dc (start using rustnn in basic dom algos)
 name = "servoshell"
 version = "0.0.6"
 dependencies = [
@@ -10329,7 +10152,7 @@ dependencies = [
  "getrandom 0.3.4",
  "once_cell",
  "rustix 1.1.2",
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
@@ -10688,13 +10511,8 @@ version = "0.25.4+spec-1.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "7193cbd0ce53dc966037f54351dbbcf0d5a642c7f0038c382ef9e677ce8c13f2"
 dependencies = [
-<<<<<<< HEAD
  "indexmap",
  "toml_datetime 1.0.0+spec-1.1.0",
-=======
- "indexmap 2.11.4",
- "toml_datetime 0.7.3",
->>>>>>> 24816e683dc (start using rustnn in basic dom algos)
  "toml_parser",
  "winnow",
 ]
@@ -11694,9 +11512,6 @@ dependencies = [
 ]
 
 [[package]]
-<<<<<<< HEAD
->>>>>>> 24816e683dc (start using rustnn in basic dom algos)
-=======
 name = "webnn_traits"
 version = "0.0.1"
 dependencies = [
@@ -11709,7 +11524,6 @@ dependencies = [
 ]
 
 [[package]]
->>>>>>> 41d80fb9384 (add basic backend)
 name = "webpki-root-certs"
 version = "1.0.6"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -11973,7 +11787,7 @@ version = "0.1.11"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c2a7b1c03c876122aa43f3020e6c3c3ee5c05081c9a00739faf7503aeba10d22"
 dependencies = [
- "windows-sys 0.61.2",
+ "windows-sys 0.52.0",
 ]
 
 [[package]]
