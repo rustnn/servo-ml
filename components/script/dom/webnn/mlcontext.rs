@@ -725,7 +725,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
 
         // Request the bytes from the manager. `tensor_id` is guaranteed non-zero by the constructor.
         let id = tensor.tensor_id();
-        let ml_dom = global.as_window().Navigator().Ml();
+        let ml_dom = global.get_ml();
         let cb = ml_dom.get_or_setup_callback(global);
         if let Err(e) =
             self.global()
@@ -805,7 +805,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
 
         // Request the bytes from the manager. `tensor_id` is guaranteed non-zero by the constructor.
         let id = tensor.tensor_id();
-        let ml_dom = global.as_window().Navigator().Ml();
+        let ml_dom = global.get_ml();
         let cb = ml_dom.get_or_setup_callback(global);
         if let Err(e) =
             self.global()
