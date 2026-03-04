@@ -258,6 +258,85 @@ dictionary MLSingleInputSupportLimits {
   MLTensorLimits output;
 };
 
+dictionary MLBinarySupportLimits {
+  MLTensorLimits a;
+  MLTensorLimits b;
+  MLTensorLimits output;
+};
+
+dictionary MLBatchNormalizationSupportLimits {
+  MLTensorLimits input;
+  MLTensorLimits mean;
+  MLTensorLimits variance;
+  MLTensorLimits scale;
+  MLTensorLimits bias;
+  MLTensorLimits output;
+};
+
+dictionary MLConcatSupportLimits {
+  MLTensorLimits inputs;
+  MLTensorLimits output;
+};
+
+dictionary MLConv2dSupportLimits {
+  MLTensorLimits input;
+  MLTensorLimits filter;
+  MLTensorLimits bias;
+  MLTensorLimits output;
+};
+
+dictionary MLQuantizeDequantizeLinearSupportLimits {
+  MLTensorLimits input;
+  MLTensorLimits scale;
+  MLTensorLimits zeroPoint;
+  MLTensorLimits output;
+};
+
+dictionary MLGemmSupportLimits {
+  MLTensorLimits a;
+  MLTensorLimits b;
+  MLTensorLimits c;
+  MLTensorLimits output;
+};
+
+dictionary MLNormalizationSupportLimits {
+  MLTensorLimits input;
+  MLTensorLimits scale;
+  MLTensorLimits bias;
+  MLTensorLimits output;
+};
+
+dictionary MLGatherSupportLimits {
+  MLTensorLimits input;
+  MLTensorLimits indices;
+  MLTensorLimits output;
+};
+
+dictionary MLPreluSupportLimits {
+  MLTensorLimits input;
+  MLTensorLimits slope;
+  MLTensorLimits output;
+};
+
+dictionary MLScatterSupportLimits {
+  MLTensorLimits input;
+  MLTensorLimits indices;
+  MLTensorLimits updates;
+  MLTensorLimits output;
+};
+
+dictionary MLSplitSupportLimits {
+  MLTensorLimits input;
+  MLTensorLimits outputs;
+};
+
+dictionary MLWhereSupportLimits {
+  MLTensorLimits condition;
+  MLTensorLimits trueValue;
+  MLTensorLimits falseValue;
+  MLTensorLimits output;
+};
+
 dictionary MLOpSupportLimits {
   MLDataTypeList preferredInputLayout;
   [EnforceRange] unsigned long long maxTensorByteLength;
@@ -456,6 +535,75 @@ partial interface MLGraphBuilder {
 };
 
 partial dictionary MLOpSupportLimits {
+  MLSingleInputSupportLimits argMin;
+  MLSingleInputSupportLimits argMax;
+  MLBinarySupportLimits add;
+  MLSingleInputSupportLimits averagePool2d;
+  MLBatchNormalizationSupportLimits batchNormalization;
+  MLSingleInputSupportLimits clamp;
+  MLConcatSupportLimits concat;
+  MLConv2dSupportLimits conv2d;
+  MLConv2dSupportLimits convTranspose2d;
+  MLSingleInputSupportLimits cumulativeSum;
+  MLQuantizeDequantizeLinearSupportLimits dequantizeLinear;
+  MLBinarySupportLimits div;
+  MLSingleInputSupportLimits elu;
+  MLBinarySupportLimits equal;
+  MLSingleInputSupportLimits expand;
+  MLGatherSupportLimits gather;
+  MLGatherSupportLimits gatherElements;
+  MLGatherSupportLimits gatherND;
+  MLSingleInputSupportLimits gelu;
+  MLGemmSupportLimits gemm;
+  MLBinarySupportLimits greater;
+  MLBinarySupportLimits greaterOrEqual;
+  MLSingleInputSupportLimits hardSigmoid;
+  MLSingleInputSupportLimits hardSwish;
+  MLSingleInputSupportLimits isInfinite;
+  MLSingleInputSupportLimits isNaN;
+  MLNormalizationSupportLimits instanceNormalization;
+  MLNormalizationSupportLimits layerNormalization;
+  MLSingleInputSupportLimits leakyRelu;
+  MLBinarySupportLimits lesser;
+  MLBinarySupportLimits lesserOrEqual;
+  MLSingleInputSupportLimits linear;
+  MLSingleInputSupportLimits logicalNot;
+  MLBinarySupportLimits logicalAnd;
+  MLBinarySupportLimits logicalOr;
+  MLBinarySupportLimits logicalXor;
+  MLBinarySupportLimits matmul;
+  MLSingleInputSupportLimits maxPool2d;
+  MLBinarySupportLimits max;
+  MLBinarySupportLimits min;
+  MLBinarySupportLimits mul;
+  MLBinarySupportLimits notEqual;
+  MLPreluSupportLimits prelu;
+  MLBinarySupportLimits pow;
+  MLQuantizeDequantizeLinearSupportLimits quantizeLinear;
+  MLSingleInputSupportLimits reduceL1;
+  MLSingleInputSupportLimits reduceL2;
+  MLSingleInputSupportLimits reduceLogSum;
+  MLSingleInputSupportLimits reduceLogSumExp;
+  MLSingleInputSupportLimits reduceMax;
+  MLSingleInputSupportLimits reduceMean;
+  MLSingleInputSupportLimits reduceMin;
+  MLSingleInputSupportLimits reduceProduct;
+  MLSingleInputSupportLimits reduceSum;
+  MLSingleInputSupportLimits reduceSumSquare;
+  MLSingleInputSupportLimits resample2d;
+  MLSingleInputSupportLimits reshape;
+  MLSingleInputSupportLimits reverse;
+  MLScatterSupportLimits scatterElements;
+  MLScatterSupportLimits scatterND;
+  MLSingleInputSupportLimits sigmoid;
+  MLSingleInputSupportLimits slice;
+  MLSingleInputSupportLimits softmax;
+  MLSingleInputSupportLimits softplus;
+  MLSingleInputSupportLimits softsign;
+  MLSplitSupportLimits split;
+  MLBinarySupportLimits sub;
+  MLWhereSupportLimits where;
+
   MLSingleInputSupportLimits abs;
   MLSingleInputSupportLimits ceil;
   MLSingleInputSupportLimits cos;

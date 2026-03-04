@@ -14,9 +14,13 @@ use webnn_traits::{ContextId, GraphId, WebNNMsg};
 use crate::dom::bindings::buffer_source::{BufferSource, HeapBufferSource, create_buffer_source};
 use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
-    MLContextLostInfo, MLContextMethods, MLNamedTensors, MLOpSupportLimits, MLOperandDataType,
-    MLOperandDescriptor, MLPowerPreference, MLRankRange, MLSingleInputSupportLimits,
-    MLTensorDescriptor, MLTensorLimits,
+    MLBatchNormalizationSupportLimits, MLBinarySupportLimits, MLConcatSupportLimits,
+    MLContextLostInfo, MLContextMethods, MLConv2dSupportLimits, MLGatherSupportLimits,
+    MLGemmSupportLimits, MLNamedTensors, MLNormalizationSupportLimits, MLOpSupportLimits,
+    MLOperandDataType, MLOperandDescriptor, MLPowerPreference, MLPreluSupportLimits,
+    MLQuantizeDequantizeLinearSupportLimits, MLRankRange, MLScatterSupportLimits,
+    MLSingleInputSupportLimits, MLSplitSupportLimits, MLTensorDescriptor, MLTensorLimits,
+    MLWhereSupportLimits,
 };
 use crate::dom::bindings::codegen::UnionTypes::ArrayBufferViewOrArrayBuffer;
 use crate::dom::bindings::error::{Error, Fallible};
@@ -1023,147 +1027,193 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // will skip that case entirely rather than ever dispatch it.
         let max_bytes = Some(50_000_000u64);
 
-        let tensor_limits = |dt: Option<Vec<MLOperandDataType>>| MLTensorLimits {
-            dataTypes: dt,
+        let tensor_limits = || MLTensorLimits {
+            dataTypes: data_types.clone(),
             rankRange: Some(MLRankRange {
                 min: Some(1),
                 max: Some(4),
             }),
         };
 
-        // cast uses same input/output limits as ordinary tensors for now.
-        let cast_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
+        let single_input_limits = || MLSingleInputSupportLimits {
+            input: Some(tensor_limits()),
+            output: Some(tensor_limits()),
         };
 
-        let triangular_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
+        let binary_limits = || MLBinarySupportLimits {
+            a: Some(tensor_limits()),
+            b: Some(tensor_limits()),
+            output: Some(tensor_limits()),
         };
 
-        let transpose_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
+        let batch_normalization_limits = || MLBatchNormalizationSupportLimits {
+            input: Some(tensor_limits()),
+            mean: Some(tensor_limits()),
+            variance: Some(tensor_limits()),
+            scale: Some(tensor_limits()),
+            bias: Some(tensor_limits()),
+            output: Some(tensor_limits()),
         };
 
-        let tile_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
+        let concat_limits = || MLConcatSupportLimits {
+            inputs: Some(tensor_limits()),
+            output: Some(tensor_limits()),
         };
 
-        let tan_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
+        let conv2d_limits = || MLConv2dSupportLimits {
+            input: Some(tensor_limits()),
+            filter: Some(tensor_limits()),
+            bias: Some(tensor_limits()),
+            output: Some(tensor_limits()),
         };
 
-        let abs_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
+        let quantize_dequantize_linear_limits = || MLQuantizeDequantizeLinearSupportLimits {
+            input: Some(tensor_limits()),
+            scale: Some(tensor_limits()),
+            zeroPoint: Some(tensor_limits()),
+            output: Some(tensor_limits()),
         };
 
-        let ceil_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
+        let gemm_limits = || MLGemmSupportLimits {
+            a: Some(tensor_limits()),
+            b: Some(tensor_limits()),
+            c: Some(tensor_limits()),
+            output: Some(tensor_limits()),
         };
 
-        let cos_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
+        let normalization_limits = || MLNormalizationSupportLimits {
+            input: Some(tensor_limits()),
+            scale: Some(tensor_limits()),
+            bias: Some(tensor_limits()),
+            output: Some(tensor_limits()),
         };
 
-        let erf_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
+        let prelu_limits = || MLPreluSupportLimits {
+            input: Some(tensor_limits()),
+            slope: Some(tensor_limits()),
+            output: Some(tensor_limits()),
         };
 
-        let exp_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
+        let gather_limits = || MLGatherSupportLimits {
+            input: Some(tensor_limits()),
+            indices: Some(tensor_limits()),
+            output: Some(tensor_limits()),
         };
 
-        let floor_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
+        let scatter_limits = || MLScatterSupportLimits {
+            input: Some(tensor_limits()),
+            indices: Some(tensor_limits()),
+            updates: Some(tensor_limits()),
+            output: Some(tensor_limits()),
         };
 
-        let identity_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
+        let split_limits = || MLSplitSupportLimits {
+            input: Some(tensor_limits()),
+            outputs: Some(tensor_limits()),
         };
 
-        let log_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
-        };
-
-        let neg_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
-        };
-
-        let reciprocal_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
-        };
-
-        let round_even_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
-        };
-
-        let pad_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
-        };
-
-        let sin_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
-        };
-
-        let sign_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
-        };
-
-        let sqrt_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
-        };
-
-        let tanh_limits = MLSingleInputSupportLimits {
-            input: Some(tensor_limits(data_types.clone())),
-            output: Some(tensor_limits(data_types.clone())),
+        let where_limits = || MLWhereSupportLimits {
+            condition: Some(tensor_limits()),
+            trueValue: Some(tensor_limits()),
+            falseValue: Some(tensor_limits()),
+            output: Some(tensor_limits()),
         };
 
         MLOpSupportLimits {
-            abs: Some(abs_limits),
-            ceil: Some(ceil_limits),
-            constant: Some(tensor_limits(data_types.clone())),
-            cos: Some(cos_limits),
-            erf: Some(erf_limits),
-            exp: Some(exp_limits),
-            floor: Some(floor_limits),
-            identity: Some(identity_limits),
-            input: Some(tensor_limits(data_types.clone())),
-            log: Some(log_limits),
+            abs: Some(single_input_limits()),
+            add: Some(binary_limits()),
+            argMax: Some(single_input_limits()),
+            argMin: Some(single_input_limits()),
+            averagePool2d: Some(single_input_limits()),
+            batchNormalization: Some(batch_normalization_limits()),
+            cast: Some(single_input_limits()),
+            ceil: Some(single_input_limits()),
+            clamp: Some(single_input_limits()),
+            concat: Some(concat_limits()),
+            constant: Some(tensor_limits()),
+            conv2d: Some(conv2d_limits()),
+            convTranspose2d: Some(conv2d_limits()),
+            cos: Some(single_input_limits()),
+            cumulativeSum: Some(single_input_limits()),
+            dequantizeLinear: Some(quantize_dequantize_linear_limits()),
+            div: Some(binary_limits()),
+            elu: Some(single_input_limits()),
+            equal: Some(binary_limits()),
+            erf: Some(single_input_limits()),
+            expand: Some(single_input_limits()),
+            exp: Some(single_input_limits()),
+            floor: Some(single_input_limits()),
+            gather: Some(gather_limits()),
+            gatherElements: Some(gather_limits()),
+            gatherND: Some(gather_limits()),
+            gelu: Some(single_input_limits()),
+            gemm: Some(gemm_limits()),
+            greater: Some(binary_limits()),
+            greaterOrEqual: Some(binary_limits()),
+            hardSigmoid: Some(single_input_limits()),
+            hardSwish: Some(single_input_limits()),
+            identity: Some(single_input_limits()),
+            input: Some(tensor_limits()),
+            instanceNormalization: Some(normalization_limits()),
+            isInfinite: Some(single_input_limits()),
+            isNaN: Some(single_input_limits()),
+            layerNormalization: Some(normalization_limits()),
+            leakyRelu: Some(single_input_limits()),
+            lesser: Some(binary_limits()),
+            lesserOrEqual: Some(binary_limits()),
+            linear: Some(single_input_limits()),
+            log: Some(single_input_limits()),
+            logicalAnd: Some(binary_limits()),
+            logicalNot: Some(single_input_limits()),
+            logicalOr: Some(binary_limits()),
+            logicalXor: Some(binary_limits()),
+            matmul: Some(binary_limits()),
+            max: Some(binary_limits()),
+            maxPool2d: Some(single_input_limits()),
             maxTensorByteLength: max_bytes,
-            neg: Some(neg_limits),
-            output: Some(tensor_limits(data_types.clone())),
+            min: Some(binary_limits()),
+            mul: Some(binary_limits()),
+            neg: Some(single_input_limits()),
+            notEqual: Some(binary_limits()),
+            output: Some(tensor_limits()),
             preferredInputLayout: None,
-            cast: Some(cast_limits),
-            pad: Some(pad_limits),
-            reciprocal: Some(reciprocal_limits),
-            roundEven: Some(round_even_limits),
-            sin: Some(sin_limits),
-            sign: Some(sign_limits),
-            sqrt: Some(sqrt_limits),
-            tan: Some(tan_limits),
-            tanh: Some(tanh_limits),
-            tile: Some(tile_limits),
-            transpose: Some(transpose_limits),
-            triangular: Some(triangular_limits),
+            pad: Some(single_input_limits()),
+            prelu: Some(prelu_limits()),
+            pow: Some(binary_limits()),
+            quantizeLinear: Some(quantize_dequantize_linear_limits()),
+            reciprocal: Some(single_input_limits()),
+            reduceL1: Some(single_input_limits()),
+            reduceL2: Some(single_input_limits()),
+            reduceLogSum: Some(single_input_limits()),
+            reduceLogSumExp: Some(single_input_limits()),
+            reduceMax: Some(single_input_limits()),
+            reduceMean: Some(single_input_limits()),
+            reduceMin: Some(single_input_limits()),
+            reduceProduct: Some(single_input_limits()),
+            reduceSum: Some(single_input_limits()),
+            reduceSumSquare: Some(single_input_limits()),
+            resample2d: Some(single_input_limits()),
+            reshape: Some(single_input_limits()),
+            reverse: Some(single_input_limits()),
+            roundEven: Some(single_input_limits()),
+            scatterElements: Some(scatter_limits()),
+            scatterND: Some(scatter_limits()),
+            sigmoid: Some(single_input_limits()),
+            sin: Some(single_input_limits()),
+            sign: Some(single_input_limits()),
+            slice: Some(single_input_limits()),
+            softmax: Some(single_input_limits()),
+            softplus: Some(single_input_limits()),
+            softsign: Some(single_input_limits()),
+            split: Some(split_limits()),
+            sub: Some(binary_limits()),
+            sqrt: Some(single_input_limits()),
+            tan: Some(single_input_limits()),
+            tanh: Some(single_input_limits()),
+            tile: Some(single_input_limits()),
+            transpose: Some(single_input_limits()),
+            triangular: Some(single_input_limits()),
+            where_: Some(where_limits()),
         }
     }
 

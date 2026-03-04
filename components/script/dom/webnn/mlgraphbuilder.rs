@@ -18,11 +18,10 @@ use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLConv2dOptions, MLConvTranspose2dFilterOperandLayout, MLConvTranspose2dOptions,
     MLCumulativeSumOptions, MLEluOptions, MLGatherOptions, MLGemmOptions, MLGraphBuilderMethods,
     MLHardSigmoidOptions, MLInputOperandLayout, MLInstanceNormalizationOptions,
-    MLInterpolationMode, MLPaddingMode,
-    MLLayerNormalizationOptions, MLLeakyReluOptions, MLLinearOptions, MLOperandDataType,
-    MLOperandDescriptor, MLOperatorOptions, MLPadOptions, MLPool2dOptions,
-    MLResample2dOptions, MLReverseOptions, MLReduceOptions, MLSoftmaxOptions, MLSplitOptions,
-    MLTransposeOptions, MLTriangularOptions,
+    MLInterpolationMode, MLLayerNormalizationOptions, MLLeakyReluOptions, MLLinearOptions,
+    MLOperandDataType, MLOperandDescriptor, MLOperatorOptions, MLPadOptions, MLPaddingMode,
+    MLPool2dOptions, MLReduceOptions, MLResample2dOptions, MLReverseOptions, MLSoftmaxOptions,
+    MLSplitOptions, MLTransposeOptions, MLTriangularOptions,
 };
 use crate::dom::bindings::error::{Error, Fallible};
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
@@ -272,13 +271,18 @@ impl MLGraphBuilder {
         // Step 4: If |op| is one of "logicalNot", "logicalAnd", "logicalOr", "logicalXor", then:
         // Step 4.1: If |a|'s [=MLOperand/dataType=] is not {{MLOperandDataType/"uint8"}}, then [=exception/throw=] a {{TypeError}}.
         let a_dtype = a.descriptor_data_type();
-        if ["logicalNot", "logicalAnd", "logicalOr", "logicalXor"].contains(&op_name) && a_dtype != "uint8" {
+        if ["logicalNot", "logicalAnd", "logicalOr", "logicalXor"].contains(&op_name) &&
+            a_dtype != "uint8"
+        {
             return Err(Error::Type("unsupported input dataType".to_owned()));
         }
 
         // Step 5: If |op| is one of "isNaN", "isInfinite", then:
         // Step 5.1: If |a|'s [=MLOperand/dataType=] is not one of « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}} », then [=exception/throw=] a {{TypeError}}.
-        if ["isNaN", "isInfinite"].contains(&op_name) && a_dtype != "float32" && a_dtype != "float16" {
+        if ["isNaN", "isInfinite"].contains(&op_name) &&
+            a_dtype != "float32" &&
+            a_dtype != "float16"
+        {
             return Err(Error::Type("unsupported input dataType".to_owned()));
         }
 
@@ -423,7 +427,8 @@ impl MLGraphBuilder {
 
         // Step 7: *Make graph connections:*
         // Step 7.1: Let |output| be the result of [=creating an MLOperand=] given [=this=] and |desc|.
-        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let rust_operand =
+            self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Step 7.2: Let |operator| be an [=operator=] for the |op| operation, given |options|.
@@ -730,7 +735,8 @@ impl MLGraphBuilder {
             .id()
             .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
         // Step 3: Create output operand id, record operation metadata, and return output operand.
-        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let rust_operand =
+            self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
         self.push_unary_operation(
             op_name,
@@ -739,7 +745,12 @@ impl MLGraphBuilder {
             serde_json::json!({}),
             Self::label_from_operator_options(&options.parent),
         );
-        Ok(copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc))
+        Ok(copy_an_mloperand(
+            input,
+            Some(&desc),
+            Some(output_id),
+            can_gc,
+        ))
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-convtranspose2d>
@@ -815,7 +826,8 @@ impl MLGraphBuilder {
             .id()
             .ok_or_else(|| Error::Type("filter operand has no backend id".to_owned()))?;
         // Step 3: Create output operand id, record operation metadata, and return output operand.
-        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let rust_operand =
+            self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
         self.push_binary_operation(
             "convTranspose2d",
@@ -853,9 +865,12 @@ impl MLGraphBuilder {
             return Err(Error::Type("invalid operand".to_owned()));
         }
         // Step 2: Infer all split output shapes.
-        let output_shapes =
-            rustnn::shape_inference::infer_split_shapes(input.descriptor_shape(), &split_spec, axis)
-                .map_err(|e| Error::Type(e.to_string()))?;
+        let output_shapes = rustnn::shape_inference::infer_split_shapes(
+            input.descriptor_shape(),
+            &split_spec,
+            axis,
+        )
+        .map_err(|e| Error::Type(e.to_string()))?;
         let input_id = input
             .id()
             .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
@@ -3488,8 +3503,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             let c_target = vec![shape_a[0], shape_b[1]];
             if !unidirectionally_broadcastable_to_shape(c_op.descriptor_shape(), &c_target) {
                 return Err(Error::Type(
-                    "c is not unidirectionally broadcastable to [shapeA[0], shapeB[1]]"
-                        .to_owned(),
+                    "c is not unidirectionally broadcastable to [shapeA[0], shapeB[1]]".to_owned(),
                 ));
             }
         }
@@ -4362,13 +4376,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 1.1: If that throws an error, then rethrow the error.
 
         // Step 2: Return |output|.
-        self.create_an_element_wise_logical_operation(
-            "greaterOrEqual",
-            a,
-            Some(b),
-            options,
-            can_gc,
-        )
+        self.create_an_element_wise_logical_operation("greaterOrEqual", a, Some(b), options, can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-lesser>
@@ -4398,13 +4406,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 1.1: If that throws an error, then rethrow the error.
 
         // Step 2: Return |output|.
-        self.create_an_element_wise_logical_operation(
-            "lesserOrEqual",
-            a,
-            Some(b),
-            options,
-            can_gc,
-        )
+        self.create_an_element_wise_logical_operation("lesserOrEqual", a, Some(b), options, can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-notequal>
@@ -4553,7 +4555,12 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             Self::label_from_operator_options(options),
         );
 
-        Ok(copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc))
+        Ok(copy_an_mloperand(
+            input,
+            Some(&desc),
+            Some(output_id),
+            can_gc,
+        ))
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-expand>
@@ -4575,8 +4582,9 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // Step 3: Let |outputShape| be the result of inferring expanded output shape.
-        let output_shape = rustnn::shape_inference::infer_expand_shape(input.descriptor_shape(), &newShape)
-            .map_err(|e| Error::Type(e.to_string()))?;
+        let output_shape =
+            rustnn::shape_inference::infer_expand_shape(input.descriptor_shape(), &newShape)
+                .map_err(|e| Error::Type(e.to_string()))?;
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
             dataType: Self::data_type_enum_from_str(out_dtype),
@@ -4596,7 +4604,12 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             serde_json::json!({"newShape": newShape}),
             Self::label_from_operator_options(options),
         );
-        Ok(copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc))
+        Ok(copy_an_mloperand(
+            input,
+            Some(&desc),
+            Some(output_id),
+            can_gc,
+        ))
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-slice>
@@ -4630,7 +4643,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_id = input
             .id()
             .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
-        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let rust_operand =
+            self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
         // Step 4: Make graph connections for the "slice" operator.
         self.push_unary_operation(
@@ -4640,7 +4654,12 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             serde_json::json!({"starts": starts, "sizes": sizes}),
             Self::label_from_operator_options(options),
         );
-        Ok(copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc))
+        Ok(copy_an_mloperand(
+            input,
+            Some(&desc),
+            Some(output_id),
+            can_gc,
+        ))
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-gather>
@@ -4691,7 +4710,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let indices_id = indices
             .id()
             .ok_or_else(|| Error::Type("indices operand has no backend id".to_owned()))?;
-        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let rust_operand =
+            self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
         self.push_binary_operation(
             "gather",
@@ -4774,7 +4794,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let indices_id = indices
             .id()
             .ok_or_else(|| Error::Type("indices operand has no backend id".to_owned()))?;
-        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let rust_operand =
+            self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
         self.push_binary_operation(
             "gatherElements",
@@ -4830,7 +4851,9 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Steps 5-13: Derive output shape components.
         let k = indices_shape[indices_shape.len() - 1] as usize;
         if k > input_shape.len() {
-            return Err(Error::Type("indices last dimension out of range".to_owned()));
+            return Err(Error::Type(
+                "indices last dimension out of range".to_owned(),
+            ));
         }
         let mut output_shape = indices_shape[..indices_shape.len() - 1].to_vec();
         output_shape.extend_from_slice(&input_shape[k..]);
@@ -4845,7 +4868,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let indices_id = indices
             .id()
             .ok_or_else(|| Error::Type("indices operand has no backend id".to_owned()))?;
-        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let rust_operand =
+            self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
         self.push_binary_operation(
             "gatherND",
@@ -4913,7 +4937,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 }
                 if endingPadding[index] >= output_shape[index] {
                     return Err(Error::Type(
-                        "endingPadding[index] must be less than input dimension in reflection mode".to_owned(),
+                        "endingPadding[index] must be less than input dimension in reflection mode"
+                            .to_owned(),
                     ));
                 }
             }
@@ -4965,7 +4990,12 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         );
 
         // Step 9: Return |output|.
-        Ok(copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc))
+        Ok(copy_an_mloperand(
+            input,
+            Some(&desc),
+            Some(output_id),
+            can_gc,
+        ))
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-softmax>
@@ -5277,8 +5307,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-cumulativesum)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
-        if !["float32", "float16", "int32", "uint32", "int64", "uint64"]
-            .contains(&input_data_type)
+        if !["float32", "float16", "int32", "uint32", "int64", "uint64"].contains(&input_data_type)
         {
             return Err(Error::Type("unsupported input dataType".to_owned()));
         }
@@ -5424,16 +5453,21 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 7/8: Validate optional |scale| and |bias| dataType and shape.
         if let Some(scale) = options.scale.as_ref() {
             if scale.descriptor_data_type() != input_data_type {
-                return Err(Error::Type("scale must have same dataType as input".to_owned()));
+                return Err(Error::Type(
+                    "scale must have same dataType as input".to_owned(),
+                ));
             }
-            if scale.descriptor_shape().len() != 1 || scale.descriptor_shape()[0] != input_shape[axis]
+            if scale.descriptor_shape().len() != 1 ||
+                scale.descriptor_shape()[0] != input_shape[axis]
             {
                 return Err(Error::Type("invalid scale shape".to_owned()));
             }
         }
         if let Some(bias) = options.bias.as_ref() {
             if bias.descriptor_data_type() != input_data_type {
-                return Err(Error::Type("bias must have same dataType as input".to_owned()));
+                return Err(Error::Type(
+                    "bias must have same dataType as input".to_owned(),
+                ));
             }
             if bias.descriptor_shape().len() != 1 || bias.descriptor_shape()[0] != input_shape[axis]
             {
@@ -5466,8 +5500,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
         if let Some(bias) = options.bias.as_ref() {
             input_operands.push(
-                bias
-                    .id()
+                bias.id()
                     .ok_or_else(|| Error::Type("bias operand has no backend id".to_owned()))?,
             );
         }
@@ -5553,7 +5586,9 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 7/8: Validate optional |scale| and |bias| rank and type.
         if let Some(scale) = options.scale.as_ref() {
             if scale.descriptor_data_type() != input_data_type {
-                return Err(Error::Type("scale must have same dataType as input".to_owned()));
+                return Err(Error::Type(
+                    "scale must have same dataType as input".to_owned(),
+                ));
             }
             if scale.descriptor_shape().len() != axes.len() {
                 return Err(Error::Type("invalid scale rank".to_owned()));
@@ -5561,7 +5596,9 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
         if let Some(bias) = options.bias.as_ref() {
             if bias.descriptor_data_type() != input_data_type {
-                return Err(Error::Type("bias must have same dataType as input".to_owned()));
+                return Err(Error::Type(
+                    "bias must have same dataType as input".to_owned(),
+                ));
             }
             if bias.descriptor_shape().len() != axes.len() {
                 return Err(Error::Type("invalid bias rank".to_owned()));
@@ -5611,8 +5648,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
         if let Some(bias) = options.bias.as_ref() {
             input_operands.push(
-                bias
-                    .id()
+                bias.id()
                     .ok_or_else(|| Error::Type("bias operand has no backend id".to_owned()))?,
             );
         }
@@ -5680,7 +5716,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let slope_id = slope
             .id()
             .ok_or_else(|| Error::Type("slope operand has no backend id".to_owned()))?;
-        let rust_operand = self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
+        let rust_operand =
+            self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
         self.push_binary_operation(
             "prelu",
@@ -5749,9 +5786,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 7: Resolve and validate |axes|.
         let axes: Vec<u32> = if let Some(ref provided_axes) = options.axes {
             let mut seen = std::collections::HashSet::new();
-            if provided_axes.iter().any(|&axis| {
-                (axis as usize) >= input_shape.len() || !seen.insert(axis)
-            }) {
+            if provided_axes
+                .iter()
+                .any(|&axis| (axis as usize) >= input_shape.len() || !seen.insert(axis))
+            {
                 return Err(Error::Type("invalid axes".to_owned()));
             }
             provided_axes.clone()
@@ -5789,12 +5827,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_id = input
             .id()
             .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
-        let rust_operand = self.create_rust_operand(
-            input_data_type,
-            output_shape,
-            OperandKind::Output,
-            None,
-        );
+        let rust_operand =
+            self.create_rust_operand(input_data_type, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Step 9.2/9.3/9.4/9.5: Record operator metadata and links.
