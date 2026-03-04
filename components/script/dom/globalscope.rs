@@ -101,7 +101,7 @@ use crate::dom::bindings::error::{
 use crate::dom::bindings::frozenarray::CachedFrozenArray;
 use crate::dom::bindings::inheritance::Castable;
 use crate::dom::bindings::refcounted::{Trusted, TrustedPromise};
-use crate::dom::bindings::reflector::{DomGlobal, DomObject};
+use crate::dom::bindings::reflector::{DomGlobal, DomObject, reflect_dom_object};
 use crate::dom::bindings::root::{Dom, DomRoot, MutNullableDom};
 use crate::dom::bindings::settings_stack::{entry_global, incumbent_global};
 use crate::dom::bindings::str::DOMString;
@@ -136,6 +136,7 @@ use crate::dom::types::{AbortSignal, CookieStore, DebuggerGlobalScope, MessageEv
 use crate::dom::webgpu::gpudevice::GPUDevice;
 #[cfg(feature = "webgpu")]
 use crate::dom::webgpu::identityhub::IdentityHub;
+use crate::dom::webnn::ml::ML;
 use crate::dom::window::Window;
 use crate::dom::workerglobalscope::WorkerGlobalScope;
 use crate::dom::workletglobalscope::WorkletGlobalScope;
@@ -2701,6 +2702,23 @@ impl GlobalScope {
     /// Extract a `Window`, panic if the global object is not a `Window`.
     pub(crate) fn as_window(&self) -> &Window {
         self.downcast::<Window>().expect("expected a Window scope")
+    }
+
+    /// Return the WebNN `ML` object for this global.  Worker contexts use
+    /// `WorkerNavigator`; regular windows use `Navigator`.  This helper keeps
+    /// callers from having to know which global type they're running in.
+    pub(crate) fn get_ml(&self) -> DomRoot<ML> {
+        // Prefer a Window since desktop scripts will normally be there.
+        if let Some(window) = self.downcast::<Window>() {
+            return window.Navigator().Ml();
+        }
+        if let Some(worker) = self.downcast::<WorkerGlobalScope>() {
+            return worker.Navigator().Ml();
+        }
+        // should only happen in bizarre globals; don't crash in production builds.
+        debug_assert!(false, "get_ml called on unsupported global");
+        // return a harmless empty ML object so callers can continue
+        reflect_dom_object(Box::new(ML::new_inherited()), self, CanGc::note())
     }
 
     /// Returns a policy that should be used for fetches initiated from this global.

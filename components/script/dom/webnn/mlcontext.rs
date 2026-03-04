@@ -15,12 +15,11 @@ use crate::dom::bindings::buffer_source::{BufferSource, HeapBufferSource, create
 use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLBatchNormalizationSupportLimits, MLBinarySupportLimits, MLConcatSupportLimits,
-    MLContextLostInfo, MLContextMethods, MLConv2dSupportLimits, MLGatherSupportLimits,
-    MLGemmSupportLimits, MLNamedTensors, MLNormalizationSupportLimits, MLOpSupportLimits,
-    MLOperandDataType, MLOperandDescriptor, MLPowerPreference, MLPreluSupportLimits,
-    MLQuantizeDequantizeLinearSupportLimits, MLRankRange, MLScatterSupportLimits,
-    MLSingleInputSupportLimits, MLSplitSupportLimits, MLTensorDescriptor, MLTensorLimits,
-    MLWhereSupportLimits,
+    MLContextLostInfo, MLContextMethods, MLConv2dSupportLimits, MLGemmSupportLimits,
+    MLNamedTensors, MLNormalizationSupportLimits, MLOpSupportLimits, MLOperandDataType,
+    MLOperandDescriptor, MLPowerPreference, MLPreluSupportLimits,
+    MLQuantizeDequantizeLinearSupportLimits, MLRankRange, MLSingleInputSupportLimits,
+    MLTensorDescriptor, MLTensorLimits,
 };
 use crate::dom::bindings::codegen::UnionTypes::ArrayBufferViewOrArrayBuffer;
 use crate::dom::bindings::error::{Error, Fallible};
@@ -649,7 +648,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             .insert(id, p.clone());
 
         // Implementation detail: ensure ML-level persistent callback exists for manager/backend replies.
-        let ml_dom = global.as_window().Navigator().Ml();
+        let ml_dom = global.get_ml();
         let cb = ml_dom.get_or_setup_callback(global);
 
         // Step 6: Enqueue the following steps to this.[[timeline]] (spec):
@@ -1094,37 +1093,8 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             output: Some(tensor_limits()),
         };
 
-        let gather_limits = || MLGatherSupportLimits {
-            input: Some(tensor_limits()),
-            indices: Some(tensor_limits()),
-            output: Some(tensor_limits()),
-        };
-
-        let scatter_limits = || MLScatterSupportLimits {
-            input: Some(tensor_limits()),
-            indices: Some(tensor_limits()),
-            updates: Some(tensor_limits()),
-            output: Some(tensor_limits()),
-        };
-
-        let split_limits = || MLSplitSupportLimits {
-            input: Some(tensor_limits()),
-            outputs: Some(tensor_limits()),
-        };
-
-        let where_limits = || MLWhereSupportLimits {
-            condition: Some(tensor_limits()),
-            trueValue: Some(tensor_limits()),
-            falseValue: Some(tensor_limits()),
-            output: Some(tensor_limits()),
-        };
-
         MLOpSupportLimits {
             abs: Some(single_input_limits()),
-            add: Some(binary_limits()),
-            argMax: Some(single_input_limits()),
-            argMin: Some(single_input_limits()),
-            averagePool2d: Some(single_input_limits()),
             batchNormalization: Some(batch_normalization_limits()),
             cast: Some(single_input_limits()),
             ceil: Some(single_input_limits()),
@@ -1136,84 +1106,36 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             cos: Some(single_input_limits()),
             cumulativeSum: Some(single_input_limits()),
             dequantizeLinear: Some(quantize_dequantize_linear_limits()),
-            div: Some(binary_limits()),
-            elu: Some(single_input_limits()),
-            equal: Some(binary_limits()),
             erf: Some(single_input_limits()),
-            expand: Some(single_input_limits()),
             exp: Some(single_input_limits()),
             floor: Some(single_input_limits()),
-            gather: Some(gather_limits()),
-            gatherElements: Some(gather_limits()),
-            gatherND: Some(gather_limits()),
-            gelu: Some(single_input_limits()),
             gemm: Some(gemm_limits()),
-            greater: Some(binary_limits()),
-            greaterOrEqual: Some(binary_limits()),
-            hardSigmoid: Some(single_input_limits()),
-            hardSwish: Some(single_input_limits()),
             identity: Some(single_input_limits()),
             input: Some(tensor_limits()),
             instanceNormalization: Some(normalization_limits()),
-            isInfinite: Some(single_input_limits()),
-            isNaN: Some(single_input_limits()),
             layerNormalization: Some(normalization_limits()),
             leakyRelu: Some(single_input_limits()),
-            lesser: Some(binary_limits()),
-            lesserOrEqual: Some(binary_limits()),
             linear: Some(single_input_limits()),
             log: Some(single_input_limits()),
-            logicalAnd: Some(binary_limits()),
-            logicalNot: Some(single_input_limits()),
-            logicalOr: Some(binary_limits()),
-            logicalXor: Some(binary_limits()),
             matmul: Some(binary_limits()),
-            max: Some(binary_limits()),
-            maxPool2d: Some(single_input_limits()),
             maxTensorByteLength: max_bytes,
-            min: Some(binary_limits()),
-            mul: Some(binary_limits()),
             neg: Some(single_input_limits()),
-            notEqual: Some(binary_limits()),
             output: Some(tensor_limits()),
             preferredInputLayout: None,
             pad: Some(single_input_limits()),
             prelu: Some(prelu_limits()),
-            pow: Some(binary_limits()),
             quantizeLinear: Some(quantize_dequantize_linear_limits()),
             reciprocal: Some(single_input_limits()),
-            reduceL1: Some(single_input_limits()),
-            reduceL2: Some(single_input_limits()),
-            reduceLogSum: Some(single_input_limits()),
-            reduceLogSumExp: Some(single_input_limits()),
-            reduceMax: Some(single_input_limits()),
-            reduceMean: Some(single_input_limits()),
-            reduceMin: Some(single_input_limits()),
-            reduceProduct: Some(single_input_limits()),
-            reduceSum: Some(single_input_limits()),
-            reduceSumSquare: Some(single_input_limits()),
-            resample2d: Some(single_input_limits()),
-            reshape: Some(single_input_limits()),
-            reverse: Some(single_input_limits()),
             roundEven: Some(single_input_limits()),
-            scatterElements: Some(scatter_limits()),
-            scatterND: Some(scatter_limits()),
-            sigmoid: Some(single_input_limits()),
             sin: Some(single_input_limits()),
             sign: Some(single_input_limits()),
             slice: Some(single_input_limits()),
-            softmax: Some(single_input_limits()),
-            softplus: Some(single_input_limits()),
-            softsign: Some(single_input_limits()),
-            split: Some(split_limits()),
-            sub: Some(binary_limits()),
             sqrt: Some(single_input_limits()),
             tan: Some(single_input_limits()),
             tanh: Some(single_input_limits()),
             tile: Some(single_input_limits()),
             transpose: Some(single_input_limits()),
             triangular: Some(single_input_limits()),
-            where_: Some(where_limits()),
         }
     }
 

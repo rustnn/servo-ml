@@ -1832,12 +1832,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // send compile request to the manager.  Move the original `graph_info`
         // into the message; the backend/thread cache owns that copy.
-        let cb = self
-            .global()
-            .as_window()
-            .Navigator()
-            .Ml()
-            .get_or_setup_callback(global);
+        let cb = self.global().get_ml().get_or_setup_callback(global);
         let _ = self.global().webnn_sender().send(WebNNMsg::Compile(
             cb,
             graph_id,
