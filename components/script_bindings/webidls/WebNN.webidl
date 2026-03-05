@@ -207,12 +207,19 @@ dictionary MLCumulativeSumOptions : MLOperatorOptions {
   boolean reversed = false;
 };
 
+enum MLRoundingType {
+  "floor",
+  "ceil"
+};
+
 dictionary MLPool2dOptions : MLOperatorOptions {
   sequence<[EnforceRange] unsigned long> windowDimensions;
   sequence<[EnforceRange] unsigned long> padding;
   sequence<[EnforceRange] unsigned long> strides;
   sequence<[EnforceRange] unsigned long> dilations;
   MLInputOperandLayout layout = "nchw";
+  MLRoundingType outputShapeRounding = "floor";
+  sequence<[EnforceRange] unsigned long> outputSizes;
 };
 
 enum MLConvTranspose2dFilterOperandLayout {
@@ -446,6 +453,7 @@ partial interface MLGraphBuilder {
                           optional MLOperatorOptions options = {});
   [Throws] MLOperand transpose(MLOperand input, optional MLTransposeOptions options = {});
   [Throws] MLOperand averagePool2d(MLOperand input, optional MLPool2dOptions options = {});
+  [Throws] MLOperand l2Pool2d(MLOperand input, optional MLPool2dOptions options = {});
   [Throws] MLOperand maxPool2d(MLOperand input, optional MLPool2dOptions options = {});
   [Throws] MLOperand convTranspose2d(MLOperand input, MLOperand filter,
                                      optional MLConvTranspose2dOptions options = {});
@@ -563,6 +571,7 @@ partial dictionary MLOpSupportLimits {
   MLSingleInputSupportLimits isNaN;
   MLNormalizationSupportLimits instanceNormalization;
   MLNormalizationSupportLimits layerNormalization;
+  MLSingleInputSupportLimits l2Pool2d;
   MLSingleInputSupportLimits leakyRelu;
   MLBinarySupportLimits lesser;
   MLBinarySupportLimits lesserOrEqual;

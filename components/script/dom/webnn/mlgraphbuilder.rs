@@ -20,8 +20,8 @@ use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLHardSigmoidOptions, MLInputOperandLayout, MLInstanceNormalizationOptions,
     MLInterpolationMode, MLLayerNormalizationOptions, MLLeakyReluOptions, MLLinearOptions,
     MLOperandDataType, MLOperandDescriptor, MLOperatorOptions, MLPadOptions, MLPaddingMode,
-    MLPool2dOptions, MLReduceOptions, MLResample2dOptions, MLReverseOptions, MLSoftmaxOptions,
-    MLSplitOptions, MLTransposeOptions, MLTriangularOptions,
+    MLPool2dOptions, MLReduceOptions, MLResample2dOptions, MLReverseOptions, MLRoundingType,
+    MLSoftmaxOptions, MLSplitOptions, MLTransposeOptions, MLTriangularOptions,
 };
 use crate::dom::bindings::error::{Error, Fallible};
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
@@ -685,66 +685,259 @@ impl MLGraphBuilder {
         op_name: &str,
         input: &MLOperand,
         options: &MLPool2dOptions,
+        allowed_data_types: Option<&[&str]>,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        // Step 1: Validate builder state and input ownership.
+        // Step 1: Assert: |op| is one of "averagePool2d", "l2Pool2d", "maxPool2d".
+        if !matches!(op_name, "averagePool2d" | "l2Pool2d" | "maxPool2d") {
+            debug_assert!(false, "unexpected pooling op: {op_name}");
+            return Err(Error::Type("invalid pooling op".to_owned()));
+        }
+
+        // Step 2: If this can not build, then throw an InvalidStateError.
         if !self.can_build() {
             return Err(Error::InvalidState(None));
         }
+
+        // Step 3: If validating operand with this and |input| returns false, then throw a TypeError.
         if !self.validate_operand_ref(input) {
             return Err(Error::Type("invalid operand".to_owned()));
         }
-        // Step 2: Normalize pool options and infer output shape using rustnn helpers.
-        use rustnn::shape_inference::{Conv2dInputLayout, Pool2dOptions};
-        let layout = match options.layout {
-            MLInputOperandLayout::Nchw => Conv2dInputLayout::Nchw,
-            MLInputOperandLayout::Nhwc => Conv2dInputLayout::Nhwc,
-        };
-        let pool_options = Pool2dOptions {
-            window_dimensions: options
-                .windowDimensions
-                .as_ref()
-                .map(|v| v.clone())
-                .unwrap_or_else(|| vec![1, 1]),
-            strides: options
-                .strides
-                .as_ref()
-                .map(|v| v.clone())
-                .unwrap_or_else(|| vec![1, 1]),
-            dilations: options
-                .dilations
-                .as_ref()
-                .map(|v| v.clone())
-                .unwrap_or_else(|| vec![1, 1]),
-            pads: options
-                .padding
-                .as_ref()
-                .map(|v| v.clone())
-                .unwrap_or_else(|| vec![0, 0, 0, 0]),
-            layout,
-        };
-        let output_shape =
-            rustnn::shape_inference::infer_pool2d_shape(input.descriptor_shape(), &pool_options)
-                .map_err(|e| Error::Type(e.to_string()))?;
+
+        // Step 4: If |allowedDataTypes| is given and it does not contain |input|'s dataType, then throw a TypeError.
         let out_dtype = input.descriptor_data_type();
-        let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype),
-            shape: output_shape.clone(),
+        if let Some(allowed_data_types) = allowed_data_types {
+            if !allowed_data_types.contains(&out_dtype) {
+                return Err(Error::Type("unsupported input dataType".to_owned()));
+            }
+        }
+
+        // Step 5: If |input|'s rank is not 4, then throw a TypeError.
+        let input_shape = input.descriptor_shape();
+        if input_shape.len() != 4 {
+            return Err(Error::Type("input must be a 4-D tensor".to_owned()));
+        }
+
+        // Step 6: Switch on |options|.layout and extract batch/channel/spatial dimensions.
+        let (layout_str, batches, channels, input_height, input_width) = match options.layout {
+            MLInputOperandLayout::Nchw => (
+                "nchw",
+                input_shape[0],
+                input_shape[1],
+                input_shape[2],
+                input_shape[3],
+            ),
+            MLInputOperandLayout::Nhwc => (
+                "nhwc",
+                input_shape[0],
+                input_shape[3],
+                input_shape[1],
+                input_shape[2],
+            ),
         };
+
+        // Step 7: If |windowDimensions| does not exist, then set it to « inputHeight, inputWidth ».
+        let window_dimensions = options
+            .windowDimensions
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| vec![input_height, input_width]);
+
+        // Step 8: If |windowDimensions|'s size is not 2, then throw a TypeError.
+        if window_dimensions.len() != 2 {
+            return Err(Error::Type("windowDimensions must be length 2".to_owned()));
+        }
+
+        // Step 9: If any item in |windowDimensions| is equal to 0, then throw a TypeError.
+        if window_dimensions.contains(&0) {
+            return Err(Error::Type(
+                "windowDimensions values must be >= 1".to_owned(),
+            ));
+        }
+
+        // Step 10: If |outputSizes| exists, or if |padding| does not exist, then set |padding| to « 0, 0, 0, 0 ».
+        let pads = options
+            .padding
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| vec![0, 0, 0, 0]);
+
+        // Step 11: If |padding|'s size is not 4, then throw a TypeError.
+        if pads.len() != 4 {
+            return Err(Error::Type("padding must be length 4".to_owned()));
+        }
+
+        // Step 12: If |strides| does not exist, then set it to « 1, 1 ».
+        let strides = options
+            .strides
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| vec![1, 1]);
+
+        // Step 13: If |strides|'s size is not 2, then throw a TypeError.
+        if strides.len() != 2 {
+            return Err(Error::Type("strides must be length 2".to_owned()));
+        }
+
+        // Step 14: If any item in |strides| is 0, then throw a TypeError.
+        if strides.contains(&0) {
+            return Err(Error::Type("strides values must be >= 1".to_owned()));
+        }
+
+        // Step 15: If |outputSizes| exists, then validate its size and relationship with |strides|.
+        let output_sizes = options.outputSizes.as_ref().cloned();
+        if let Some(output_sizes) = output_sizes.as_ref() {
+            if output_sizes.len() != 2 {
+                return Err(Error::Type("outputSizes must be length 2".to_owned()));
+            }
+            if output_sizes.contains(&0) {
+                return Err(Error::Type("outputSizes values must be >= 1".to_owned()));
+            }
+            if output_sizes[0] < strides[0] || output_sizes[1] < strides[1] {
+                return Err(Error::Type(
+                    "outputSizes values must be >= corresponding strides".to_owned(),
+                ));
+            }
+            if options.outputShapeRounding != MLRoundingType::Floor {
+                return Err(Error::Type(
+                    "outputShapeRounding must be 'floor' when outputSizes is provided".to_owned(),
+                ));
+            }
+        }
+
+        // Step 16: If |dilations| does not exist, then set it to « 1, 1 ».
+        let dilations = options
+            .dilations
+            .as_ref()
+            .cloned()
+            .unwrap_or_else(|| vec![1, 1]);
+
+        // Step 17: If |dilations|'s size is not 2, then throw a TypeError.
+        if dilations.len() != 2 {
+            return Err(Error::Type("dilations must be length 2".to_owned()));
+        }
+
+        // Step 18: If any item in |dilations| is 0, then throw a TypeError.
+        if dilations.contains(&0) {
+            return Err(Error::Type("dilations values must be >= 1".to_owned()));
+        }
+
+        // Step 19: Let |desc| be a copy of |input|.[[descriptor]].
+        let mut desc = MLOperandDescriptor {
+            dataType: Self::data_type_enum_from_str(out_dtype),
+            shape: input_shape.clone(),
+        };
+
+        // Step 20: Calculate the output shape.
+        let window_height = window_dimensions[0] as f64;
+        let window_width = window_dimensions[1] as f64;
+        let stride_height = strides[0] as f64;
+        let stride_width = strides[1] as f64;
+        let dilation_height = dilations[0] as f64;
+        let dilation_width = dilations[1] as f64;
+        let pad_beginning_height = pads[0] as f64;
+        let pad_ending_height = pads[1] as f64;
+        let pad_beginning_width = pads[2] as f64;
+        let pad_ending_width = pads[3] as f64;
+
+        // Step 20.1: Let « calculatedOutputHeight, calculatedOutputWidth » be the result of calculating conv2d output sizes.
+        let effective_window_height = (window_height - 1.0) * dilation_height + 1.0;
+        let effective_window_width = (window_width - 1.0) * dilation_width + 1.0;
+        let calculated_output_height = 1.0 +
+            ((input_height as f64) - effective_window_height +
+                pad_beginning_height +
+                pad_ending_height) /
+                stride_height;
+        let calculated_output_width = 1.0 +
+            ((input_width as f64) - effective_window_width +
+                pad_beginning_width +
+                pad_ending_width) /
+                stride_width;
+
+        // Step 20.2/20.3: Resolve outputSizes or outputShapeRounding when outputSizes is absent.
+        let (output_height, output_width) = if let Some(output_sizes) = output_sizes.as_ref() {
+            let output_height = output_sizes[0] as f64;
+            let output_width = output_sizes[1] as f64;
+            let floor_matches = output_height == calculated_output_height.floor() &&
+                output_width == calculated_output_width.floor();
+            let ceil_matches = output_height == calculated_output_height.ceil() &&
+                output_width == calculated_output_width.ceil();
+
+            if !floor_matches && !ceil_matches {
+                return Err(Error::Type(
+                    "outputSizes are inconsistent with calculated output shape".to_owned(),
+                ));
+            }
+
+            (output_sizes[0], output_sizes[1])
+        } else {
+            let (rounded_height, rounded_width) = match options.outputShapeRounding {
+                MLRoundingType::Floor => (
+                    calculated_output_height.floor(),
+                    calculated_output_width.floor(),
+                ),
+                MLRoundingType::Ceil => (
+                    calculated_output_height.ceil(),
+                    calculated_output_width.ceil(),
+                ),
+            };
+
+            if !rounded_height.is_finite() ||
+                !rounded_width.is_finite() ||
+                rounded_height < 1.0 ||
+                rounded_width < 1.0
+            {
+                return Err(Error::Type("invalid output shape".to_owned()));
+            }
+            if rounded_height > (u32::MAX as f64) || rounded_width > (u32::MAX as f64) {
+                return Err(Error::Type("invalid output shape".to_owned()));
+            }
+
+            (rounded_height as u32, rounded_width as u32)
+        };
+
+        // Step 20.4: If either outputHeight or outputWidth is not a valid dimension, then throw a TypeError.
+        if output_height == 0 || output_width == 0 {
+            return Err(Error::Type("invalid output shape".to_owned()));
+        }
+
+        // Step 20.5: Set |outputShape| according to |options|.layout.
+        let output_shape = if layout_str == "nchw" {
+            vec![batches, channels, output_height, output_width]
+        } else {
+            vec![batches, output_height, output_width, channels]
+        };
+
+        // Step 20.6: Set |desc|.shape to |outputShape|.
+        desc.shape = output_shape.clone();
+
         let input_id = input
             .id()
             .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
-        // Step 3: Create output operand id, record operation metadata, and return output operand.
+
+        // Step 21.1: Let |output| be the result of creating an MLOperand given this and |desc|.
         let rust_operand =
             self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
+
+        // Step 21.2/21.3/21.4/21.5: Create and connect the pooling operator metadata.
         self.push_unary_operation(
             op_name,
             input_id,
             output_id,
-            serde_json::json!({}),
+            serde_json::json!({
+                "windowDimensions": window_dimensions,
+                "strides": strides,
+                "dilations": dilations,
+                "pads": pads,
+                "layout": layout_str,
+                "outputShapeRounding": if options.outputShapeRounding == MLRoundingType::Floor { "floor" } else { "ceil" },
+                "outputSizes": output_sizes,
+            }),
             Self::label_from_operator_options(&options.parent),
         );
+
+        // Step 22: Return |output|.
         Ok(copy_an_mloperand(
             input,
             Some(&desc),
@@ -5377,7 +5570,35 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 1.1: If that throws an error, then rethrow the error.
 
         // Step 2: Return |output|.
-        self.create_a_pooling_operation("averagePool2d", input, options, can_gc)
+        let allowed_data_types = ["float32", "float16"];
+        self.create_a_pooling_operation(
+            "averagePool2d",
+            input,
+            options,
+            Some(&allowed_data_types),
+            can_gc,
+        )
+    }
+
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-l2pool2d>
+    fn L2Pool2d(
+        &self,
+        input: &MLOperand,
+        options: &MLPool2dOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of creating a pool2d operation given "l2Pool2d", |input|, and |options|.
+        // Step 1.1: If that throws an error, then rethrow the error.
+
+        // Step 2: Return |output|.
+        let allowed_data_types = ["float32", "float16"];
+        self.create_a_pooling_operation(
+            "l2Pool2d",
+            input,
+            options,
+            Some(&allowed_data_types),
+            can_gc,
+        )
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-maxpool2d>
@@ -5391,7 +5612,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 1.1: If that throws an error, then rethrow the error.
 
         // Step 2: Return |output|.
-        self.create_a_pooling_operation("maxPool2d", input, options, can_gc)
+        self.create_a_pooling_operation("maxPool2d", input, options, None, can_gc)
     }
 
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-convtranspose2d>

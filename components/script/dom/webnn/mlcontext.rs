@@ -1158,6 +1158,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             isInfinite: Some(single_input_limits()),
             isNaN: Some(single_input_limits()),
             layerNormalization: Some(normalization_limits()),
+            l2Pool2d: Some(single_input_limits()),
             leakyRelu: Some(single_input_limits()),
             lesser: Some(binary_limits()),
             lesserOrEqual: Some(binary_limits()),

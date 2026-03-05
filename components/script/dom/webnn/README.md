@@ -46,6 +46,10 @@ When implmenting methods of GraphBuilder, read how `PyMLGraphBuilder` in scratch
 
 - For indexing and scatter-family operators (`gather*`, `scatter*`) and `gemm`, enforce tensor-limits checks from the spec table before shape inference: indices dataType (`int32`/`uint32`/`int64`), rank constraints, same-type constraints (`updates`/`c` vs input), and broadcastability requirements (for example `gemm` optional `c` unidirectionally broadcastable to `«shapeA[0], shapeB[1]»`).
 
+- For `MLGraphBuilder` pool2d helpers, follow the pooling-op algorithm defaults exactly: derive missing `windowDimensions` from input spatial dimensions, keep default `padding`/`strides`/`dilations` aligned with the spec, enforce average-pool allowed data types (`float32`/`float16`), and persist normalized pooling attributes (`windowDimensions`, `strides`, `dilations`, `pads`, `layout`) into `Operation.attributes`.
+
+- Keep the WebIDL surface for `#api-mlgraphbuilder-pool2d` complete and aligned with the spec: include `MLRoundingType`, `MLPool2dOptions.outputShapeRounding`, `MLPool2dOptions.outputSizes`, `MLGraphBuilder.l2Pool2d()`, and `MLOpSupportLimits.l2Pool2d` together so generated bindings and helper logic stay consistent.
+
 - For `MLGraphBuilder.pad()`, keep the WebIDL and implementation aligned with the current spec shape: `pad(input, beginningPadding, endingPadding, options)` and `MLPadOptions.mode` (`constant`/`edge`/`reflection`). The generated bindings in this tree currently use `typedef unrestricted double MLNumber`; if parser support for bigint unions is added, update this typedef to match the spec typedef.
 
 - **Backend datatype support:** the CoreML executor now handles `Int32` outputs (output floats from CoreML are truncated to `i32`), and inputs of type `Int32` are promoted to `float32` before dispatch. The script-side read callback reconstructs little-endian `i32` values and returns an `Int32Array`; the conversion matches the backend logic. This mirrors the behaviour of the reference `dispatch_example` in the `skills/` directory.
