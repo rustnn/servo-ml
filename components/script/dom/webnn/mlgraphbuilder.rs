@@ -776,33 +776,47 @@ impl MLGraphBuilder {
             MLInputOperandLayout::Nchw => Conv2dInputLayout::Nchw,
             MLInputOperandLayout::Nhwc => Conv2dInputLayout::Nhwc,
         };
+        let input_layout_str = match options.inputLayout {
+            MLInputOperandLayout::Nchw => "nchw",
+            MLInputOperandLayout::Nhwc => "nhwc",
+        };
         let filter_layout = match options.filterLayout {
             MLConvTranspose2dFilterOperandLayout::Iohw => Conv2dFilterLayout::Oihw,
             MLConvTranspose2dFilterOperandLayout::Hwoi => Conv2dFilterLayout::Ihwo,
             MLConvTranspose2dFilterOperandLayout::Ohwi => Conv2dFilterLayout::Ohwi,
             MLConvTranspose2dFilterOperandLayout::Oihw => Conv2dFilterLayout::Hwio,
         };
+        let filter_layout_str = match options.filterLayout {
+            MLConvTranspose2dFilterOperandLayout::Iohw => "iohw",
+            MLConvTranspose2dFilterOperandLayout::Hwoi => "hwoi",
+            MLConvTranspose2dFilterOperandLayout::Ohwi => "ohwi",
+            MLConvTranspose2dFilterOperandLayout::Oihw => "oihw",
+        };
+        let strides = options
+            .strides
+            .as_ref()
+            .map(|v| v.clone())
+            .unwrap_or_else(|| vec![1, 1]);
+        let dilations = options
+            .dilations
+            .as_ref()
+            .map(|v| v.clone())
+            .unwrap_or_else(|| vec![1, 1]);
+        let pads = options
+            .padding
+            .as_ref()
+            .map(|v| v.clone())
+            .unwrap_or_else(|| vec![0, 0, 0, 0]);
+        let output_padding = options
+            .outputPadding
+            .as_ref()
+            .map(|v| v.clone())
+            .unwrap_or_else(|| vec![0, 0]);
         let conv_options = ConvTranspose2dOptions {
-            strides: options
-                .strides
-                .as_ref()
-                .map(|v| v.clone())
-                .unwrap_or_else(|| vec![1, 1]),
-            dilations: options
-                .dilations
-                .as_ref()
-                .map(|v| v.clone())
-                .unwrap_or_else(|| vec![1, 1]),
-            pads: options
-                .padding
-                .as_ref()
-                .map(|v| v.clone())
-                .unwrap_or_else(|| vec![0, 0, 0, 0]),
-            output_padding: options
-                .outputPadding
-                .as_ref()
-                .map(|v| v.clone())
-                .unwrap_or_else(|| vec![0, 0]),
+            strides: strides.clone(),
+            dilations: dilations.clone(),
+            pads: pads.clone(),
+            output_padding: output_padding.clone(),
             output_sizes: options.outputSizes.as_ref().map(|v| v.clone()),
             groups: options.groups,
             input_layout,
@@ -829,11 +843,35 @@ impl MLGraphBuilder {
         let rust_operand =
             self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
+        let mut input_ids = vec![input_id, filter_id];
+        if let Some(bias) = options.bias.as_ref() {
+            let bias_id = bias
+                .id()
+                .ok_or_else(|| Error::Type("bias operand has no backend id".to_owned()))?;
+            input_ids.push(bias_id);
+        }
+
+        let mut attributes = serde_json::json!({
+            "strides": strides,
+            "dilations": dilations,
+            "pads": pads,
+            "outputPadding": output_padding,
+            "groups": options.groups,
+            "inputLayout": input_layout_str,
+            "filterLayout": filter_layout_str,
+        });
+        if let Some(output_sizes) = options.outputSizes.as_ref() {
+            attributes["outputSizes"] = serde_json::json!(output_sizes);
+        }
+        if options.bias.is_some() {
+            attributes["hasBias"] = serde_json::json!(true);
+        }
+
         self.push_binary_operation(
             "convTranspose2d",
-            vec![input_id, filter_id],
+            input_ids,
             output_id,
-            serde_json::json!({}),
+            attributes,
             Self::label_from_operator_options(&options.parent),
         );
         Ok(create_an_mloperand(
