@@ -82,34 +82,23 @@ use webnn_traits::{ContextId, ContextMessage, GraphId, WebNNMsg};
 /// A single operation that may be deferred on a context timeline.
 enum PendingOp {
     CreateTensor(GenericCallback<ContextMessage>, ContextId, u32, usize),
-    /// Allocate a tensor and initialize it with a provided byte vector.
-    /// This mirrors the `WebNNMsg::CreateConstantTensor` message and is used
-    /// by graph builders when they materialize a constant operand from a
-    /// host buffer.
     CreateConstantTensor(ContextId, u32, Vec<u8>),
     ReadTensor(GenericCallback<ContextMessage>, ContextId, u32),
     WriteTensor(ContextId, u32, Vec<u8>),
-    Dispatch(
-        ContextId,
-        GraphId, // graph id key used to look up cached GraphInfo
-        HashMap<u32, u32>,
-        HashMap<u32, u32>,
-    ),
-    /// A compile step for a given cache key.  The timeline holds this to
-    /// prevent any subsequent operations from running until the compilation
-    /// has completed (the `Compiled` message will clear `queue_blocked`).
+    Dispatch(ContextId, GraphId, HashMap<u32, u32>, HashMap<u32, u32>),
     Compile(GraphId),
 }
 
 struct Context {
     // Backend-specific context state.
     tensor_store: HashMap<u32, std::sync::Arc<Vec<u8>>>,
+
     // Sender for offloading ML work to the dedicated thread.
     compute_tx: Sender<MlMsg>,
 
     /// Set of graph ids we’ve already forwarded to the ML thread for
-    /// compilation.  We don’t retain the full GraphInfo on the manager side
-    /// any more; the compute thread keeps its own cache.  The set exists purely
+    /// compilation.  We don’t retain the full GraphInfo on the manager side;
+    /// the compute thread keeps its own cache.  The set exists purely
     /// to avoid reconverting the same graph bytes if the script repeatedly
     /// calls `compile()` for the same id.
     seen_graphs: std::collections::HashSet<GraphId>,
@@ -231,9 +220,6 @@ impl WebNNManager {
             },
             WebNNMsg::Compile(cb, graph_id, ctx_id, graph_info) => {
                 if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
-                    // register graph (possibly compiling or caching) and record callback
-                    // we now take ownership of `graph_info` directly rather than
-                    // referencing it, since the manager doesn't cache it.
                     let key =
                         ctx.get_or_compile(ctx_id, graph_id, graph_info, Some((graph_id, cb)));
                     // put a compile step on the timeline so subsequent ops wait
@@ -308,9 +294,6 @@ impl WebNNManager {
     }
 }
 
-// Methods that used to live on the manager have been pushed down into each
-// context instance.  The manager now merely looks up the appropriate context
-// and forwards messages.
 impl Context {
     fn new(compute_tx: Sender<MlMsg>) -> Self {
         Context {

@@ -52,7 +52,7 @@ When implmenting methods of GraphBuilder, read how `PyMLGraphBuilder` in scratch
 
 - For `MLGraphBuilder.pad()`, keep the WebIDL and implementation aligned with the current spec shape: `pad(input, beginningPadding, endingPadding, options)` and `MLPadOptions.mode` (`constant`/`edge`/`reflection`). The generated bindings in this tree currently use `typedef unrestricted double MLNumber`; if parser support for bigint unions is added, update this typedef to match the spec typedef.
 
-- **Backend datatype support:** the CoreML executor now handles `Int32` outputs (output floats from CoreML are truncated to `i32`), and inputs of type `Int32` are promoted to `float32` before dispatch. The script-side read callback reconstructs little-endian `i32` values and returns an `Int32Array`; the conversion matches the backend logic. This mirrors the behaviour of the reference `dispatch_example` in the `skills/` directory.
+- **Backend datatype support:** the CoreML executor now handles `Int32` outputs (output floats from CoreML are truncated to `i32`), and inputs of type `Int32` are promoted to `float32` before dispatch. The script-side read callback reconstructs little-endian `i32` values and returns an `Int32Array`; the conversion matches the backend logic. 
 
 Overview — how WebNN is wired in Servo
 
@@ -60,7 +60,7 @@ Overview — how WebNN is wired in Servo
   - `WebNNMsg` (IPC messages) lives in `components/shared/webnn` so DOM code, the Constellation, and the manager can share the type without creating dependency cycles. `WebNNMsg` is `Serialize`/`Deserialize` so it is safe to pass via `GenericSender/Receiver`.
 
 - Manager thread / backend
-  - The WebNN manager lives in `components/webnn`. It owns a worker thread, receives `WebNNMsg` messages, and routes work to the chosen backend (native library, `rustnn`, GPU driver, etc.). Currently the manager is a stub that handles `Exit`; replace the stub's loop with backend task routing when adding a backend.
+  - The WebNN manager lives in `components/webnn`. It owns a worker thread, receives `WebNNMsg` messages, and routes compilation and dispatch work to the worker thread.
 
 - Constellation lifecycle
   - `Servo::new` constructs the manager (returns `(sender, JoinHandle)`), stores the sender in `InitialConstellationState`, and forwards the join handle so `Constellation` can `join()` the thread during shutdown.

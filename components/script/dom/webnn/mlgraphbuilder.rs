@@ -5,8 +5,6 @@ use std::rc::Rc;
 use dom_struct::dom_struct;
 use js::rust::HandleObject;
 use rustnn::graph::{DataType, GraphInfo, Operand, OperandDescriptor, OperandKind, Operation};
-use script_bindings::codegen::GenericBindings::NavigatorBinding::NavigatorMethods;
-use script_bindings::codegen::GenericBindings::WindowBinding::WindowMethods;
 use script_bindings::codegen::GenericUnionTypes::ArrayBufferViewOrArrayBuffer;
 use script_bindings::record::Record;
 use script_bindings::str::USVString;
@@ -1697,7 +1695,7 @@ impl MLGraphBuilder {
             self.create_rust_operand(a_dtype, out_shape.clone(), OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
-        let mut attributes = serde_json::json!({});
+        let attributes = serde_json::json!({});
         let label = options_label
             .map(|s| if s.is_empty() { None } else { Some(s) })
             .flatten();
@@ -1732,7 +1730,7 @@ impl MLGraphBuilder {
 impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
     fn Constructor(
         global: &GlobalScope,
-        proto: Option<HandleObject>,
+        _proto: Option<HandleObject>,
         can_gc: CanGc,
         context: &MLContext,
     ) -> DomRoot<MLGraphBuilder> {
@@ -1809,7 +1807,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(operand)
     }
 
-    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-constant-descriptor-buffer>
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-constant>
     fn Constant(
         &self,
         descriptor: &MLOperandDescriptor,
@@ -1832,21 +1830,6 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 4: *Make graph connections:*
         // Step 4.1: Let |operand| be the result of creating an MLOperand given this and |descriptor|.
-        // Step 4.2: Let |bytes| be the result of getting a copy of the bytes held by the buffer source given |buffer|.
-        //         TODO — copy |bytes| from |buffer| and convert/validate them according to |descriptor| (byteLength, element type, shape).
-        //         TODO (spec: #api-mlgraphbuilder-constant-buffer): implement buffer validation and copying.
-        // Step 4.3: Add |operand| to this graph's computational graph/constants with |bytes| as value (persist bytes in GraphInfo).
-        //         TODO — store |bytes| in `graph_info.constant_operand_ids_to_handles` and
-        //         `graph_info.id_to_constant_tensor_operand_map` so Build() can materialize the constant.
-
-        // Transfer the buffer contents into a backend tensor so that Build()
-        // can later look it up by tensor id (the same mechanism used by
-        // `Constant_(tensor)` and the Python bindings).  We get the id by
-        // asking the context to allocate a constant tensor; the helper will
-        // send a single message to the manager that creates and initializes the
-        // storage.  The id is then recorded in the graph info's
-        // `id_to_constant_tensor_operand_map` instead of stuffing the bytes into
-        // `constant_operand_ids_to_handles`.
         let bytes: Vec<u8> = match buffer {
             ArrayBufferViewOrArrayBuffer::ArrayBufferView(view) => view.to_vec(),
             ArrayBufferViewOrArrayBuffer::ArrayBuffer(buf) => buf.to_vec(),
@@ -1854,6 +1837,9 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // ask context for a tensor id and queue the backend allocation
         let tensor_id = self.context().allocate_constant_tensor_for_builder(bytes);
+
+        // Step 4.3: Add |operand| to this graph's computational graph/constants with |bytes| as value (persist bytes in GraphInfo).
+        // Note: done below.
 
         // Create rustnn operand descriptor and operand id for the constant itself.
         let rust_operand = self.create_rust_operand(
@@ -2190,7 +2176,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
     fn Cast(
         &self,
         input: &MLOperand,
-        dataType: MLOperandDataType,
+        data_type: MLOperandDataType,
         options: &MLOperatorOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
@@ -2217,7 +2203,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let in_shape = input.descriptor_shape();
 
         // Map enum to string for backend descriptor creation / attributes.
-        let out_dtype_str = match dataType {
+        let out_dtype_str = match data_type {
             MLOperandDataType::Float32 => "float32",
             MLOperandDataType::Float16 => "float16",
             MLOperandDataType::Int32 => "int32",
@@ -2229,7 +2215,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
 
         let desc = MLOperandDescriptor {
-            dataType: dataType,
+            dataType: data_type,
             shape: in_shape.clone(),
         };
 
@@ -2245,7 +2231,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Build operation attributes and optional label (recording operator metadata).
-        let mut attributes = serde_json::json!({ "dataType": out_dtype_str });
+        let attributes = serde_json::json!({ "dataType": out_dtype_str });
 
         let label = {
             let l = options.label.clone();
@@ -2317,7 +2303,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Validate min/max ordering after casting to input dtype semantics.
         if let (Some(min_v), Some(max_v)) = (min_opt, max_opt) {
-            if (in_dtype == "float32" || in_dtype == "float16") {
+            if in_dtype == "float32" || in_dtype == "float16" {
                 let min_c = min_v as f64;
                 let max_c = max_v as f64;
                 if min_c > max_c {
@@ -2543,7 +2529,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Build attributes and optional label
-        let mut attributes = serde_json::json!({ "axis": axis });
+        let attributes = serde_json::json!({ "axis": axis });
         let label = {
             let l = options.label.clone();
             if l.is_empty() {
@@ -2969,7 +2955,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Build operation attributes and optional label (recording operator metadata).
-        let mut attributes = serde_json::json!({
+        let attributes = serde_json::json!({
             "epsilon": epsilon,
             "axis": options.axis,
             "hasScale": options.scale.is_some(),
@@ -4720,7 +4706,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
     fn Reshape(
         &self,
         input: &MLOperand,
-        newShape: Vec<u32>,
+        new_shape: Vec<u32>,
         options: &MLOperatorOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
@@ -4735,20 +4721,20 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // Step 3: Validate the reshape sizes against input shape.
-        rustnn::shape_inference::validate_reshape(input.descriptor_shape(), &newShape)
+        rustnn::shape_inference::validate_reshape(input.descriptor_shape(), &new_shape)
             .map_err(|e| Error::Type(e.to_string()))?;
 
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
             dataType: Self::data_type_enum_from_str(out_dtype),
-            shape: newShape.clone(),
+            shape: new_shape.clone(),
         };
 
         let input_id = input
             .id()
             .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
         let rust_operand =
-            self.create_rust_operand(out_dtype, newShape.clone(), OperandKind::Output, None);
+            self.create_rust_operand(out_dtype, new_shape.clone(), OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Step 4: Make graph connections for the "reshape" operator.
@@ -4756,7 +4742,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             "reshape",
             input_id,
             output_id,
-            serde_json::json!({"newShape": newShape}),
+            serde_json::json!({"newShape": new_shape}),
             Self::label_from_operator_options(options),
         );
 
@@ -4772,7 +4758,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
     fn Expand(
         &self,
         input: &MLOperand,
-        newShape: Vec<u32>,
+        new_shape: Vec<u32>,
         options: &MLOperatorOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
@@ -4788,7 +4774,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 3: Let |outputShape| be the result of inferring expanded output shape.
         let output_shape =
-            rustnn::shape_inference::infer_expand_shape(input.descriptor_shape(), &newShape)
+            rustnn::shape_inference::infer_expand_shape(input.descriptor_shape(), &new_shape)
                 .map_err(|e| Error::Type(e.to_string()))?;
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
@@ -4806,7 +4792,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             "expand",
             input_id,
             output_id,
-            serde_json::json!({"newShape": newShape}),
+            serde_json::json!({"newShape": new_shape}),
             Self::label_from_operator_options(options),
         );
         Ok(copy_an_mloperand(
@@ -5099,8 +5085,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
     fn Pad(
         &self,
         input: &MLOperand,
-        beginningPadding: Vec<u32>,
-        endingPadding: Vec<u32>,
+        beginning_padding: Vec<u32>,
+        ending_padding: Vec<u32>,
         options: &MLPadOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
@@ -5117,7 +5103,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 3: If |beginningPadding|'s and |endingPadding|'s sizes are not both equal to |input|'s rank, then throw a TypeError.
         let input_shape = input.descriptor_shape();
         let input_rank = input_shape.len();
-        if beginningPadding.len() != input_rank || endingPadding.len() != input_rank {
+        if beginning_padding.len() != input_rank || ending_padding.len() != input_rank {
             return Err(Error::Type(
                 "beginningPadding and endingPadding sizes must both equal input rank".to_owned(),
             ));
@@ -5135,12 +5121,12 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
         for index in 0..input_rank {
             if mode == "reflection" {
-                if beginningPadding[index] >= output_shape[index] {
+                if beginning_padding[index] >= output_shape[index] {
                     return Err(Error::Type(
                         "beginningPadding[index] must be less than input dimension in reflection mode".to_owned(),
                     ));
                 }
-                if endingPadding[index] >= output_shape[index] {
+                if ending_padding[index] >= output_shape[index] {
                     return Err(Error::Type(
                         "endingPadding[index] must be less than input dimension in reflection mode"
                             .to_owned(),
@@ -5149,8 +5135,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             }
 
             output_shape[index] = output_shape[index]
-                .checked_add(beginningPadding[index])
-                .and_then(|value| value.checked_add(endingPadding[index]))
+                .checked_add(beginning_padding[index])
+                .and_then(|value| value.checked_add(ending_padding[index]))
                 .ok_or_else(|| Error::Type("invalid output shape".to_owned()))?;
         }
 
@@ -5177,16 +5163,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
-        let mut padding = beginningPadding.clone();
-        padding.extend_from_slice(&endingPadding);
+        let mut padding = beginning_padding.clone();
+        padding.extend_from_slice(&ending_padding);
 
         self.push_unary_operation(
             "pad",
             input_id,
             output_id,
             serde_json::json!({
-                "beginningPadding": beginningPadding,
-                "endingPadding": endingPadding,
+                "beginningPadding": beginning_padding,
+                "endingPadding": ending_padding,
                 "padding": padding,
                 "mode": mode,
                 "value": options.value,
@@ -5426,7 +5412,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         &self,
         input: &MLOperand,
         scale: &MLOperand,
-        zeroPoint: &MLOperand,
+        zero_point: &MLOperand,
         options: &MLOperatorOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
@@ -5434,7 +5420,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             "quantizeLinear",
             input,
             scale,
-            zeroPoint,
+            zero_point,
             true,
             options,
             can_gc,
@@ -5446,7 +5432,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         &self,
         input: &MLOperand,
         scale: &MLOperand,
-        zeroPoint: &MLOperand,
+        zero_point: &MLOperand,
         options: &MLOperatorOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
@@ -5454,7 +5440,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             "dequantizeLinear",
             input,
             scale,
-            zeroPoint,
+            zero_point,
             false,
             options,
             can_gc,

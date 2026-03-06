@@ -49,11 +49,9 @@ Design notes
   operations in `GraphInfo`) before conversion; the manager now auto-populates
   missing constant data from `tensor_store` to avoid CoreML parsing errors
   (previously some graphs failed with "Operations are expected to be topologically
-  sorted").  The unit test added to `components/webnn/src/lib.rs` exercises this
-  scenario.
+  sorted"). 
 - The manager makes a best-effort attempt to zero‑fill output tensors if no
-  backend is available, preventing script-side reads from hanging; real
-  backends should replace this no-op behavior.
+  backend is available, preventing script-side reads from hanging.
 - Recent refactors moved all model caching off the manager thread and
   into the ML worker itself.  The manager no longer retains any `GraphInfo`
   or compiled‑paths; it simply converts and forwards compile requests.  The
@@ -67,12 +65,6 @@ Design notes
   manager never forwards the blob.
 - In multiprocess mode manager threads started with Constellation run in
   the Constellation process (not the Script/content process).
-
-Extending the backend
-- Replace the manager's stub loop with task routing to a backend (GPU,
-  rustnn, platform library, etc.).
-- Use Promises on the JS side and route long-running work to the manager
-  thread(s); do not block Script/Constellation event loops.
 
 Tests
 - Do not add tests; everything should also be covered by WPT tests. 

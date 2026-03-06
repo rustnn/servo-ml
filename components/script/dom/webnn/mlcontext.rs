@@ -2,16 +2,11 @@ use std::ptr;
 use std::rc::Rc;
 
 use dom_struct::dom_struct;
-use js::jsapi::{Heap, JSObject};
-use js::typedarray::{
-    ArrayBufferU8, ArrayBufferViewU8, Float32, Float64, Int8, Int16, Int32, Uint8, Uint16, Uint32,
-};
-use profile_traits::generic_callback::GenericCallback;
-use script_bindings::codegen::GenericBindings::NavigatorBinding::NavigatorMethods;
-use script_bindings::codegen::GenericBindings::WindowBinding::WindowMethods;
+use js::jsapi::JSObject;
+use js::typedarray::{ArrayBufferU8, Float32, Int8, Int16, Int32, Uint8, Uint16, Uint32};
 use webnn_traits::{ContextId, GraphId, WebNNMsg};
 
-use crate::dom::bindings::buffer_source::{BufferSource, HeapBufferSource, create_buffer_source};
+use crate::dom::bindings::buffer_source::create_buffer_source;
 use crate::dom::bindings::cell::DomRefCell;
 use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLBatchNormalizationSupportLimits, MLBinarySupportLimits, MLConcatSupportLimits,
@@ -27,11 +22,10 @@ use crate::dom::bindings::error::{Error, Fallible};
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
 use crate::dom::bindings::root::{Dom, DomRoot};
 use crate::dom::bindings::str::DOMString;
-use crate::dom::bindings::trace::{HashMapTracedValues, RootedTraceableBox};
+use crate::dom::bindings::trace::HashMapTracedValues;
 use crate::dom::globalscope::GlobalScope;
 use crate::dom::promise::Promise;
 use crate::dom::webnn::MLGraph;
-use crate::dom::webnn::ml::ML;
 use crate::dom::webnn::mltensor::{MLTensor, PendingRead};
 use crate::script_runtime::CanGc;
 
@@ -331,7 +325,7 @@ impl MLContext {
 
         // Dequeue the first pending read entry and break it apart.
         let maybe_entry = tensor_dom.take_first_pending_read();
-        let (promise, mut maybe_out) = match maybe_entry {
+        let (promise, maybe_out) = match maybe_entry {
             Some(PendingRead::Read(p)) => (p, None),
             Some(PendingRead::ReadByob { promise: p, output }) => (p, Some(output)),
             None => {
@@ -357,10 +351,8 @@ impl MLContext {
                 // If a BYOB output was provided for this pending promise, write
                 // the backend bytes into that buffer and resolve with `undefined`.
                 if let Some(out_union) = maybe_out {
-                    let cx = GlobalScope::get_cx();
-
                     match out_union {
-                        ArrayBufferViewOrArrayBuffer::ArrayBufferView(view) => {
+                        ArrayBufferViewOrArrayBuffer::ArrayBufferView(_view) => {
                             // TODO: find a way to do the equivalent of view.update(&bytes);
                             promise.resolve_native(&(), can_gc);
 
@@ -931,7 +923,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         &self,
         tensor: &MLTensor,
         input_data: ArrayBufferViewOrArrayBuffer,
-        can_gc: CanGc,
+        _can_gc: CanGc,
     ) -> Fallible<()> {
         // Step 1: Let |global| be this's relevant global object.
         let global = &self.global();
