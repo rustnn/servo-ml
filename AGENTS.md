@@ -7,9 +7,7 @@ conventions and deeper guidance.
 **Repo structure**
 - components/ — Rust crates that implement browser subsystems (DOM, layout,
   Web APIs, etc.). Check the README inside each component for specifics.
-- third_party/, tools/, docs/, etc. — supporting materials and tooling.
-
-Do not use cargo, use `./mach` commands.
+- scratchpad/ - the place to put temporary artifacts.
 
 **README Documentation Chain (read in order)**
 - `AGENTS.md` — top-level agent orientation and cross-cutting rules (this file).
@@ -41,13 +39,11 @@ Principle: add lessons to the *lowest* README that makes sense. Do **not** dupli
 - Use neutral, factual language. Avoid subjective or minimizing words such as "small", "tiny", "minimal", "just", or "only" when describing a component or its responsibilities.
 - Automated agents must not add conversational, transient, or change‑history text to committed files — write stable, forward‑looking prose suitable for future readers.
 - Prefer importing shared message/types with `use` and referring to them unqualified in code (for example, `use webnn_traits::WebNNMsg;` then use `WebNNMsg`), rather than repeatedly using fully‑qualified paths like `webnn_traits::WebNNMsg`. (Keeps signatures and types concise.)
-- If you need to capture why a change was made, put that explanation in the PR/commit message or an appropriate changelog entry.
 
 **Other General Guidelines:**
 - Always double-check your work with `./mach check`(without additional arguments). 
+- Use `./mach` command, not cargo.
 - Do not do anything with Git.
-- Never use fully qualified imports. To check build, always use ./mach check with zero additional arguments
-- Avoid useless adjective like "small" in your code documentation(unless the data really is small for a reason).
 
 Where to look next
 - For DOM / Web API work: see `components/script/README.md`.
