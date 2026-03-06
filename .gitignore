@@ -30,7 +30,6 @@ servo.pftrace
 /glfw
 webrender-captures/
 /screenshots
-<<<<<<< HEAD
 /etc/notarization/
 
 # Python setuptools
