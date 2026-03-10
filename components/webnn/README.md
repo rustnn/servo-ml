@@ -62,10 +62,14 @@ Design notes
   backend is available, preventing script-side reads from hanging.
 - Recent refactors moved all model caching off the manager thread and
   into the ML worker itself.  The manager no longer retains any `GraphInfo`
-  or compiled‑paths; it simply converts and forwards compile requests.  The
-  ML thread keeps a per-graph cache entry with explicit `Compiling`,
-  `Compiled`, and `Destroyed` states.  Repeated compile requests wait on the
-  existing entry instead of launching duplicate compilation work.  Dispatch
+  or compiled‑paths; it prepares pooled work items from the manager thread.
+  The manager owns the rayon thread pool, self-sender, and shared compile
+  cache, and each `Context` stores clones of those manager-owned execution
+  handles so queue-draining code can spawn work at the lowest level without
+  threading an extra execution-context parameter through unrelated paths. The
+  cache keeps a per-graph entry with explicit `Compiling`,
+  `Compiled`, and `Destroyed` states so repeated compile requests wait on the
+  existing entry instead of launching duplicate compilation work. Dispatch
   messages now carry only the graph id and tensor data, significantly reducing
   manager memory pressure and avoiding cross-thread cloning of the graph
   description.

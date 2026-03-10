@@ -22,9 +22,6 @@ rustnn = { git = "https://github.com/gterzian/rustnn", features = [] }
 half = "2"
 profile_traits = { workspace = true }
 
-# used by the manager to communicate with the ML worker thread
-crossbeam = "0.8"
-
 # CoreML-specific features are gated purely by the target OS.  The legacy
 # `coreml-runtime` workspace feature was removed.
 

@@ -5,15 +5,15 @@
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
+use std::rc::Rc;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
 use base::generic_channel::{GenericReceiver, GenericSender, channel};
-use crossbeam::channel::{self, Receiver, Sender};
 use log::{debug, warn};
 use parking_lot::{Condvar, Mutex, RwLock};
 use profile_traits::generic_callback::GenericCallback;
-use rayon::ThreadPoolBuilder;
+use rayon::{ThreadPool, ThreadPoolBuilder};
 use rustnn::GraphConverter;
 use rustnn::executors::coreml::{CoremlOutput, prepare_compiled_model_with_weights};
 use rustnn::graph::{ConstantData, DataType, GraphInfo, Operand, get_static_or_max_size};
@@ -90,15 +90,15 @@ enum PendingOp {
     ReadTensor(GenericCallback<ContextMessage>, ContextId, u32),
     WriteTensor(ContextId, u32, Vec<u8>),
     Dispatch(ContextId, GraphId, HashMap<u32, u32>, HashMap<u32, u32>),
-    Compile(GraphId),
+    Compile(ContextId, GraphId, GraphInfo),
 }
 
 struct Context {
     // Backend-specific context state.
     tensor_store: HashMap<u32, Arc<Vec<u8>>>,
-
-    // Sender for offloading ML work to the dedicated thread.
-    compute_tx: Sender<MlMsg>,
+    pool: Rc<ThreadPool>,
+    compiled_map: SharedCompiledMap,
+    manager_tx: GenericSender<WebNNMsg>,
 
     /// When the script requests a compilation via `MLGraphBuilder.build()` we
     /// record the `GraphId` it generated together with the persistent
@@ -122,15 +122,23 @@ struct Context {
 /// dramatically reduce nesting in `run_manager`.
 struct WebNNManager {
     contexts: HashMap<ContextId, Context>,
-    // channel used for compute work; cloned into each context
-    ml_sender: Sender<MlMsg>,
+    manager_tx: GenericSender<WebNNMsg>,
+    pool: Rc<ThreadPool>,
+    compiled_map: SharedCompiledMap,
 }
 
 impl WebNNManager {
-    fn new(ml_sender: Sender<MlMsg>) -> Self {
+    fn new(manager_tx: GenericSender<WebNNMsg>) -> Self {
         WebNNManager {
             contexts: HashMap::new(),
-            ml_sender,
+            manager_tx,
+            pool: Rc::new(
+                ThreadPoolBuilder::new()
+                    .thread_name(|index| format!("WebNNMLWorker{index}"))
+                    .build()
+                    .expect("failed to build WebNN ML thread pool"),
+            ),
+            compiled_map: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
@@ -144,16 +152,16 @@ impl WebNNManager {
 
     fn handle_message(&mut self, msg: WebNNMsg) -> bool {
         match msg {
-            WebNNMsg::Exit => {
-                // notify ml thread so it can exit as well
-                if let Err(e) = self.ml_sender.send(MlMsg::Exit) {
-                    warn!("webnn manager: failed to send ML exit: {:?}", e);
-                }
-                false
-            },
+            WebNNMsg::Exit => false,
             WebNNMsg::NewContext(id) => {
-                self.contexts
-                    .insert(id, Context::new(self.ml_sender.clone()));
+                self.contexts.insert(
+                    id,
+                    Context::new(
+                        Rc::clone(&self.pool),
+                        Arc::clone(&self.compiled_map),
+                        self.manager_tx.clone(),
+                    ),
+                );
                 true
             },
             WebNNMsg::DestroyContext(id) => {
@@ -217,10 +225,7 @@ impl WebNNManager {
             },
             WebNNMsg::Compile(cb, graph_id, ctx_id, graph_info) => {
                 if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
-                    let key =
-                        ctx.get_or_compile(ctx_id, graph_id, graph_info, Some((graph_id, cb)));
-                    // put a compile step on the timeline so subsequent ops wait
-                    ctx.enqueue_or_run(PendingOp::Compile(key));
+                    ctx.handle_compile(ctx_id, graph_id, graph_info, cb);
                 } else {
                     warn!("webnn manager: Compile for unknown context {:?}", ctx_id);
                 }
@@ -228,23 +233,7 @@ impl WebNNManager {
             },
             WebNNMsg::Compiled(ctx_id, graph_id, _path) => {
                 if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
-                    // notify any build callbacks waiting for this graph_id
-                    if let Some(vec) = ctx.script_build_request.remove(&graph_id) {
-                        for cb in vec {
-                            // send result back to script thread.  The script
-                            // stored its own clone of the GraphInfo when the
-                            // build request was issued, so the callback can
-                            // construct the MLGraph with that information.  The
-                            // manager itself does not send the info in the
-                            // compile result message.
-                            let _ = cb.send(ContextMessage::CompileResult(ctx_id, graph_id));
-                        }
-                    }
-                    // compilation counts as an in-flight operation; clear flag
-                    if ctx.queue_blocked {
-                        ctx.queue_blocked = false;
-                        ctx.process_queue();
-                    }
+                    ctx.handle_compiled(ctx_id, graph_id);
                 } else {
                     warn!("webnn manager: Compiled for unknown context {:?}", ctx_id);
                 }
@@ -252,22 +241,7 @@ impl WebNNManager {
             },
             WebNNMsg::CompileFailed(ctx_id, key, reason) => {
                 if let Some(ctx) = self.contexts.get_mut(&ctx_id) {
-                    warn!(
-                        "webnn manager: compilation failed for {:?}/{}: {}",
-                        ctx_id, key, reason
-                    );
-                    // drop any pending build callbacks; we still call them so the
-                    // script side can resolve the promises, though they won't
-                    // be able to dispatch successfully later.
-                    if let Some(vec) = ctx.script_build_request.remove(&key) {
-                        for cb in vec {
-                            let _ = cb.send(ContextMessage::CompileResult(ctx_id, key));
-                        }
-                    }
-                    if ctx.queue_blocked {
-                        ctx.queue_blocked = false;
-                        ctx.process_queue();
-                    }
+                    ctx.handle_compile_failed(ctx_id, key, reason);
                 } else {
                     warn!(
                         "webnn manager: CompileFailed for unknown context {:?}",
@@ -292,14 +266,47 @@ impl WebNNManager {
 }
 
 impl Context {
-    fn new(compute_tx: Sender<MlMsg>) -> Self {
+    fn new(
+        pool: Rc<ThreadPool>,
+        compiled_map: SharedCompiledMap,
+        manager_tx: GenericSender<WebNNMsg>,
+    ) -> Self {
         Context {
             tensor_store: HashMap::new(),
-            compute_tx,
+            pool,
+            compiled_map,
+            manager_tx,
             script_build_request: HashMap::new(),
             timeline: VecDeque::new(),
             queue_blocked: false,
         }
+    }
+
+    fn spawn_work(&self, work: WorkItem) {
+        let manager_tx = self.manager_tx.clone();
+        let compiled_map = Arc::clone(&self.compiled_map);
+        self.pool.spawn(move || match work {
+            WorkItem::Compute {
+                ctx_id,
+                key,
+                inputs_map,
+                inputs_bytes,
+                outputs_map,
+            } => handle_ml_compute(
+                ctx_id,
+                key,
+                inputs_map,
+                inputs_bytes,
+                outputs_map,
+                compiled_map,
+                manager_tx,
+            ),
+            WorkItem::Compile {
+                ctx_id,
+                key,
+                graph_info,
+            } => handle_ml_compile(ctx_id, key, graph_info, compiled_map, manager_tx),
+        });
     }
 
     fn handle_create_tensor(
@@ -388,7 +395,7 @@ impl Context {
         let inputs_map: HashMap<u32, u32> = inputs_map.into_iter().collect();
         let outputs_map: HashMap<u32, u32> = outputs_map.into_iter().collect();
 
-        self.enqueue_or_run(PendingOp::Dispatch(ctx_id, key, inputs_map, outputs_map));
+        self.enqueue_or_run(PendingOp::Dispatch(ctx_id, key, inputs_map, outputs_map))
     }
 
     fn collect_input_bytes(&self, inputs_map: &HashMap<u32, u32>) -> HashMap<u32, Vec<u8>> {
@@ -424,30 +431,13 @@ impl Context {
     // it can be invoked from multiple entry points (e.g. the new `compute`
     // helper).  `compute` itself lives just below the helper declarations.
 
-    /// Convenience helper used from `handle_dispatch` to run the graph and
-    /// populate `tensor_store`.  It mirrors the former body of
-    /// `handle_dispatch` but delegates the CoreML attempt to a free function.
-    /// Run a graph compute on the ML thread.  Returns true if the compute
-    /// was successfully dispatched and `queue_blocked` remains true.  A
-    /// return value of `false` indicates we fell back synchronously (e.g. the
-    /// ML channel was closed), in which case callers should continue draining
-    /// the timeline immediately.
-    /// Ensure the graph is compiled and return its cache key.
-    ///
-    /// This may queue a compilation on the ML thread if we haven't sent the
-    /// graph before.  We convert the provided `graph_info` to bytes, resolve
-    /// any constant operands, and notify the ML worker.  The ML thread owns
-    /// the shared compilation cache and decides whether to perform the actual
-    /// compile work or wait on an existing in-flight entry.  If `build_request`
-    /// is provided we also record the callback so the script can be notified
-    /// when compilation finishes.
-    fn get_or_compile(
+    fn handle_compile(
         &mut self,
         ctx_id: ContextId,
         graph_id: GraphId,
         mut graph_info: GraphInfo,
-        build_request: Option<(GraphId, GenericCallback<ContextMessage>)>,
-    ) -> GraphId {
+        callback: GenericCallback<ContextMessage>,
+    ) {
         // caller already gave us ownership of the graph info; mutate it
         // directly to resolve constants before sending the graph to the
         // compute thread.
@@ -455,80 +445,32 @@ impl Context {
 
         // record any build callback so we can notify when this graph
         // finishes compiling.
-        if let Some((gid, cb)) = build_request {
-            self.script_build_request.entry(gid).or_default().push(cb);
-        }
+        self.script_build_request
+            .entry(graph_id)
+            .or_default()
+            .push(callback);
 
-        // Always forward the compile request.  The ML thread deduplicates
-        // concurrent work through its cache and will either compile the graph
-        // or wait for an existing cache entry to resolve.
-        if let Err(e) = self.compute_tx.send(MlMsg::Compile {
-            ctx_id,
-            key: graph_id,
-            graph_info,
-        }) {
-            warn!("webnn manager: failed to send compile message: {:?}", e);
-        }
-        graph_id
+        self.enqueue_or_run(PendingOp::Compile(ctx_id, graph_id, graph_info));
     }
 
-    fn compute(
-        &mut self,
-        _ctx_id: ContextId,
+    fn build_compute_work(
+        &self,
+        ctx_id: ContextId,
         key: GraphId,
         inputs_map: HashMap<u32, u32>,
         outputs_map: HashMap<u32, u32>,
-        compute_tx: &Sender<MlMsg>,
-    ) -> bool {
+    ) -> WorkItem {
         // The manager no longer keeps a cache; the compute thread owns all
-        // graph metadata.  We simply forward the inputs to the ML worker and
-        // let it handle missing/uncached graphs (it will zero the outputs).
+        // graph metadata.  We simply forward the inputs to the pooled worker
+        // and let it handle missing/uncached graphs (it will zero the outputs).
         let inputs_bytes = self.collect_input_bytes(&inputs_map);
 
-        let work_outputs = outputs_map.clone();
-
-        let msg = MlMsg::Compute {
-            ctx_id: _ctx_id,
+        WorkItem::Compute {
+            ctx_id,
             key,
             inputs_map,
             inputs_bytes,
-            outputs_map: work_outputs,
-        };
-
-        if let Err(e) = compute_tx.send(msg) {
-            warn!("webnn manager: failed to send compute message: {:?}", e);
-            // fall back to zeroing outputs locally.
-            self.zeroed_outputs(
-                &GraphInfo {
-                    operands: Vec::new(),
-                    input_operands: Vec::new(),
-                    output_operands: Vec::new(),
-                    operations: Vec::new(),
-                    constant_operand_ids_to_handles: HashMap::new(),
-                    id_to_constant_tensor_operand_map: HashMap::new(),
-                    quantized: false,
-                },
-                &outputs_map,
-            );
-            self.queue_blocked = false;
-            return false;
-        }
-
-        true
-    }
-
-    fn zeroed_outputs(&mut self, graph_info: &GraphInfo, outputs_map: &HashMap<u32, u32>) {
-        for (op_id, tensor_id) in outputs_map.iter() {
-            if let Some(operand) = graph_info.operands.get(*op_id as usize) {
-                let element_count: usize =
-                    operand.descriptor.shape.iter().fold(1usize, |acc, d| {
-                        acc.saturating_mul(get_static_or_max_size(d) as usize)
-                    });
-                let byte_len =
-                    element_count.saturating_mul(operand.descriptor.data_type.bytes_per_element());
-                self.tensor_store
-                    .insert(*tensor_id, Arc::new(vec![0u8; byte_len]));
-            }
+            outputs_map,
         }
     }
 
@@ -557,19 +499,57 @@ impl Context {
             },
             PendingOp::Dispatch(ctx_id, key, inputs_map, outputs_map) => {
                 self.queue_blocked = true;
-                let compute_chan = self.compute_tx.clone();
-                let started = self.compute(ctx_id, key, inputs_map, outputs_map, &compute_chan);
-                if !started {
-                    self.queue_blocked = false;
-                }
+                self.spawn_work(self.build_compute_work(ctx_id, key, inputs_map, outputs_map));
             },
-            PendingOp::Compile(_key) => {
+            PendingOp::Compile(ctx_id, key, graph_info) => {
                 // block the timeline until the compilation result arrives.
                 self.queue_blocked = true;
-                // we no longer track compiled paths on the manager; the ML
-                // thread owns that cache and will notify us when the work
-                // completes via `WebNNMsg::Compiled`.
+                self.spawn_work(WorkItem::Compile {
+                    ctx_id,
+                    key,
+                    graph_info,
+                });
             },
+        }
+    }
+
+    fn handle_compiled(&mut self, ctx_id: ContextId, graph_id: GraphId) {
+        // notify any build callbacks waiting for this graph_id
+        if let Some(vec) = self.script_build_request.remove(&graph_id) {
+            for cb in vec {
+                // send result back to script thread.  The script stored its
+                // own clone of the GraphInfo when the build request was
+                // issued, so the callback can construct the MLGraph with that
+                // information.  The manager itself does not send the info in
+                // the compile result message.
+                let _ = cb.send(ContextMessage::CompileResult(ctx_id, graph_id));
+            }
+        }
+
+        if self.queue_blocked {
+            self.queue_blocked = false;
+            self.process_queue();
+        }
+    }
+
+    fn handle_compile_failed(&mut self, ctx_id: ContextId, key: GraphId, reason: String) {
+        warn!(
+            "webnn manager: compilation failed for {:?}/{}: {}",
+            ctx_id, key, reason
+        );
+
+        // drop any pending build callbacks; we still call them so the script
+        // side can resolve the promises, though they won't be able to dispatch
+        // successfully later.
+        if let Some(vec) = self.script_build_request.remove(&key) {
+            for cb in vec {
+                let _ = cb.send(ContextMessage::CompileResult(ctx_id, key));
+            }
+        }
+
+        if self.queue_blocked {
+            self.queue_blocked = false;
+            self.process_queue();
         }
     }
 
@@ -578,7 +558,7 @@ impl Context {
             self.tensor_store.insert(tensor_id, Arc::new(bytes));
         }
         self.queue_blocked = false;
-        self.process_queue();
+        self.process_queue()
     }
 
     fn process_queue(&mut self) {
@@ -615,38 +595,11 @@ pub fn new_webnn_manager() -> (GenericSender<WebNNMsg>, JoinHandle<()>) {
 }
 
 fn run_manager(receiver: GenericReceiver<WebNNMsg>, manager_tx: GenericSender<WebNNMsg>) {
-    // create dedicated channel for ML work
-    let (ml_tx, ml_rx): (Sender<MlMsg>, Receiver<MlMsg>) = channel::unbounded();
-
-    // spawn the ML dispatcher thread; it uses a rayon thread pool for
-    // parallel compute/compile work and posts results back to the manager.
-    let ml_handle = thread::Builder::new()
-        .name("WebNNML".into())
-        .spawn(move || ml_loop(ml_rx, manager_tx.clone()))
-        .expect("failed to spawn WebNN ML thread");
-
-    // manager now owns a sender that it will clone into each context
-    let mut manager = WebNNManager::new(ml_tx.clone());
+    let mut manager = WebNNManager::new(manager_tx);
     manager.run(receiver);
-
-    // manager.run has returned (likely due to Exit).  make sure the ML thread
-    // is told to exit in case we didn't already send the message above.
-    if let Err(e) = ml_tx.send(MlMsg::Exit) {
-        warn!("webnn manager: failed to notify ML thread of exit: {:?}", e);
-    }
-
-    // Wait for the ML dispatcher thread and any in-flight rayon work.
-    if let Err(e) = ml_handle.join() {
-        warn!("webnn manager: ML thread join panicked: {:?}", e);
-    }
 }
 
-// messages sent to the ml worker thread.  compute requests carry a
-// copy of all data necessary to run CoreML (or compute zeroed outputs).  The
-// worker no longer returns results directly; instead it sends a
-// `WebNNMsg::ComputeResult` back to the manager thread.
-#[derive(Debug)]
-enum MlMsg {
+enum WorkItem {
     Compute {
         ctx_id: ContextId,
         key: GraphId,
@@ -659,7 +612,6 @@ enum MlMsg {
         key: GraphId,
         graph_info: GraphInfo,
     },
-    Exit,
 }
 
 enum MlCacheEntry {
@@ -903,57 +855,6 @@ fn handle_ml_compile(
                 warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
             }
         },
-    }
-}
-
-// Worker loop run on the dedicated ML dispatcher thread.  It waits for
-// messages, fans compute/compile work out to a rayon thread pool, and then
-// sends results back to the manager thread.
-fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
-    let compiled_map: SharedCompiledMap = Arc::new(RwLock::new(HashMap::new()));
-    let pool = ThreadPoolBuilder::new()
-        .thread_name(|index| format!("WebNNMLWorker{index}"))
-        .build()
-        .expect("failed to build WebNN ML thread pool");
-
-    while let Ok(msg) = rx.recv() {
-        match msg {
-            MlMsg::Compute {
-                ctx_id,
-                key,
-                inputs_map,
-                inputs_bytes,
-                outputs_map,
-            } => {
-                let compiled_map = Arc::clone(&compiled_map);
-                let manager_tx = manager_tx.clone();
-                pool.spawn(move || {
-                    handle_ml_compute(
-                        ctx_id,
-                        key,
-                        inputs_map,
-                        inputs_bytes,
-                        outputs_map,
-                        compiled_map,
-                        manager_tx,
-                    );
-                });
-            },
-            MlMsg::Compile {
-                ctx_id,
-                key,
-                graph_info,
-            } => {
-                let compiled_map = Arc::clone(&compiled_map);
-                let manager_tx = manager_tx.clone();
-                pool.spawn(move || {
-                    handle_ml_compile(ctx_id, key, graph_info, compiled_map, manager_tx);
-                });
-            },
-            MlMsg::Exit => {
-                break;
-            },
-        }
     }
 }
 
