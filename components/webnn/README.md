@@ -41,6 +41,14 @@ Design notes
 - Keep manager logic and backend adapters inside `components/webnn` (or in
   separate backend crates) — DOM/script should only depend on the shared
   message crate and the `sender`.
+- Prefer importing synchronization primitives and shared graph/message types at
+  module scope and using their short names in code rather than repeating
+  fully-qualified paths throughout the manager implementation.
+- The ML-thread cache should insert a per-graph entry before asynchronous
+  compilation begins and transition that entry through explicit states
+  (`Compiling`, `Compiled`, `Destroyed`).  Compute requests for a graph that is
+  still compiling must wait on that entry rather than treating the cache as
+  missing.
 - Implementation note: prefer declaring manager helper types (for example
   `Context`) at module scope rather than inside `run_manager()` so types
   are discoverable, easier to test, and stable for future backend additions.
@@ -55,10 +63,12 @@ Design notes
 - Recent refactors moved all model caching off the manager thread and
   into the ML worker itself.  The manager no longer retains any `GraphInfo`
   or compiled‑paths; it simply converts and forwards compile requests.  The
-  ML thread keeps a map from `GraphId` to a small `MlCacheEntry` containing
-  the `GraphInfo` and optional compiled path.  Dispatch messages now carry
-  only the graph id and tensor data, significantly reducing manager memory
-  pressure and avoiding cross-thread cloning of the graph description.
+  ML thread keeps a per-graph cache entry with explicit `Compiling`,
+  `Compiled`, and `Destroyed` states.  Repeated compile requests wait on the
+  existing entry instead of launching duplicate compilation work.  Dispatch
+  messages now carry only the graph id and tensor data, significantly reducing
+  manager memory pressure and avoiding cross-thread cloning of the graph
+  description.
 - Script-side callbacks for compilation (`ContextMessage::CompileResult`) only
   supply the `GraphId`.  Script code keeps a clone of the `GraphInfo` when
   `build()` is invoked so that it can validate dispatch arguments later; the

@@ -2,34 +2,36 @@
  * License, v. 2.0. If a copy of the MPL was not distributed with this
  * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
 
+use std::collections::hash_map::Entry;
 use std::collections::{HashMap, VecDeque};
-use std::path::PathBuf;
-use std::thread;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use std::thread::{self, JoinHandle};
 
 use base::generic_channel::{GenericReceiver, GenericSender, channel};
 use crossbeam::channel::{self, Receiver, Sender};
 use log::{debug, warn};
+use parking_lot::{Condvar, Mutex, RwLock};
 use profile_traits::generic_callback::GenericCallback;
+use rayon::ThreadPoolBuilder;
 use rustnn::GraphConverter;
 use rustnn::executors::coreml::{CoremlOutput, prepare_compiled_model_with_weights};
+use rustnn::graph::{ConstantData, DataType, GraphInfo, Operand, get_static_or_max_size};
 
 // helper for converting a CoreML output (or lack thereof) into the byte
 // buffer we store in the manager's tensor store.  Handles all supported
 // data types and falls back to a zeroed buffer when the output is missing.
-fn process_coreml_outputs(
-    operand: &rustnn::graph::Operand,
-    coreml_out: Option<CoremlOutput>,
-) -> Vec<u8> {
+fn process_coreml_outputs(operand: &Operand, coreml_out: Option<CoremlOutput>) -> Vec<u8> {
     if let Some(coreml_out) = coreml_out {
         match operand.descriptor.data_type {
-            rustnn::graph::DataType::Float32 => {
+            DataType::Float32 => {
                 let mut bytes = Vec::with_capacity(coreml_out.data.len() * 4);
                 for &v in coreml_out.data.iter() {
                     bytes.extend_from_slice(&v.to_le_bytes());
                 }
                 bytes
             },
-            rustnn::graph::DataType::Float16 => {
+            DataType::Float16 => {
                 let mut bytes = Vec::with_capacity(coreml_out.data.len() * 2);
                 for &v in coreml_out.data.iter() {
                     let bits = half::f16::from_f32(v).to_bits();
@@ -37,7 +39,7 @@ fn process_coreml_outputs(
                 }
                 bytes
             },
-            rustnn::graph::DataType::Int32 => {
+            DataType::Int32 => {
                 // CoreML emits a float array even for integer outputs.  In
                 // practice the values appear as tiny denormals whose underlying
                 // bit pattern encodes the integer we want (1e-45 == 0x0000_0001).
@@ -58,7 +60,7 @@ fn process_coreml_outputs(
                     .shape
                     .iter()
                     .fold(1usize, |acc, d| {
-                        acc.saturating_mul(rustnn::graph::get_static_or_max_size(d) as usize)
+                        acc.saturating_mul(get_static_or_max_size(d) as usize)
                     })
                     .saturating_mul(4usize);
                 vec![0u8; byte_length]
@@ -71,15 +73,13 @@ fn process_coreml_outputs(
             .shape
             .iter()
             .fold(1usize, |acc, d| {
-                acc.saturating_mul(rustnn::graph::get_static_or_max_size(d) as usize)
+                acc.saturating_mul(get_static_or_max_size(d) as usize)
             })
             .saturating_mul(4usize);
         vec![0u8; byte_length]
     }
 }
 
-// Required to materialize constant operands during dispatch.
-use rustnn::graph::ConstantData;
 use webnn_traits::{ContextId, ContextMessage, GraphId, WebNNMsg};
 
 #[derive(Debug)]
@@ -95,17 +95,10 @@ enum PendingOp {
 
 struct Context {
     // Backend-specific context state.
-    tensor_store: HashMap<u32, std::sync::Arc<Vec<u8>>>,
+    tensor_store: HashMap<u32, Arc<Vec<u8>>>,
 
     // Sender for offloading ML work to the dedicated thread.
     compute_tx: Sender<MlMsg>,
-
-    /// Set of graph ids we’ve already forwarded to the ML thread for
-    /// compilation.  We don’t retain the full GraphInfo on the manager side;
-    /// the compute thread keeps its own cache.  The set exists purely
-    /// to avoid reconverting the same graph bytes if the script repeatedly
-    /// calls `compile()` for the same id.
-    seen_graphs: std::collections::HashSet<GraphId>,
 
     /// When the script requests a compilation via `MLGraphBuilder.build()` we
     /// record the `GraphId` it generated together with the persistent
@@ -303,7 +296,6 @@ impl Context {
         Context {
             tensor_store: HashMap::new(),
             compute_tx,
-            seen_graphs: std::collections::HashSet::new(),
             script_build_request: HashMap::new(),
             timeline: VecDeque::new(),
             queue_blocked: false,
@@ -324,8 +316,7 @@ impl Context {
         // sequence – there is no need to assume float32 or any other element
         // size.
         let buffer = vec![0u8; byte_length];
-        self.tensor_store
-            .insert(tensor_id, std::sync::Arc::new(buffer));
+        self.tensor_store.insert(tensor_id, Arc::new(buffer));
         if let Err(e) = callback.send(ContextMessage::CreateTensorResult(
             ctx_id,
             tensor_id,
@@ -342,8 +333,7 @@ impl Context {
         bytes: Vec<u8>,
     ) {
         // create the buffer exactly as given; no zeroing required
-        self.tensor_store
-            .insert(tensor_id, std::sync::Arc::new(bytes));
+        self.tensor_store.insert(tensor_id, Arc::new(bytes));
         // unlike CreateTensor there is no callback path; callers either
         // resolve their own promise synchronously or ignore the result.
     }
@@ -382,8 +372,7 @@ impl Context {
     }
 
     fn handle_write_tensor(&mut self, _ctx_id: ContextId, tensor_id: u32, bytes: Vec<u8>) {
-        self.tensor_store
-            .insert(tensor_id, std::sync::Arc::new(bytes));
+        self.tensor_store.insert(tensor_id, Arc::new(bytes));
     }
 
     fn handle_dispatch(
@@ -412,7 +401,7 @@ impl Context {
         inputs_bytes
     }
 
-    fn resolve_constant_operands(&mut self, graph_info: &mut rustnn::graph::GraphInfo) {
+    fn resolve_constant_operands(&mut self, graph_info: &mut GraphInfo) {
         if graph_info.id_to_constant_tensor_operand_map.is_empty() {
             return;
         }
@@ -447,15 +436,16 @@ impl Context {
     ///
     /// This may queue a compilation on the ML thread if we haven't sent the
     /// graph before.  We convert the provided `graph_info` to bytes, resolve
-    /// any constant operands, and notify the ML worker.  A simple `seen_graphs`
-    /// set prevents duplicate conversions.  If `build_request` is provided we
-    /// also record the callback so the script can be notified when compilation
-    /// finishes.
+    /// any constant operands, and notify the ML worker.  The ML thread owns
+    /// the shared compilation cache and decides whether to perform the actual
+    /// compile work or wait on an existing in-flight entry.  If `build_request`
+    /// is provided we also record the callback so the script can be notified
+    /// when compilation finishes.
     fn get_or_compile(
         &mut self,
         ctx_id: ContextId,
         graph_id: GraphId,
-        mut graph_info: rustnn::graph::GraphInfo,
+        mut graph_info: GraphInfo,
         build_request: Option<(GraphId, GenericCallback<ContextMessage>)>,
     ) -> GraphId {
         // caller already gave us ownership of the graph info; mutate it
@@ -469,18 +459,15 @@ impl Context {
             self.script_build_request.entry(gid).or_default().push(cb);
         }
 
-        // forward compile request if we haven't already issued one for this
-        // cache key.  The compute thread will perform the actual
-        // conversion/compilation.
-        if !self.seen_graphs.contains(&graph_id) {
-            self.seen_graphs.insert(graph_id);
-            if let Err(e) = self.compute_tx.send(MlMsg::Compile {
-                ctx_id,
-                key: graph_id,
-                graph_info,
-            }) {
-                warn!("webnn manager: failed to send compile message: {:?}", e);
-            }
+        // Always forward the compile request.  The ML thread deduplicates
+        // concurrent work through its cache and will either compile the graph
+        // or wait for an existing cache entry to resolve.
+        if let Err(e) = self.compute_tx.send(MlMsg::Compile {
+            ctx_id,
+            key: graph_id,
+            graph_info,
+        }) {
+            warn!("webnn manager: failed to send compile message: {:?}", e);
         }
         graph_id
     }
@@ -512,7 +499,7 @@ impl Context {
             warn!("webnn manager: failed to send compute message: {:?}", e);
             // fall back to zeroing outputs locally.
             self.zeroed_outputs(
-                &rustnn::graph::GraphInfo {
+                &GraphInfo {
                     operands: Vec::new(),
                     input_operands: Vec::new(),
                     output_operands: Vec::new(),
@@ -530,21 +517,17 @@ impl Context {
         true
     }
 
-    fn zeroed_outputs(
-        &mut self,
-        graph_info: &rustnn::graph::GraphInfo,
-        outputs_map: &HashMap<u32, u32>,
-    ) {
+    fn zeroed_outputs(&mut self, graph_info: &GraphInfo, outputs_map: &HashMap<u32, u32>) {
         for (op_id, tensor_id) in outputs_map.iter() {
             if let Some(operand) = graph_info.operands.get(*op_id as usize) {
                 let element_count: usize =
                     operand.descriptor.shape.iter().fold(1usize, |acc, d| {
-                        acc.saturating_mul(rustnn::graph::get_static_or_max_size(d) as usize)
+                        acc.saturating_mul(get_static_or_max_size(d) as usize)
                     });
                 let byte_len =
                     element_count.saturating_mul(operand.descriptor.data_type.bytes_per_element());
                 self.tensor_store
-                    .insert(*tensor_id, std::sync::Arc::new(vec![0u8; byte_len]));
+                    .insert(*tensor_id, Arc::new(vec![0u8; byte_len]));
             }
         }
     }
@@ -592,8 +575,7 @@ impl Context {
 
     fn handle_compute_result(&mut self, outputs: HashMap<u32, Vec<u8>>) {
         for (tensor_id, bytes) in outputs {
-            self.tensor_store
-                .insert(tensor_id, std::sync::Arc::new(bytes));
+            self.tensor_store.insert(tensor_id, Arc::new(bytes));
         }
         self.queue_blocked = false;
         self.process_queue();
@@ -616,7 +598,7 @@ impl Context {
 ///
 /// Returning the join handle allows the caller (the `Constellation`) to
 /// join the manager thread during shutdown.
-pub fn new_webnn_manager() -> (GenericSender<WebNNMsg>, std::thread::JoinHandle<()>) {
+pub fn new_webnn_manager() -> (GenericSender<WebNNMsg>, JoinHandle<()>) {
     let (tx, rx): (GenericSender<WebNNMsg>, GenericReceiver<WebNNMsg>) =
         channel().expect("webnn channel");
 
@@ -636,8 +618,8 @@ fn run_manager(receiver: GenericReceiver<WebNNMsg>, manager_tx: GenericSender<We
     // create dedicated channel for ML work
     let (ml_tx, ml_rx): (Sender<MlMsg>, Receiver<MlMsg>) = channel::unbounded();
 
-    // spawn the ML worker thread; give it a copy of `manager_tx` so it
-    // can post the ComputeResult message when work finishes.
+    // spawn the ML dispatcher thread; it uses a rayon thread pool for
+    // parallel compute/compile work and posts results back to the manager.
     let ml_handle = thread::Builder::new()
         .name("WebNNML".into())
         .spawn(move || ml_loop(ml_rx, manager_tx.clone()))
@@ -653,11 +635,9 @@ fn run_manager(receiver: GenericReceiver<WebNNMsg>, manager_tx: GenericSender<We
         warn!("webnn manager: failed to notify ML thread of exit: {:?}", e);
     }
 
-    // Attempt to join the ML thread during shutdown.
-    if ml_handle.is_finished() {
-        if let Err(e) = ml_handle.join() {
-            warn!("webnn manager: ML thread join panicked: {:?}", e);
-        }
+    // Wait for the ML dispatcher thread and any in-flight rayon work.
+    if let Err(e) = ml_handle.join() {
+        warn!("webnn manager: ML thread join panicked: {:?}", e);
     }
 }
 
@@ -677,71 +657,97 @@ enum MlMsg {
     Compile {
         ctx_id: ContextId,
         key: GraphId,
-        graph_info: rustnn::graph::GraphInfo,
+        graph_info: GraphInfo,
     },
     Exit,
 }
 
-// Worker loop run on the dedicated ML thread.  It waits for compute messages,
-// executes `try_coreml_execute` (or generates zeroed outputs if that fails),
-// and then sends the resulting tensor bytes back to the caller.
-fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
-    // map from (context id, graph id) -> cached information retained on the
-    // compute thread.  In the protocol GraphId values are only unique within
-    // their originating context, so we must include the context id in the key
-    // to avoid collisions when two different contexts happen to reuse the
-    // same numeric identifier.  The entry holds the original GraphInfo so
-    // compute messages need only supply the two-part key.  The compiled model
-    // path is filled in once the compile operation completes.
-    struct MlCacheEntry {
-        graph_info: rustnn::graph::GraphInfo,
-        compiled_path: Option<PathBuf>,
+enum MlCacheEntry {
+    Compiling,
+    Compiled {
+        graph_info: GraphInfo,
+        compiled_path: PathBuf,
         // bytes produced by conversion; reused during compute to avoid
         // repeating the convert step.  Always present once entry exists.
         converted_program: Vec<u8>,
-    }
-    let mut compiled_map: HashMap<(ContextId, GraphId), MlCacheEntry> = HashMap::new();
-    while let Ok(msg) = rx.recv() {
-        match msg {
-            MlMsg::Compute {
-                ctx_id,
-                key,
-                inputs_map,
-                inputs_bytes,
-                outputs_map,
-            } => {
-                let mut outputs = HashMap::new();
+    },
+    Destroyed(String),
+}
 
-                // if we haven't seen a compile for this graph yet the ML thread
-                // can't execute anything; generate zeroed outputs and bail.  Note
-                // that we key the cache by context as well as graph id.
-                if compiled_map.get(&(ctx_id, key)).is_none() {
-                    for (_op_id, tensor_id) in outputs_map.iter() {
-                        // Without graph info we can't inspect shape here, so
-                        // fall back to zero-length buffers (same as previous
-                        // behaviour when the entry was missing).
-                        outputs.insert(*tensor_id, Vec::new());
-                    }
-                    debug!("Failed to find compiled_map");
-                    if let Err(e) = manager_tx.send(WebNNMsg::ComputeResult(ctx_id, outputs)) {
-                        warn!("webnn ML thread: failed to send ComputeResult: {:?}", e);
-                    }
-                    continue;
+type SharedCacheEntry = Arc<(Mutex<MlCacheEntry>, Condvar)>;
+type SharedCompiledMap = Arc<RwLock<HashMap<(ContextId, GraphId), SharedCacheEntry>>>;
+
+fn handle_ml_compute(
+    ctx_id: ContextId,
+    key: GraphId,
+    inputs_map: HashMap<u32, u32>,
+    inputs_bytes: HashMap<u32, Vec<u8>>,
+    outputs_map: HashMap<u32, u32>,
+    compiled_map: SharedCompiledMap,
+    manager_tx: GenericSender<WebNNMsg>,
+) {
+    let mut outputs = HashMap::new();
+
+    let cache_entry = {
+        let compiled_map = compiled_map.read();
+        let entry = compiled_map.get(&(ctx_id, key)).cloned();
+        debug_assert!(
+            entry.is_some(),
+            "compute without cache entry for {:?}/{}",
+            ctx_id,
+            key
+        );
+        entry
+    };
+
+    // if we haven't seen a compile for this graph yet the ML pool
+    // can't execute anything; generate zeroed outputs and bail.  Note
+    // that we key the cache by context as well as graph id.
+    let Some(cache_entry) = cache_entry else {
+        warn!("webnn ML thread: missing cache entry during compute");
+        for tensor_id in outputs_map.values() {
+            outputs.insert(*tensor_id, Vec::new());
+        }
+        if let Err(e) = manager_tx.send(WebNNMsg::ComputeResult(ctx_id, outputs)) {
+            warn!("webnn ML thread: failed to send ComputeResult: {:?}", e);
+        }
+        return;
+    };
+
+    let (entry_mutex, entry_condvar) = &*cache_entry;
+    let mut entry = entry_mutex.lock();
+
+    loop {
+        match &*entry {
+            MlCacheEntry::Compiling => {
+                entry_condvar.wait(&mut entry);
+            },
+            MlCacheEntry::Destroyed(reason) => {
+                warn!(
+                    "webnn ML thread: compute observed destroyed cache entry: {}",
+                    reason
+                );
+                for tensor_id in outputs_map.values() {
+                    outputs.insert(*tensor_id, Vec::new());
                 }
-
-                let entry = compiled_map
-                    .get_mut(&(ctx_id, key))
-                    .expect("checked presence above");
-                let cached_path = entry.compiled_path.as_deref();
-
-                // pass preconverted program bytes so try_coreml_execute can
-                // operate without performing its own conversion.
-                let program_bytes = entry.converted_program.as_slice();
+                drop(entry);
+                if let Err(e) = manager_tx.send(WebNNMsg::ComputeResult(ctx_id, outputs)) {
+                    warn!("webnn ML thread: failed to send ComputeResult: {:?}", e);
+                }
+                return;
+            },
+            MlCacheEntry::Compiled {
+                graph_info,
+                compiled_path,
+                converted_program,
+            } => {
+                let cached_path = Some(compiled_path.as_path());
+                let program_bytes = converted_program.as_slice();
 
                 debug!("Starg coreml for {:?} {:?}", ctx_id, inputs_bytes.len());
 
                 if !try_coreml_execute(
-                    &entry.graph_info,
+                    graph_info,
                     &inputs_map,
                     &inputs_bytes,
                     &outputs_map,
@@ -751,111 +757,198 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
                 ) {
                     warn!("CoreML failed");
                     // coreml either not available or failed, generate zeros
-                    for (op_id, tensor_id) in outputs_map.iter() {
-                        if let Some(operand) = entry.graph_info.operands.get(*op_id as usize) {
+                    for (op_id, tensor_id) in &outputs_map {
+                        if let Some(operand) = graph_info.operands.get(*op_id as usize) {
                             let element_count: usize =
                                 operand.descriptor.shape.iter().fold(1usize, |acc, d| {
-                                    acc.saturating_mul(
-                                        rustnn::graph::get_static_or_max_size(d) as usize
-                                    )
+                                    acc.saturating_mul(get_static_or_max_size(d) as usize)
                                 });
                             let byte_len = element_count
                                 .saturating_mul(operand.descriptor.data_type.bytes_per_element());
                             outputs.insert(*tensor_id, vec![0u8; byte_len]);
                         }
                     }
-                } else {
                 }
-                debug!("Compute result for {:?}", ctx_id);
-                // send the outputs back to the manager instead of using the
-                // one‑shot response channel.
-                if let Err(e) = manager_tx.send(WebNNMsg::ComputeResult(ctx_id, outputs)) {
-                    warn!("webnn ML thread: failed to send ComputeResult: {:?}", e);
-                }
+                break;
+            },
+        }
+    }
+
+    debug!("Compute result for {:?}", ctx_id);
+    if let Err(e) = manager_tx.send(WebNNMsg::ComputeResult(ctx_id, outputs)) {
+        warn!("webnn ML thread: failed to send ComputeResult: {:?}", e);
+    }
+}
+
+fn handle_ml_compile(
+    ctx_id: ContextId,
+    key: GraphId,
+    graph_info: GraphInfo,
+    compiled_map: SharedCompiledMap,
+    manager_tx: GenericSender<WebNNMsg>,
+) {
+    let (cache_entry, should_compile) = {
+        let mut compiled_map = compiled_map.write();
+        match compiled_map.entry((ctx_id, key)) {
+            Entry::Occupied(entry) => (entry.get().clone(), false),
+            Entry::Vacant(entry) => {
+                let cache_entry = Arc::new((Mutex::new(MlCacheEntry::Compiling), Condvar::new()));
+                entry.insert(Arc::clone(&cache_entry));
+                (cache_entry, true)
+            },
+        }
+    };
+
+    if !should_compile {
+        let (entry_mutex, entry_condvar) = &*cache_entry;
+        loop {
+            let mut entry = entry_mutex.lock();
+            match &*entry {
+                MlCacheEntry::Compiling => {
+                    entry_condvar.wait(&mut entry);
+                },
+                MlCacheEntry::Compiled { compiled_path, .. } => {
+                    let compiled_path = compiled_path.clone();
+                    drop(entry);
+                    if let Err(e) = manager_tx.send(WebNNMsg::Compiled(ctx_id, key, compiled_path))
+                    {
+                        warn!("webnn ML thread: failed to send Compiled: {:?}", e);
+                    }
+                    return;
+                },
+                MlCacheEntry::Destroyed(reason) => {
+                    let reason = reason.clone();
+                    drop(entry);
+                    if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(ctx_id, key, reason)) {
+                        warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
+                    }
+                    return;
+                },
+            }
+        }
+    }
+
+    use rustnn::converters::CoremlMlProgramConverter;
+
+    let converter = CoremlMlProgramConverter;
+    match converter.convert(&graph_info) {
+        Ok(converted) => {
+            let compile_result = std::panic::catch_unwind(|| unsafe {
+                prepare_compiled_model_with_weights(
+                    &converted.data,
+                    converted.weights_data.as_deref(),
+                    None,
+                )
+            });
+
+            match compile_result {
+                Ok(Ok((_compiled_url, compiled_path, _temp_mlmodel))) => {
+                    let (entry_mutex, entry_condvar) = &*cache_entry;
+                    let mut entry = entry_mutex.lock();
+                    *entry = MlCacheEntry::Compiled {
+                        graph_info,
+                        compiled_path: compiled_path.clone(),
+                        converted_program: converted.data,
+                    };
+                    drop(entry);
+                    entry_condvar.notify_all();
+
+                    if let Err(e) = manager_tx.send(WebNNMsg::Compiled(ctx_id, key, compiled_path))
+                    {
+                        warn!("webnn ML thread: failed to send Compiled: {:?}", e);
+                    }
+                },
+                Ok(Err(e)) => {
+                    let reason = format!("{:?}", e);
+                    let (entry_mutex, entry_condvar) = &*cache_entry;
+                    let mut entry = entry_mutex.lock();
+                    *entry = MlCacheEntry::Destroyed(reason.clone());
+                    drop(entry);
+                    entry_condvar.notify_all();
+                    warn!("webnn ML thread: compile failed for key {}: {:?}", key, e);
+                    if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(ctx_id, key, reason)) {
+                        warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
+                    }
+                },
+                Err(panic_payload) => {
+                    let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
+                        s.to_string()
+                    } else if let Some(s) = panic_payload.downcast_ref::<String>() {
+                        s.clone()
+                    } else {
+                        "unknown panic".to_string()
+                    };
+                    let reason = format!("panic: {}", msg);
+                    let (entry_mutex, entry_condvar) = &*cache_entry;
+                    let mut entry = entry_mutex.lock();
+                    *entry = MlCacheEntry::Destroyed(reason.clone());
+                    drop(entry);
+                    entry_condvar.notify_all();
+                    warn!("webnn ML thread: compile panicked for key {}: {}", key, msg);
+                    if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(ctx_id, key, reason)) {
+                        warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
+                    }
+                },
+            }
+        },
+        Err(_) => {
+            let reason = "conversion failed".to_string();
+            let (entry_mutex, entry_condvar) = &*cache_entry;
+            let mut entry = entry_mutex.lock();
+            *entry = MlCacheEntry::Destroyed(reason.clone());
+            drop(entry);
+            entry_condvar.notify_all();
+            warn!("webnn ML thread: conversion failed for key {:?}", key);
+            if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(ctx_id, key, reason)) {
+                warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
+            }
+        },
+    }
+}
+
+// Worker loop run on the dedicated ML dispatcher thread.  It waits for
+// messages, fans compute/compile work out to a rayon thread pool, and then
+// sends results back to the manager thread.
+fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
+    let compiled_map: SharedCompiledMap = Arc::new(RwLock::new(HashMap::new()));
+    let pool = ThreadPoolBuilder::new()
+        .thread_name(|index| format!("WebNNMLWorker{index}"))
+        .build()
+        .expect("failed to build WebNN ML thread pool");
+
+    while let Ok(msg) = rx.recv() {
+        match msg {
+            MlMsg::Compute {
+                ctx_id,
+                key,
+                inputs_map,
+                inputs_bytes,
+                outputs_map,
+            } => {
+                let compiled_map = Arc::clone(&compiled_map);
+                let manager_tx = manager_tx.clone();
+                pool.spawn(move || {
+                    handle_ml_compute(
+                        ctx_id,
+                        key,
+                        inputs_map,
+                        inputs_bytes,
+                        outputs_map,
+                        compiled_map,
+                        manager_tx,
+                    );
+                });
             },
             MlMsg::Compile {
                 ctx_id,
                 key,
                 graph_info,
             } => {
-                // perform conversion on the compute thread
-                use rustnn::converters::CoremlMlProgramConverter;
-
-                let converter = CoremlMlProgramConverter;
-                match converter.convert(&graph_info) {
-                    Ok(converted) => {
-                        let compile_result = std::panic::catch_unwind(|| unsafe {
-                            prepare_compiled_model_with_weights(
-                                &converted.data,
-                                converted.weights_data.as_deref(),
-                                None,
-                            )
-                        });
-
-                        match compile_result {
-                            Ok(Ok((_compiled_url, compiled_path, _temp_mlmodel))) => {
-                                match compiled_map.entry((ctx_id, key)) {
-                                    std::collections::hash_map::Entry::Vacant(v) => {
-                                        v.insert(MlCacheEntry {
-                                            graph_info,
-                                            compiled_path: Some(compiled_path.clone()),
-                                            converted_program: converted.data.clone(),
-                                            // weights not tracked
-                                        });
-                                    },
-                                    std::collections::hash_map::Entry::Occupied(mut o) => {
-                                        let entry = o.get_mut();
-                                        entry.compiled_path = Some(compiled_path.clone());
-                                        entry.converted_program = converted.data.clone();
-                                        // weights not tracked
-                                    },
-                                }
-                                if let Err(e) =
-                                    manager_tx.send(WebNNMsg::Compiled(ctx_id, key, compiled_path))
-                                {
-                                    warn!("webnn ML thread: failed to send Compiled: {:?}", e);
-                                }
-                            },
-                            Ok(Err(e)) => {
-                                warn!("webnn ML thread: compile failed for key {}: {:?}", key, e);
-                                if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(
-                                    ctx_id,
-                                    key,
-                                    format!("{:?}", e),
-                                )) {
-                                    warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
-                                }
-                            },
-                            Err(panic_payload) => {
-                                let msg = if let Some(s) = panic_payload.downcast_ref::<&str>() {
-                                    s.to_string()
-                                } else if let Some(s) = panic_payload.downcast_ref::<String>() {
-                                    s.clone()
-                                } else {
-                                    "unknown panic".to_string()
-                                };
-                                warn!("webnn ML thread: compile panicked for key {}: {}", key, msg);
-                                if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(
-                                    ctx_id,
-                                    key,
-                                    format!("panic: {}", msg),
-                                )) {
-                                    warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
-                                }
-                            },
-                        }
-                    },
-                    Err(_) => {
-                        warn!("webnn ML thread: conversion failed for key {:?}", key);
-                        if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(
-                            ctx_id,
-                            key,
-                            "conversion failed".to_string(),
-                        )) {
-                            warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
-                        }
-                    },
-                }
+                let compiled_map = Arc::clone(&compiled_map);
+                let manager_tx = manager_tx.clone();
+                pool.spawn(move || {
+                    handle_ml_compile(ctx_id, key, graph_info, compiled_map, manager_tx);
+                });
             },
             MlMsg::Exit => {
                 break;
@@ -870,12 +963,12 @@ fn ml_loop(rx: Receiver<MlMsg>, manager_tx: GenericSender<WebNNMsg>) {
 
 #[cfg(target_os = "macos")]
 fn try_coreml_execute(
-    graph_info: &rustnn::graph::GraphInfo,
+    graph_info: &GraphInfo,
     inputs_map: &HashMap<u32, u32>,
     inputs_bytes: &HashMap<u32, Vec<u8>>,
     outputs_map: &HashMap<u32, u32>,
     program_bytes: &[u8],
-    cached_compiled: Option<&std::path::Path>,
+    cached_compiled: Option<&Path>,
     outputs_store: &mut HashMap<u32, Vec<u8>>,
 ) -> bool {
     use rustnn::executors::coreml::{CoremlInput, run_coreml_with_inputs_cached};
@@ -899,7 +992,7 @@ fn try_coreml_execute(
 
             if let Some(buf) = inputs_bytes.get(op_id) {
                 let data: Vec<f32> = match op.descriptor.data_type {
-                    rustnn::graph::DataType::Float32 => {
+                    DataType::Float32 => {
                         // convert in one pass using chunks; avoids the inner
                         // byte buffer and manually advancing index.
                         buf.chunks_exact(4)
@@ -910,7 +1003,7 @@ fn try_coreml_execute(
                             })
                             .collect()
                     },
-                    rustnn::graph::DataType::Float16 => buf
+                    DataType::Float16 => buf
                         .chunks_exact(2)
                         .map(|b| {
                             let bits = u16::from_le_bytes([b[0], b[1]]);
@@ -921,7 +1014,7 @@ fn try_coreml_execute(
                     // simply cast each i32 element to f32 here rather than
                     // attempting to preserve integer semantics; CoreML
                     // typically works in floating point anyway.
-                    rustnn::graph::DataType::Int32 => buf
+                    DataType::Int32 => buf
                         .chunks_exact(4)
                         .map(|b| {
                             let mut arr = [0u8; 4];
@@ -939,7 +1032,7 @@ fn try_coreml_execute(
                         op.descriptor
                             .shape
                             .iter()
-                            .map(|d| rustnn::graph::get_static_or_max_size(d) as usize),
+                            .map(|d| get_static_or_max_size(d) as usize),
                     );
                     coreml_inputs.push(CoremlInput {
                         name: input_name,
@@ -1008,7 +1101,7 @@ fn try_coreml_execute(
 
 #[cfg(not(target_os = "macos"))]
 fn try_coreml_execute(
-    _graph_info: &mut rustnn::graph::GraphInfo,
+    _graph_info: &mut GraphInfo,
     _inputs_map: &HashMap<u32, u32>,
     _inputs_bytes: &HashMap<u32, Vec<u8>>,
     _outputs_map: &HashMap<u32, u32>,

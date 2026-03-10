@@ -12,6 +12,8 @@ path = "src/lib.rs"
 [dependencies]
 base = { workspace = true }
 log = { workspace = true }
+parking_lot = { workspace = true }
+rayon = { workspace = true }
 webnn_traits = { workspace = true }
 # `rustnn` is always required for graph/data types.  We only enable the
 # "coreml-runtime" feature when building for macOS, so callers don’t need to
