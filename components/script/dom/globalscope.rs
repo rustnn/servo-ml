@@ -58,6 +58,8 @@ use profile_traits::{
     time as profile_time,
 };
 use rustc_hash::{FxBuildHasher, FxHashMap};
+use script_bindings::codegen::GenericBindings::NavigatorBinding::NavigatorMethods;
+use script_bindings::codegen::GenericBindings::WorkerNavigatorBinding::WorkerNavigatorMethods;
 use script_bindings::interfaces::GlobalScopeHelpers;
 use script_bindings::settings_stack::run_a_script;
 use servo_base::generic_channel;

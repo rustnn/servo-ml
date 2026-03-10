@@ -9,6 +9,7 @@ use std::rc::Rc;
 use dom_struct::dom_struct;
 use js::rust::HandleObject;
 use rustnn::graph::{DataType, GraphInfo, Operand, OperandDescriptor, OperandKind, Operation};
+use script_bindings::cformat;
 use script_bindings::codegen::GenericUnionTypes::ArrayBufferViewOrArrayBuffer;
 use script_bindings::record::Record;
 use script_bindings::str::USVString;
@@ -115,7 +116,7 @@ impl MLGraphBuilder {
         self.graph_info.borrow().is_some() && !self.context().is_lost()
     }
 
-    fn validate_operand(&self, operand: &DomRoot<MLOperand>) -> bool {
+    fn validate_operand(&self, operand: &MLOperand) -> bool {
         operand.builder() == Dom::from_ref(self)
     }
 
@@ -267,7 +268,7 @@ impl MLGraphBuilder {
 
         // Step 3: If [=MLGraphBuilder/validating operand=] with [=this=] and |a| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(a) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 4: If |op| is one of "logicalNot", "logicalAnd", "logicalOr", "logicalXor", then:
@@ -276,7 +277,7 @@ impl MLGraphBuilder {
         if ["logicalNot", "logicalAnd", "logicalOr", "logicalXor"].contains(&op_name) &&
             a_dtype != "uint8"
         {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // Step 5: If |op| is one of "isNaN", "isInfinite", then:
@@ -285,23 +286,23 @@ impl MLGraphBuilder {
             a_dtype != "float32" &&
             a_dtype != "float16"
         {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // Step 6/7: If |b| is passed, validate |b|, validate matching dataType, and infer |outputShape| by bidirectional broadcasting.
         // Step 7: Otherwise, clone |a|'s shape as |outputShape|.
         let output_shape = if let Some(b_operand) = b {
             if !self.validate_operand_ref(b_operand) {
-                return Err(Error::Type("invalid operand".to_owned()));
+                return Err(Error::Type(c"invalid operand".to_owned()));
             }
 
             if a_dtype != b_operand.descriptor_data_type() {
-                return Err(Error::Type("input dataType must match".to_owned()));
+                return Err(Error::Type(c"input dataType must match".to_owned()));
             }
 
             bidirectionally_broadcast_shapes(a.descriptor_shape(), b_operand.descriptor_shape())
                 .ok_or_else(|| {
-                    Error::Type("shapes are not bidirectionally broadcastable".to_owned())
+                    Error::Type(c"shapes are not bidirectionally broadcastable".to_owned())
                 })?
         } else {
             a.descriptor_shape().clone()
@@ -317,13 +318,13 @@ impl MLGraphBuilder {
         // Step 9.1: Let |output| be the result of [=creating an MLOperand=] given [=this=] and |descriptor|.
         let a_id = a
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
 
         let b_id = if let Some(b_operand) = b {
             Some(
                 b_operand
                     .id()
-                    .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?,
+                    .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?,
             )
         } else {
             None
@@ -397,14 +398,14 @@ impl MLGraphBuilder {
 
         // Step 3: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 4: If |allowedDataTypes| is given and it does not [=list/contain=] |input|'s [=MLOperand/dataType=], then [=exception/throw=] a {{TypeError}}.
         let out_dtype = input.descriptor_data_type();
         if let Some(allowed_data_types) = allowed_data_types {
             if !allowed_data_types.contains(&out_dtype) {
-                return Err(Error::Type("unsupported input dataType".to_owned()));
+                return Err(Error::Type(c"unsupported input dataType".to_owned()));
             }
         }
 
@@ -415,7 +416,7 @@ impl MLGraphBuilder {
         };
         let output_shape =
             rustnn::shape_inference::infer_reduce_shape(input.descriptor_shape(), &reduce_options)
-                .map_err(|e| Error::Type(e.to_string()))?;
+                .map_err(|e| Error::Type(cformat!("{e}")))?;
 
         // Step 6: Let |desc| be the result of [=creating an MLOperandDescriptor=] given |input|'s [=MLOperand/dataType=] and |outputShape|.
         let desc = MLOperandDescriptor {
@@ -425,7 +426,7 @@ impl MLGraphBuilder {
 
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
 
         // Step 7: *Make graph connections:*
         // Step 7.1: Let |output| be the result of [=creating an MLOperand=] given [=this=] and |desc|.
@@ -477,7 +478,7 @@ impl MLGraphBuilder {
             !self.validate_operand_ref(scale) ||
             !self.validate_operand_ref(zero_point)
         {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
         // Step 2: Select output data type from zeroPoint (quantize) or scale (dequantize).
         let out_dtype_str = if quantize {
@@ -491,13 +492,13 @@ impl MLGraphBuilder {
         };
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let scale_id = scale
             .id()
-            .ok_or_else(|| Error::Type("scale operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"scale operand has no backend id".to_owned()))?;
         let zero_id = zero_point
             .id()
-            .ok_or_else(|| Error::Type("zeroPoint operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"zeroPoint operand has no backend id".to_owned()))?;
         // Step 3: Create output operand id, record operation metadata, and return output operand.
         let rust_operand = self.create_rust_operand(
             out_dtype_str,
@@ -543,16 +544,16 @@ impl MLGraphBuilder {
             !self.validate_operand_ref(indices) ||
             !self.validate_operand_ref(updates)
         {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
         if !["int32", "uint32", "int64"].contains(&indices.descriptor_data_type()) {
             return Err(Error::Type(
-                "unsupported indices dataType for scatterElements".to_owned(),
+                c"unsupported indices dataType for scatterElements".to_owned(),
             ));
         }
         if updates.descriptor_data_type() != input.descriptor_data_type() {
             return Err(Error::Type(
-                "updates must have same dataType as input".to_owned(),
+                c"updates must have same dataType as input".to_owned(),
             ));
         }
         // Step 2: Validate scatter-elements shape constraints and infer output descriptor.
@@ -562,7 +563,7 @@ impl MLGraphBuilder {
             updates.descriptor_shape(),
             axis,
         )
-        .map_err(|e| Error::Type(e.to_string()))?;
+        .map_err(|e| Error::Type(cformat!("{e}")))?;
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
             dataType: Self::data_type_enum_from_str(out_dtype),
@@ -570,13 +571,13 @@ impl MLGraphBuilder {
         };
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let indices_id = indices
             .id()
-            .ok_or_else(|| Error::Type("indices operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"indices operand has no backend id".to_owned()))?;
         let updates_id = updates
             .id()
-            .ok_or_else(|| Error::Type("updates operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"updates operand has no backend id".to_owned()))?;
         // Step 3: Create output operand id, record operation metadata, and return output operand.
         let rust_operand = self.create_rust_operand(
             out_dtype,
@@ -621,16 +622,16 @@ impl MLGraphBuilder {
             !self.validate_operand_ref(indices) ||
             !self.validate_operand_ref(updates)
         {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
         if !["int32", "uint32", "int64"].contains(&indices.descriptor_data_type()) {
             return Err(Error::Type(
-                "unsupported indices dataType for scatterND".to_owned(),
+                c"unsupported indices dataType for scatterND".to_owned(),
             ));
         }
         if updates.descriptor_data_type() != input.descriptor_data_type() {
             return Err(Error::Type(
-                "updates must have same dataType as input".to_owned(),
+                c"updates must have same dataType as input".to_owned(),
             ));
         }
         // Step 2: Validate scatter-ND shape constraints and infer output descriptor.
@@ -639,7 +640,7 @@ impl MLGraphBuilder {
             indices.descriptor_shape(),
             updates.descriptor_shape(),
         )
-        .map_err(|e| Error::Type(e.to_string()))?;
+        .map_err(|e| Error::Type(cformat!("{e}")))?;
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
             dataType: Self::data_type_enum_from_str(out_dtype),
@@ -647,13 +648,13 @@ impl MLGraphBuilder {
         };
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let indices_id = indices
             .id()
-            .ok_or_else(|| Error::Type("indices operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"indices operand has no backend id".to_owned()))?;
         let updates_id = updates
             .id()
-            .ok_or_else(|| Error::Type("updates operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"updates operand has no backend id".to_owned()))?;
         // Step 3: Create output operand id, record operation metadata, and return output operand.
         let rust_operand = self.create_rust_operand(
             out_dtype,
@@ -693,7 +694,7 @@ impl MLGraphBuilder {
         // Step 1: Assert: |op| is one of "averagePool2d", "l2Pool2d", "maxPool2d".
         if !matches!(op_name, "averagePool2d" | "l2Pool2d" | "maxPool2d") {
             debug_assert!(false, "unexpected pooling op: {op_name}");
-            return Err(Error::Type("invalid pooling op".to_owned()));
+            return Err(Error::Type(c"invalid pooling op".to_owned()));
         }
 
         // Step 2: If this can not build, then throw an InvalidStateError.
@@ -703,21 +704,21 @@ impl MLGraphBuilder {
 
         // Step 3: If validating operand with this and |input| returns false, then throw a TypeError.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 4: If |allowedDataTypes| is given and it does not contain |input|'s dataType, then throw a TypeError.
         let out_dtype = input.descriptor_data_type();
         if let Some(allowed_data_types) = allowed_data_types {
             if !allowed_data_types.contains(&out_dtype) {
-                return Err(Error::Type("unsupported input dataType".to_owned()));
+                return Err(Error::Type(c"unsupported input dataType".to_owned()));
             }
         }
 
         // Step 5: If |input|'s rank is not 4, then throw a TypeError.
         let input_shape = input.descriptor_shape();
         if input_shape.len() != 4 {
-            return Err(Error::Type("input must be a 4-D tensor".to_owned()));
+            return Err(Error::Type(c"input must be a 4-D tensor".to_owned()));
         }
 
         // Step 6: Switch on |options|.layout and extract batch/channel/spatial dimensions.
@@ -747,13 +748,13 @@ impl MLGraphBuilder {
 
         // Step 8: If |windowDimensions|'s size is not 2, then throw a TypeError.
         if window_dimensions.len() != 2 {
-            return Err(Error::Type("windowDimensions must be length 2".to_owned()));
+            return Err(Error::Type(c"windowDimensions must be length 2".to_owned()));
         }
 
         // Step 9: If any item in |windowDimensions| is equal to 0, then throw a TypeError.
         if window_dimensions.contains(&0) {
             return Err(Error::Type(
-                "windowDimensions values must be >= 1".to_owned(),
+                c"windowDimensions values must be >= 1".to_owned(),
             ));
         }
 
@@ -766,7 +767,7 @@ impl MLGraphBuilder {
 
         // Step 11: If |padding|'s size is not 4, then throw a TypeError.
         if pads.len() != 4 {
-            return Err(Error::Type("padding must be length 4".to_owned()));
+            return Err(Error::Type(c"padding must be length 4".to_owned()));
         }
 
         // Step 12: If |strides| does not exist, then set it to « 1, 1 ».
@@ -778,31 +779,31 @@ impl MLGraphBuilder {
 
         // Step 13: If |strides|'s size is not 2, then throw a TypeError.
         if strides.len() != 2 {
-            return Err(Error::Type("strides must be length 2".to_owned()));
+            return Err(Error::Type(c"strides must be length 2".to_owned()));
         }
 
         // Step 14: If any item in |strides| is 0, then throw a TypeError.
         if strides.contains(&0) {
-            return Err(Error::Type("strides values must be >= 1".to_owned()));
+            return Err(Error::Type(c"strides values must be >= 1".to_owned()));
         }
 
         // Step 15: If |outputSizes| exists, then validate its size and relationship with |strides|.
         let output_sizes = options.outputSizes.as_ref().cloned();
         if let Some(output_sizes) = output_sizes.as_ref() {
             if output_sizes.len() != 2 {
-                return Err(Error::Type("outputSizes must be length 2".to_owned()));
+                return Err(Error::Type(c"outputSizes must be length 2".to_owned()));
             }
             if output_sizes.contains(&0) {
-                return Err(Error::Type("outputSizes values must be >= 1".to_owned()));
+                return Err(Error::Type(c"outputSizes values must be >= 1".to_owned()));
             }
             if output_sizes[0] < strides[0] || output_sizes[1] < strides[1] {
                 return Err(Error::Type(
-                    "outputSizes values must be >= corresponding strides".to_owned(),
+                    c"outputSizes values must be >= corresponding strides".to_owned(),
                 ));
             }
             if options.outputShapeRounding != MLRoundingType::Floor {
                 return Err(Error::Type(
-                    "outputShapeRounding must be 'floor' when outputSizes is provided".to_owned(),
+                    c"outputShapeRounding must be 'floor' when outputSizes is provided".to_owned(),
                 ));
             }
         }
@@ -816,12 +817,12 @@ impl MLGraphBuilder {
 
         // Step 17: If |dilations|'s size is not 2, then throw a TypeError.
         if dilations.len() != 2 {
-            return Err(Error::Type("dilations must be length 2".to_owned()));
+            return Err(Error::Type(c"dilations must be length 2".to_owned()));
         }
 
         // Step 18: If any item in |dilations| is 0, then throw a TypeError.
         if dilations.contains(&0) {
-            return Err(Error::Type("dilations values must be >= 1".to_owned()));
+            return Err(Error::Type(c"dilations values must be >= 1".to_owned()));
         }
 
         // Step 19: Let |desc| be a copy of |input|.[[descriptor]].
@@ -867,7 +868,7 @@ impl MLGraphBuilder {
 
             if !floor_matches && !ceil_matches {
                 return Err(Error::Type(
-                    "outputSizes are inconsistent with calculated output shape".to_owned(),
+                    c"outputSizes are inconsistent with calculated output shape".to_owned(),
                 ));
             }
 
@@ -889,10 +890,10 @@ impl MLGraphBuilder {
                 rounded_height < 1.0 ||
                 rounded_width < 1.0
             {
-                return Err(Error::Type("invalid output shape".to_owned()));
+                return Err(Error::Type(c"invalid output shape".to_owned()));
             }
             if rounded_height > (u32::MAX as f64) || rounded_width > (u32::MAX as f64) {
-                return Err(Error::Type("invalid output shape".to_owned()));
+                return Err(Error::Type(c"invalid output shape".to_owned()));
             }
 
             (rounded_height as u32, rounded_width as u32)
@@ -900,7 +901,7 @@ impl MLGraphBuilder {
 
         // Step 20.4: If either outputHeight or outputWidth is not a valid dimension, then throw a TypeError.
         if output_height == 0 || output_width == 0 {
-            return Err(Error::Type("invalid output shape".to_owned()));
+            return Err(Error::Type(c"invalid output shape".to_owned()));
         }
 
         // Step 20.5: Set |outputShape| according to |options|.layout.
@@ -915,7 +916,7 @@ impl MLGraphBuilder {
 
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
 
         // Step 21.1: Let |output| be the result of creating an MLOperand given this and |desc|.
         let rust_operand =
@@ -961,7 +962,7 @@ impl MLGraphBuilder {
             return Err(Error::InvalidState(None));
         }
         if !self.validate_operand_ref(input) || !self.validate_operand_ref(filter) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
         // Step 2: Normalize transpose-convolution options and infer output shape.
         use rustnn::shape_inference::{
@@ -1022,7 +1023,7 @@ impl MLGraphBuilder {
             filter.descriptor_shape(),
             &conv_options,
         )
-        .map_err(|e| Error::Type(e.to_string()))?;
+        .map_err(|e| Error::Type(cformat!("{e}")))?;
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
             dataType: Self::data_type_enum_from_str(out_dtype),
@@ -1030,10 +1031,10 @@ impl MLGraphBuilder {
         };
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let filter_id = filter
             .id()
-            .ok_or_else(|| Error::Type("filter operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"filter operand has no backend id".to_owned()))?;
         // Step 3: Create output operand id, record operation metadata, and return output operand.
         let rust_operand =
             self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
@@ -1042,7 +1043,7 @@ impl MLGraphBuilder {
         if let Some(bias) = options.bias.as_ref() {
             let bias_id = bias
                 .id()
-                .ok_or_else(|| Error::Type("bias operand has no backend id".to_owned()))?;
+                .ok_or_else(|| Error::Type(c"bias operand has no backend id".to_owned()))?;
             input_ids.push(bias_id);
         }
 
@@ -1095,7 +1096,7 @@ impl MLGraphBuilder {
             return Err(Error::InvalidState(None));
         }
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
         // Step 2: Infer all split output shapes.
         let output_shapes = rustnn::shape_inference::infer_split_shapes(
@@ -1103,10 +1104,10 @@ impl MLGraphBuilder {
             &split_spec,
             axis,
         )
-        .map_err(|e| Error::Type(e.to_string()))?;
+        .map_err(|e| Error::Type(cformat!("{e}")))?;
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let out_dtype = input.descriptor_data_type();
         let out_dtype_enum = Self::data_type_enum_from_str(out_dtype);
         let mut output_ids = Vec::with_capacity(output_shapes.len());
@@ -1165,20 +1166,20 @@ impl MLGraphBuilder {
 
         // Step 3: If MLGraphBuilder/validating operand with this and |input| returns false, then throw a TypeError.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 4: If |axis| is greater than or equal to |input|'s rank, then throw a TypeError.
         let in_shape = input.descriptor_shape();
         if (axis as usize) >= in_shape.len() {
-            return Err(Error::Type("axis out of range".to_owned()));
+            return Err(Error::Type(c"axis out of range".to_owned()));
         }
 
         // Step 5: Validate |options|.outputDataType is allowed (int32 or int64 for argMin/argMax).
         let out_dtype_str = options.outputDataType.as_str();
         if out_dtype_str != "int32" && out_dtype_str != "int64" {
             return Err(Error::Type(
-                "outputDataType must be 'int32' or 'int64'".to_owned(),
+                c"outputDataType must be 'int32' or 'int64'".to_owned(),
             ));
         }
 
@@ -1187,12 +1188,12 @@ impl MLGraphBuilder {
         match out_dtype_str {
             "int32" => {
                 if axis_dim > (i32::MAX as u128) {
-                    return Err(Error::Type("dimension too large for int32".to_owned()));
+                    return Err(Error::Type(c"dimension too large for int32".to_owned()));
                 }
             },
             "int64" => {
                 if axis_dim > (i64::MAX as u128) {
-                    return Err(Error::Type("dimension too large for int64".to_owned()));
+                    return Err(Error::Type(c"dimension too large for int64".to_owned()));
                 }
             },
             _ => {},
@@ -1205,7 +1206,7 @@ impl MLGraphBuilder {
             options.keepDimensions,
         ) {
             Ok(s) => s,
-            Err(e) => return Err(Error::Type(e.to_string())),
+            Err(e) => return Err(Error::Type(cformat!("{e}"))),
         };
 
         // Step 8: Let |desc| be the result of creating an MLOperandDescriptor given
@@ -1227,7 +1228,7 @@ impl MLGraphBuilder {
         // Ensure the input has a backend operand id.
         let input_id = match input.id() {
             Some(i) => i,
-            None => return Err(Error::Type("input operand has no backend id".to_owned())),
+            None => return Err(Error::Type(c"input operand has no backend id".to_owned())),
         };
 
         // Create backend operand for the output now (implementation detail: backend id is needed
@@ -1568,14 +1569,14 @@ impl MLGraphBuilder {
 
         // Step 3: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 4: If |allowedDataTypes| is given and it does not [=list/contain=] |input|'s [=MLOperand/dataType=], then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if let Some(allowed_data_types) = allowed_data_types {
             if !allowed_data_types.contains(&input_data_type) {
-                return Err(Error::Type("unsupported input dataType".to_owned()));
+                return Err(Error::Type(c"unsupported input dataType".to_owned()));
             }
         }
 
@@ -1586,7 +1587,7 @@ impl MLGraphBuilder {
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -1645,14 +1646,14 @@ impl MLGraphBuilder {
 
         // Step 3: If validating operand with this and any of |a| and |b| returns false, then throw a TypeError.
         if !self.validate_operand_ref(a) || !self.validate_operand_ref(b) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 4: If |a|'s dataType is not equal to |b|'s dataType, then throw a TypeError.
         // (We enforce this invariant here; the spec permits implementation-defined promotions.)
         let a_dtype = a.descriptor_data_type();
         if a_dtype != b.descriptor_data_type() {
-            return Err(Error::Type("input dataType must match".to_owned()));
+            return Err(Error::Type(c"input dataType must match".to_owned()));
         }
 
         // Step 5: Let |outputShape| be the result of [=bidirectionally broadcasting=] |a|'s [=MLOperand/shape=] and |b|'s [=MLOperand/shape=].
@@ -1660,7 +1661,7 @@ impl MLGraphBuilder {
         let out_shape =
             bidirectionally_broadcast_shapes(a.descriptor_shape(), b.descriptor_shape())
                 .ok_or_else(|| {
-                    Error::Type("shapes are not bidirectionally broadcastable".to_owned())
+                    Error::Type(c"shapes are not bidirectionally broadcastable".to_owned())
                 })?;
 
         // Step 7: Let |outputDescriptor| be the result of creating an MLOperandDescriptor given |a|'s [=MLOperand/dataType=] and |outputShape|.
@@ -1690,10 +1691,10 @@ impl MLGraphBuilder {
         // so operation records can reference concrete input/output operand ids.
         let a_id = a
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let b_id = b
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
 
         let rust_operand =
             self.create_rust_operand(a_dtype, out_shape.clone(), OperandKind::Output, None);
@@ -1755,7 +1756,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If |name| is empty, then throw a TypeError.
         if name.is_empty() {
-            return Err(Error::Type("name is empty".to_owned()));
+            return Err(Error::Type(c"name is empty".to_owned()));
         }
 
         // Step 3: If any MLOperand in this graph's computational graph/inputs has [[name]] == |name|, then throw a TypeError.
@@ -1764,7 +1765,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 if let Some(op) = gi.operands.get(input_id as usize) {
                     if let Some(op_name) = &op.name {
                         if op_name.as_str() == name.str().as_ref() {
-                            return Err(Error::Type("duplicate input name".to_owned()));
+                            return Err(Error::Type(c"duplicate input name".to_owned()));
                         }
                     }
                 }
@@ -1773,7 +1774,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 4: If MLOperandDescriptor/checking dimensions given |descriptor| returns false, then throw a TypeError.
         if !check_dimensions(descriptor) {
-            return Err(Error::Type("invalid operand descriptor".to_owned()));
+            return Err(Error::Type(c"invalid operand descriptor".to_owned()));
         }
 
         // Step 5: *Make graph connections:*
@@ -1825,7 +1826,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If MLOperandDescriptor/checking dimensions given |descriptor| returns false, then throw a TypeError.
         if !check_dimensions(descriptor) {
-            return Err(Error::Type("invalid operand descriptor".to_owned()));
+            return Err(Error::Type(c"invalid operand descriptor".to_owned()));
         }
 
         // Step 3: If validating buffer with descriptor given |buffer| and |descriptor| returns false, then throw a TypeError.
@@ -1882,18 +1883,18 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 1: If tensor.[[context]] is not this.[[context]], throw a TypeError.
         if tensor.context() != self.context() {
             return Err(Error::Type(
-                "tensor is not owned by this builder's context".to_owned(),
+                c"tensor is not owned by this builder's context".to_owned(),
             ));
         }
 
         // Step 2: If |tensor|.[[isDestroyed]] is true, then throw a TypeError.
         if tensor.is_destroyed() {
-            return Err(Error::Type("tensor is destroyed".to_owned()));
+            return Err(Error::Type(c"tensor is destroyed".to_owned()));
         }
 
         // Step 3: If |tensor|.[[isConstant]] is false, then throw a TypeError.
         if !tensor.is_constant() {
-            return Err(Error::Type("tensor is not constant".to_owned()));
+            return Err(Error::Type(c"tensor is not constant".to_owned()));
         }
 
         // Step 4: If this can not build, throw an InvalidStateError.
@@ -1956,7 +1957,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 3: If |outputs| is empty, then return a new promise in |realm| rejected with a TypeError.
         if outputs.is_empty() {
             let p = Promise::new(global, can_gc);
-            p.reject_error(Error::Type("outputs is empty".to_owned()), can_gc);
+            p.reject_error(Error::Type(c"outputs is empty".to_owned()), can_gc);
             return p;
         }
 
@@ -1968,14 +1969,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 // Step 4.1: If |name| is empty, then return a rejected promise with a TypeError.
                 if name.is_empty() {
                     let p = Promise::new(global, can_gc);
-                    p.reject_error(Error::Type("operand name is empty".to_owned()), can_gc);
+                    p.reject_error(Error::Type(c"operand name is empty".to_owned()), can_gc);
                     return p;
                 }
 
                 // Duplicate check for outputs.
                 if !seen_output_names.insert(name.as_ref().to_string()) {
                     let p = Promise::new(global, can_gc);
-                    p.reject_error(Error::Type("duplicate output name".to_owned()), can_gc);
+                    p.reject_error(Error::Type(c"duplicate output name".to_owned()), can_gc);
                     return p;
                 }
 
@@ -1986,7 +1987,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                             if op_name.as_str() == name.as_ref() {
                                 let p = Promise::new(global, can_gc);
                                 p.reject_error(
-                                    Error::Type("output name conflicts with input".to_owned()),
+                                    Error::Type(c"output name conflicts with input".to_owned()),
                                     can_gc,
                                 );
                                 return p;
@@ -1998,7 +1999,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 // Step 4.2: If MLGraphBuilder/validating operand given |this| and |operand| returns false, then reject.
                 if !self.validate_operand(operand) {
                     let p = Promise::new(global, can_gc);
-                    p.reject_error(Error::Type("invalid operand".to_owned()), can_gc);
+                    p.reject_error(Error::Type(c"invalid operand".to_owned()), can_gc);
                     return p;
                 }
 
@@ -2006,7 +2007,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 if operand.is_input() || operand.is_constant() {
                     let p = Promise::new(global, can_gc);
                     p.reject_error(
-                        Error::Type("operand cannot be an input or constant".to_owned()),
+                        Error::Type(c"operand cannot be an input or constant".to_owned()),
                         can_gc,
                     );
                     return p;
@@ -2111,18 +2112,18 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             !self.validate_operand_ref(true_value) ||
             !self.validate_operand_ref(false_value)
         {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: Validate data types per spec
         if condition.descriptor_data_type() != "uint8" {
             return Err(Error::Type(
-                "condition must have dataType 'uint8'".to_owned(),
+                c"condition must have dataType 'uint8'".to_owned(),
             ));
         }
         if true_value.descriptor_data_type() != false_value.descriptor_data_type() {
             return Err(Error::Type(
-                "trueValue and falseValue must have the same dataType".to_owned(),
+                c"trueValue and falseValue must have the same dataType".to_owned(),
             ));
         }
 
@@ -2133,7 +2134,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             false_value.descriptor_shape(),
         ) {
             Ok(s) => s,
-            Err(e) => return Err(Error::Type(e.to_string())),
+            Err(e) => return Err(Error::Type(cformat!("{e}"))),
         };
 
         // Create output descriptor using trueValue's data type
@@ -2191,7 +2192,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If validating operand with this and input returns false, then throw a TypeError.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: if dataType is not output tensor’s allowed data types (according to this table), then throw a TypeError.
@@ -2226,7 +2227,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Ensure the input has a backend operand id.
         let input_id = match input.id() {
             Some(i) => i,
-            None => return Err(Error::Type("input operand has no backend id".to_owned())),
+            None => return Err(Error::Type(c"input operand has no backend id".to_owned())),
         };
 
         // Create backend operand for the output now (backend id required to record the operator).
@@ -2278,7 +2279,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If validating operand with this and input returns false, then throw a TypeError.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: Let minValue be the options.minValue if given, or Infinity otherwise.
@@ -2312,7 +2313,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 let max_c = max_v as f64;
                 if min_c > max_c {
                     return Err(Error::Type(
-                        "minValue must not be greater than maxValue".to_owned(),
+                        c"minValue must not be greater than maxValue".to_owned(),
                     ));
                 }
             } else {
@@ -2320,7 +2321,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 let max_c = max_v as i128;
                 if min_c > max_c {
                     return Err(Error::Type(
-                        "minValue must not be greater than maxValue".to_owned(),
+                        c"minValue must not be greater than maxValue".to_owned(),
                     ));
                 }
             }
@@ -2332,7 +2333,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Ensure input has backend id.
         let input_id = match input.id() {
             Some(i) => i,
-            None => return Err(Error::Type("input operand has no backend id".to_owned())),
+            None => return Err(Error::Type(c"input operand has no backend id".to_owned())),
         };
         let rust_operand =
             self.create_rust_operand(in_dtype, in_shape.clone(), OperandKind::Output, None);
@@ -2390,13 +2391,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If validating operand with this and input returns false, then throw a TypeError.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: If input's rank is not one of its allowed ranks, then throw a TypeError.
         let in_shape = input.descriptor_shape();
         if let Err(e) = rustnn::shape_inference::infer_triangular_shape(&in_shape) {
-            return Err(Error::Type(e.to_string()));
+            return Err(Error::Type(cformat!("{e}")));
         }
 
         // Step 4.1: Let output be the result of copying an MLOperand given input.
@@ -2425,7 +2426,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
             let input_id = input
                 .id()
-                .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+                .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
 
             gi.operations.push(Operation {
                 op_type: "triangular".to_string(),
@@ -2457,11 +2458,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If validating operand with this and any item in inputs returns false, then throw a TypeError.
         if inputs.is_empty() {
-            return Err(Error::Type("inputs is empty".to_owned()));
+            return Err(Error::Type(c"inputs is empty".to_owned()));
         }
         for inp in inputs.iter() {
             if !self.validate_operand(inp) {
-                return Err(Error::Type("invalid operand".to_owned()));
+                return Err(Error::Type(c"invalid operand".to_owned()));
             }
         }
 
@@ -2470,7 +2471,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let first_shape = first.descriptor_shape();
         // Step 5: If axis is >= first.rank, then throw.
         if (axis as usize) >= first_shape.len() {
-            return Err(Error::Type("axis out of range".to_owned()));
+            return Err(Error::Type(c"axis out of range".to_owned()));
         }
 
         // Step 6: Let desc be descriptor created from first's dataType and shape.
@@ -2497,28 +2498,28 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
             if input.descriptor_data_type() != first_dtype {
                 return Err(Error::Type(
-                    "input dataType must match first input".to_owned(),
+                    c"input dataType must match first input".to_owned(),
                 ));
             }
             if in_shape.len() != first_shape.len() {
-                return Err(Error::Type("input rank must match first input".to_owned()));
+                return Err(Error::Type(c"input rank must match first input".to_owned()));
             }
 
             for dim in 0..in_shape.len() {
                 if dim != (axis as usize) {
                     if in_shape[dim] != first_shape[dim] {
                         return Err(Error::Type(
-                            "input shapes must match on all dims except axis".to_owned(),
+                            c"input shapes must match on all dims except axis".to_owned(),
                         ));
                     }
                 } else {
                     // Sum sizes on axis and check validity (no overflow / non-zero).
                     let size_sum = (desc.shape[dim] as u128)
                         .checked_add(in_shape[dim] as u128)
-                        .ok_or_else(|| Error::Type("dimension size overflow".to_owned()))?;
+                        .ok_or_else(|| Error::Type(c"dimension size overflow".to_owned()))?;
                     if size_sum == 0 || size_sum > (u32::MAX as u128) {
                         return Err(Error::Type(
-                            "invalid concatenated dimension size".to_owned(),
+                            c"invalid concatenated dimension size".to_owned(),
                         ));
                     }
                     desc.shape[dim] = size_sum as u32;
@@ -2548,7 +2549,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         for inp in inputs.iter() {
             let id = inp
                 .id()
-                .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+                .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
             input_ids.push(id);
         }
 
@@ -2591,11 +2592,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: Validate operands belong to this builder (input, filter, bias if present).
         if !self.validate_operand_ref(input) || !self.validate_operand_ref(filter) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
         if options.bias.is_some() {
             if !self.validate_operand_ref(options.bias.as_ref().unwrap()) {
-                return Err(Error::Type("invalid operand".to_owned()));
+                return Err(Error::Type(c"invalid operand".to_owned()));
             }
         }
 
@@ -2603,26 +2604,26 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let in_dtype = input.descriptor_data_type();
         if in_dtype != "float32" && in_dtype != "float16" {
             return Err(Error::Type(
-                "input dataType must be 'float32' or 'float16'".to_owned(),
+                c"input dataType must be 'float32' or 'float16'".to_owned(),
             ));
         }
 
         // Step 4: Input must be 4-D.
         let in_shape = input.descriptor_shape();
         if in_shape.len() != 4 {
-            return Err(Error::Type("input must be a 4-D tensor".to_owned()));
+            return Err(Error::Type(c"input must be a 4-D tensor".to_owned()));
         }
 
         // Step 5: Filter must be 4-D.
         let filter_shape = filter.descriptor_shape();
         if filter_shape.len() != 4 {
-            return Err(Error::Type("filter must be a 4-D tensor".to_owned()));
+            return Err(Error::Type(c"filter must be a 4-D tensor".to_owned()));
         }
 
         // Step 6: Filter's dataType must match input's dataType.
         if filter.descriptor_data_type() != in_dtype {
             return Err(Error::Type(
-                "filter must have same dataType as input".to_owned(),
+                c"filter must have same dataType as input".to_owned(),
             ));
         }
 
@@ -2632,7 +2633,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             _ => vec![0u32, 0u32, 0u32, 0u32],
         };
         if pads.len() != 4 {
-            return Err(Error::Type("padding must be length 4".to_owned()));
+            return Err(Error::Type(c"padding must be length 4".to_owned()));
         }
 
         let strides = match &options.strides {
@@ -2640,10 +2641,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             _ => vec![1u32, 1u32],
         };
         if strides.len() != 2 {
-            return Err(Error::Type("strides must be length 2".to_owned()));
+            return Err(Error::Type(c"strides must be length 2".to_owned()));
         }
         if strides[0] < 1 || strides[1] < 1 {
-            return Err(Error::Type("strides must be >= 1".to_owned()));
+            return Err(Error::Type(c"strides must be >= 1".to_owned()));
         }
 
         let dilations = match &options.dilations {
@@ -2651,15 +2652,15 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             _ => vec![1u32, 1u32],
         };
         if dilations.len() != 2 {
-            return Err(Error::Type("dilations must be length 2".to_owned()));
+            return Err(Error::Type(c"dilations must be length 2".to_owned()));
         }
         if dilations[0] < 1 || dilations[1] < 1 {
-            return Err(Error::Type("dilations must be >= 1".to_owned()));
+            return Err(Error::Type(c"dilations must be >= 1".to_owned()));
         }
 
         let groups = options.groups;
         if groups == 0 {
-            return Err(Error::Type("groups must be >= 1".to_owned()));
+            return Err(Error::Type(c"groups must be >= 1".to_owned()));
         }
 
         // Determine logical inputChannels depending on inputLayout.
@@ -2690,27 +2691,27 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Validate grouped conv invariants.
         if (input_channels % groups) != 0 {
-            return Err(Error::Type("inputChannels % groups must be 0".to_owned()));
+            return Err(Error::Type(c"inputChannels % groups must be 0".to_owned()));
         }
         if (input_channels / groups) != filter_input_channels {
             return Err(Error::Type(
-                "inputChannels / groups must equal filterInputChannels".to_owned(),
+                c"inputChannels / groups must equal filterInputChannels".to_owned(),
             ));
         }
 
         // If bias exists validate shape and dtype.
         if let Some(b) = options.bias.as_ref() {
             if b.descriptor_shape().len() != 1 {
-                return Err(Error::Type("bias must be a 1-D tensor".to_owned()));
+                return Err(Error::Type(c"bias must be a 1-D tensor".to_owned()));
             }
             if b.descriptor_shape()[0] != output_channels {
                 return Err(Error::Type(
-                    "bias size must equal the filter output channels".to_owned(),
+                    c"bias size must equal the filter output channels".to_owned(),
                 ));
             }
             if b.descriptor_data_type() != in_dtype {
                 return Err(Error::Type(
-                    "bias must have same dataType as input".to_owned(),
+                    c"bias must have same dataType as input".to_owned(),
                 ));
             }
         }
@@ -2743,7 +2744,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             &infer_options,
         ) {
             Ok(s) => s,
-            Err(e) => return Err(Error::Type(e.to_string())),
+            Err(e) => return Err(Error::Type(cformat!("{e}"))),
         };
 
         // Create output descriptor and backend operand.
@@ -2788,12 +2789,12 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         input_ids.push(
             input
                 .id()
-                .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?,
+                .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?,
         );
         input_ids.push(
             filter
                 .id()
-                .ok_or_else(|| Error::Type("filter operand has no backend id".to_owned()))?,
+                .ok_or_else(|| Error::Type(c"filter operand has no backend id".to_owned()))?,
         );
         if let Some(b) = options.bias.as_ref() {
             input_ids.push(b.id().unwrap());
@@ -2843,56 +2844,56 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             !self.validate_operand_ref(mean) ||
             !self.validate_operand_ref(variance)
         {
-            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+            return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
         }
         if options.scale.is_some() {
             if !self.validate_operand_ref(options.scale.as_ref().unwrap()) {
-                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+                return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
             }
         }
         if options.bias.is_some() {
             if !self.validate_operand_ref(options.bias.as_ref().unwrap()) {
-                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+                return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
             }
         }
 
         // Step 3: If input’s dataType is not one of its allowed data types (according to this table), then throw a TypeError.
         let in_dtype = input.descriptor_data_type();
         if in_dtype != "float32" && in_dtype != "float16" {
-            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+            return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
         }
 
         // Step 4: If options.axis is not in the range 0 to input’s rank, exclusive, then throw a TypeError.
         let in_shape = input.descriptor_shape();
         let axis = options.axis as usize;
         if axis >= in_shape.len() {
-            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+            return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
         }
 
         // Step 5: If mean’s dataType is not one of its allowed data types (according to this table), then throw a TypeError.
         if mean.descriptor_data_type() != in_dtype {
-            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+            return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
         }
 
         // Step 6: If mean’s shape is not equal to « input’s shape[options.axis] », then throw a TypeError.
         if mean.descriptor_shape().len() != 1 {
-            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+            return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
         }
         if mean.descriptor_shape()[0] != in_shape[axis] {
-            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+            return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
         }
 
         // Step 7: If variance’s dataType is not one of its allowed data types (according to this table), then throw a TypeError.
         if variance.descriptor_data_type() != in_dtype {
-            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+            return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
         }
 
         // Step 8: If variance’s shape is not equal to « input’s shape[options.axis] », then throw a TypeError.
         if variance.descriptor_shape().len() != 1 {
-            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+            return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
         }
         if variance.descriptor_shape()[0] != in_shape[axis] {
-            return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+            return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
         }
 
         // Step 9: Set options.epsilon to the result of casting options.epsilon to input’s dataType.
@@ -2903,13 +2904,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 10.2: If options.scale exists and its shape is not equal to « input’s shape[options.axis] », then throw a TypeError.
         if let Some(s) = options.scale.as_ref() {
             if s.descriptor_data_type() != in_dtype {
-                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+                return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
             }
             if s.descriptor_shape().len() != 1 {
-                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+                return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
             }
             if s.descriptor_shape()[0] != in_shape[axis] {
-                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+                return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
             }
         }
 
@@ -2917,13 +2918,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 11.2: If options.bias exists and its shape is not equal to « input’s shape[options.axis] », then throw a TypeError.
         if let Some(b) = options.bias.as_ref() {
             if b.descriptor_data_type() != in_dtype {
-                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+                return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
             }
             if b.descriptor_shape().len() != 1 {
-                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+                return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
             }
             if b.descriptor_shape()[0] != in_shape[axis] {
-                return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+                return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
             }
         }
 
@@ -2940,7 +2941,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_shape = match rustnn::shape_inference::infer_batch_normalization_shape(in_shape)
         {
             Ok(s) => s,
-            Err(e) => return Err(Error::Type(e.to_string())),
+            Err(e) => return Err(Error::Type(cformat!("{e}"))),
         };
 
         // Create output descriptor and backend operand (maps to Step 12.2 & 12.7).
@@ -2980,16 +2981,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             let mut input_operands = vec![
                 match input.id() {
                     Some(i) => i,
-                    None => return Err(Error::Type("[batchNormalization_?_123]".to_owned())),
+                    None => return Err(Error::Type(c"[batchNormalization_?_123]".to_owned())),
                 },
                 match mean.id() {
                     Some(i) => i,
-                    None => return Err(Error::Type("[batchNormalization_?_123]".to_owned())),
+                    None => return Err(Error::Type(c"[batchNormalization_?_123]".to_owned())),
                 },
                 match variance.id() {
                     Some(i) => i,
                     None => {
-                        return Err(Error::Type("[batchNormalization_?_123]".to_owned()));
+                        return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
                     },
                 },
             ];
@@ -3362,13 +3363,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-tanh)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if input_data_type != "float32" && input_data_type != "float16" {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // Step 4: *Make graph connections:*
@@ -3378,7 +3379,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -3539,14 +3540,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If MLGraphBuilder/validating operand with this and any of |a| and |b| returns false, then throw a TypeError.
         if !self.validate_operand_ref(a) || !self.validate_operand_ref(b) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: If the MLOperand/dataType of any of |a| or |b| is not one of its allowed data types, then throw a TypeError.
         // (This implementation requires matching data types; promotion is not performed.)
         let a_dtype = a.descriptor_data_type();
         if a_dtype != b.descriptor_data_type() {
-            return Err(Error::Type("input dataType must match".to_owned()));
+            return Err(Error::Type(c"input dataType must match".to_owned()));
         }
 
         // Step 4 (substeps 4.1–4.11): Calculate the output shape. The rustnn helper validates ranks, transposes
@@ -3556,7 +3557,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             &b.descriptor_shape(),
         ) {
             Ok(s) => s,
-            Err(e) => return Err(Error::Type(e.to_string())),
+            Err(e) => return Err(Error::Type(cformat!("{e}"))),
         };
 
         let out_dtype_enum = match a_dtype {
@@ -3571,10 +3572,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         let a_id = a
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let b_id = b
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
 
         let rust_operand =
             self.create_rust_operand(a_dtype, output_shape.clone(), OperandKind::Output, None);
@@ -3620,7 +3621,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If MLGraphBuilder/validating operand with this and any of |a| and |b| returns false, then throw a TypeError.
         if !self.validate_operand_ref(a) || !self.validate_operand_ref(b) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // NOTE (early check): we do a quick ownership check for options.c here, but
@@ -3628,23 +3629,23 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // at the location in the spec order (see TODO below).
         if options.c.is_some() {
             if !self.validate_operand_ref(options.c.as_ref().unwrap()) {
-                return Err(Error::Type("invalid operand".to_owned()));
+                return Err(Error::Type(c"invalid operand".to_owned()));
             }
         }
 
         // Step 3: If the MLOperand/dataType of any of |a| or |b| is not one of its allowed data types, then throw a TypeError.
         let a_dtype = a.descriptor_data_type();
         if a_dtype != "float32" && a_dtype != "float16" {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
         // enforce matching data types (implementation-defined promotion not supported here)
         if a_dtype != b.descriptor_data_type() {
-            return Err(Error::Type("input dataType must match".to_owned()));
+            return Err(Error::Type(c"input dataType must match".to_owned()));
         }
 
         // Step 4: Validate ranks.
         if a.descriptor_shape().len() != 2 || b.descriptor_shape().len() != 2 {
-            return Err(Error::Type("gemm inputs must be 2-D tensors".to_owned()));
+            return Err(Error::Type(c"gemm inputs must be 2-D tensors".to_owned()));
         }
 
         // Step 5 & 6: Cast alpha and beta to |a|'s data type.
@@ -3673,7 +3674,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
         if shape_a[1] != shape_b[0] {
             return Err(Error::Type(
-                "shapeA[1] must equal shapeB[0] for gemm".to_owned(),
+                c"shapeA[1] must equal shapeB[0] for gemm".to_owned(),
             ));
         }
 
@@ -3684,21 +3685,21 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             options.bTranspose,
         ) {
             Ok(s) => s,
-            Err(e) => return Err(Error::Type(e.to_string())),
+            Err(e) => return Err(Error::Type(cformat!("{e}"))),
         };
 
         // Step 12: Validate optional |c| against target shape « shapeA[0], shapeB[1] » and data type.
         if let Some(c_op) = options.c.as_ref() {
             if c_op.descriptor_data_type() != a_dtype {
-                return Err(Error::Type("c must have same dataType as a".to_owned()));
+                return Err(Error::Type(c"c must have same dataType as a".to_owned()));
             }
             if c_op.descriptor_shape().len() > 2 {
-                return Err(Error::Type("c rank must be in range [0, 2]".to_owned()));
+                return Err(Error::Type(c"c rank must be in range [0, 2]".to_owned()));
             }
             let c_target = vec![shape_a[0], shape_b[1]];
             if !unidirectionally_broadcastable_to_shape(c_op.descriptor_shape(), &c_target) {
                 return Err(Error::Type(
-                    "c is not unidirectionally broadcastable to [shapeA[0], shapeB[1]]".to_owned(),
+                    c"c is not unidirectionally broadcastable to [shapeA[0], shapeB[1]]".to_owned(),
                 ));
             }
         }
@@ -3721,9 +3722,9 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Prepare input backend ids (14.4 & 14.5)
         let mut input_ids = vec![
             a.id()
-                .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?,
+                .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?,
             b.id()
-                .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?,
+                .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?,
         ];
         if let Some(c_op) = options.c.as_ref() {
             input_ids.push(c_op.id().unwrap());
@@ -3794,7 +3795,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If MLGraphBuilder/validating operand with this and |input| returns false, then throw a TypeError.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         let input_shape = input.descriptor_shape();
@@ -3802,14 +3803,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 3: If |repetitions|'s list/size is not equal to |input|'s MLOperand/rank, then throw a TypeError.
         if repetitions.len() != input_shape.len() {
             return Err(Error::Type(
-                "repetitions size must match input rank".to_owned(),
+                c"repetitions size must match input rank".to_owned(),
             ));
         }
 
         // Step 4: If |repetitions|'s values contain 0's, then throw a TypeError.
         if repetitions.contains(&0) {
             return Err(Error::Type(
-                "repetitions values must all be greater than 0".to_owned(),
+                c"repetitions values must all be greater than 0".to_owned(),
             ));
         }
 
@@ -3820,7 +3821,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_shape =
             match rustnn::shape_inference::infer_tile_shape(&input_shape, &repetitions) {
                 Ok(shape) => shape,
-                Err(e) => return Err(Error::Type(e.to_string())),
+                Err(e) => return Err(Error::Type(cformat!("{e}"))),
             };
 
         // Step 7: Let |outputDescriptor| be the result of creating an MLOperandDescriptor
@@ -3853,7 +3854,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 8.3: Set |operator|'s [=operator/input=] to |input|.
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
 
         // Step 8.4: Set |operator|'s [=operator/output=] to |output|.
         let rust_operand = self.create_rust_operand(
@@ -3911,13 +3912,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-elu)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if input_data_type != "float32" && input_data_type != "float16" {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // 1. Set |options|.{{MLEluOptions/alpha}} to the result of [=casting=] |options|.{{MLEluOptions/alpha}} to |input|'s [=MLOperand/dataType=].
@@ -3932,7 +3933,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -3974,13 +3975,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-gelu)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if input_data_type != "float32" && input_data_type != "float16" {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // 1. *Make graph connections:*
@@ -3988,7 +3989,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -4030,13 +4031,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-hardSigmoid)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if input_data_type != "float32" && input_data_type != "float16" {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // 1. Set |options|.{{MLHardSigmoidOptions/alpha}} to the result of [=casting=] |options|.{{MLHardSigmoidOptions/alpha}} to |input|'s [=MLOperand/dataType=].
@@ -4058,7 +4059,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -4100,13 +4101,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-hardSwish)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if input_data_type != "float32" && input_data_type != "float16" {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // 1. *Make graph connections:*
@@ -4114,7 +4115,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -4156,13 +4157,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-leakyRelu)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if input_data_type != "float32" && input_data_type != "float16" {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // 1. Set |options|.{{MLLeakyReluOptions/alpha}} to the result of [=casting=] |options|.{{MLLeakyReluOptions/alpha}} to |input|'s [=MLOperand/dataType=].
@@ -4177,7 +4178,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -4219,13 +4220,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-linear)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if input_data_type != "float32" && input_data_type != "float16" {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // 1. Set |options|.{{MLLinearOptions/alpha}} to the result of [=casting=] |options|.{{MLLinearOptions/alpha}} to |input|'s [=MLOperand/dataType=].
@@ -4247,7 +4248,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -4289,13 +4290,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-sigmoid)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if input_data_type != "float32" && input_data_type != "float16" {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // Step 4: *Make graph connections:*
@@ -4305,7 +4306,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -4350,13 +4351,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-softplus)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if input_data_type != "float32" && input_data_type != "float16" {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // Step 4: *Make graph connections:*
@@ -4364,7 +4365,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -4409,13 +4410,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-softsign)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if input_data_type != "float32" && input_data_type != "float16" {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // Step 4: *Make graph connections:*
@@ -4423,7 +4424,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -4468,7 +4469,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-reverse)), then [=exception/throw=] a {{TypeError}}.
@@ -4484,7 +4485,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             for &axis in supplied_axes.iter() {
                 let axis_usize = axis as usize;
                 if axis_usize >= input_rank || !seen.insert(axis) {
-                    return Err(Error::Type("invalid axes".to_owned()));
+                    return Err(Error::Type(c"invalid axes".to_owned()));
                 }
             }
             supplied_axes.clone()
@@ -4498,7 +4499,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -4721,12 +4722,12 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If validating operand with this and |input| returns false, then throw a TypeError.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: Validate the reshape sizes against input shape.
         rustnn::shape_inference::validate_reshape(input.descriptor_shape(), &new_shape)
-            .map_err(|e| Error::Type(e.to_string()))?;
+            .map_err(|e| Error::Type(cformat!("{e}")))?;
 
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
@@ -4736,7 +4737,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand =
             self.create_rust_operand(out_dtype, new_shape.clone(), OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
@@ -4773,13 +4774,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If validating operand with this and |input| returns false, then throw a TypeError.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: Let |outputShape| be the result of inferring expanded output shape.
         let output_shape =
             rustnn::shape_inference::infer_expand_shape(input.descriptor_shape(), &new_shape)
-                .map_err(|e| Error::Type(e.to_string()))?;
+                .map_err(|e| Error::Type(cformat!("{e}")))?;
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
             dataType: Self::data_type_enum_from_str(out_dtype),
@@ -4787,7 +4788,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand =
             self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
@@ -4823,13 +4824,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If validating operand with this and |input| returns false, then throw a TypeError.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: Let |outputShape| be the result of slice-shape validation/inference.
         let output_shape =
             rustnn::shape_inference::infer_slice_shape(input.descriptor_shape(), &starts, &sizes)
-                .map_err(|e| Error::Type(e.to_string()))?;
+                .map_err(|e| Error::Type(cformat!("{e}")))?;
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
             dataType: Self::data_type_enum_from_str(out_dtype),
@@ -4837,7 +4838,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand =
             self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
@@ -4869,13 +4870,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             return Err(Error::InvalidState(None));
         }
         if !self.validate_operand_ref(input) || !self.validate_operand_ref(indices) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: Validate indices dataType.
         if !["int32", "uint32", "int64"].contains(&indices.descriptor_data_type()) {
             return Err(Error::Type(
-                "unsupported indices dataType for gather".to_owned(),
+                c"unsupported indices dataType for gather".to_owned(),
             ));
         }
 
@@ -4884,7 +4885,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_rank = input_shape.len();
         let axis = options.axis;
         if (axis as usize) >= input_rank {
-            return Err(Error::Type("axis out of range".to_owned()));
+            return Err(Error::Type(c"axis out of range".to_owned()));
         }
 
         // Steps 9-17: Derive output shape.
@@ -4893,7 +4894,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             indices.descriptor_shape(),
             axis,
         )
-        .map_err(|e| Error::Type(e.to_string()))?;
+        .map_err(|e| Error::Type(cformat!("{e}")))?;
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
             dataType: Self::data_type_enum_from_str(out_dtype),
@@ -4901,10 +4902,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let indices_id = indices
             .id()
-            .ok_or_else(|| Error::Type("indices operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"indices operand has no backend id".to_owned()))?;
         let rust_operand =
             self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
@@ -4939,13 +4940,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             return Err(Error::InvalidState(None));
         }
         if !self.validate_operand_ref(input) || !self.validate_operand_ref(indices) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: Validate indices dataType.
         if !["int32", "uint32", "int64"].contains(&indices.descriptor_data_type()) {
             return Err(Error::Type(
-                "unsupported indices dataType for gatherElements".to_owned(),
+                c"unsupported indices dataType for gatherElements".to_owned(),
             ));
         }
 
@@ -4954,25 +4955,25 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let indices_shape = indices.descriptor_shape();
         if input_shape.is_empty() || indices_shape.is_empty() {
             return Err(Error::Type(
-                "input and indices must have rank >= 1".to_owned(),
+                c"input and indices must have rank >= 1".to_owned(),
             ));
         }
         if input_shape.len() != indices_shape.len() {
             return Err(Error::Type(
-                "indices must have same rank as input".to_owned(),
+                c"indices must have same rank as input".to_owned(),
             ));
         }
 
         // Step 5-8: Validate axis and expected indices shape.
         let axis = options.axis as usize;
         if axis >= input_shape.len() {
-            return Err(Error::Type("axis out of range".to_owned()));
+            return Err(Error::Type(c"axis out of range".to_owned()));
         }
         let mut indices_shape_expected = input_shape.clone();
         indices_shape_expected[axis] = indices_shape[axis];
         if indices_shape != &indices_shape_expected {
             return Err(Error::Type(
-                "indices shape does not match expected gatherElements shape".to_owned(),
+                c"indices shape does not match expected gatherElements shape".to_owned(),
             ));
         }
 
@@ -4985,10 +4986,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let indices_id = indices
             .id()
-            .ok_or_else(|| Error::Type("indices operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"indices operand has no backend id".to_owned()))?;
         let rust_operand =
             self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
@@ -5023,31 +5024,31 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             return Err(Error::InvalidState(None));
         }
         if !self.validate_operand_ref(input) || !self.validate_operand_ref(indices) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: Validate indices dataType.
         if !["int32", "uint32", "int64"].contains(&indices.descriptor_data_type()) {
             return Err(Error::Type(
-                "unsupported indices dataType for gatherND".to_owned(),
+                c"unsupported indices dataType for gatherND".to_owned(),
             ));
         }
 
         // Step 4: Validate ranks.
         let input_shape = input.descriptor_shape();
         if input_shape.is_empty() {
-            return Err(Error::Type("input must have rank >= 1".to_owned()));
+            return Err(Error::Type(c"input must have rank >= 1".to_owned()));
         }
         let indices_shape = indices.descriptor_shape();
         if indices_shape.is_empty() {
-            return Err(Error::Type("indices must have rank >= 1".to_owned()));
+            return Err(Error::Type(c"indices must have rank >= 1".to_owned()));
         }
 
         // Steps 5-13: Derive output shape components.
         let k = indices_shape[indices_shape.len() - 1] as usize;
         if k > input_shape.len() {
             return Err(Error::Type(
-                "indices last dimension out of range".to_owned(),
+                c"indices last dimension out of range".to_owned(),
             ));
         }
         let mut output_shape = indices_shape[..indices_shape.len() - 1].to_vec();
@@ -5059,10 +5060,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let indices_id = indices
             .id()
-            .ok_or_else(|| Error::Type("indices operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"indices operand has no backend id".to_owned()))?;
         let rust_operand =
             self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
@@ -5101,7 +5102,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If validating operand with this and |input| returns false, then throw a TypeError.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: If |beginningPadding|'s and |endingPadding|'s sizes are not both equal to |input|'s rank, then throw a TypeError.
@@ -5109,7 +5110,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_rank = input_shape.len();
         if beginning_padding.len() != input_rank || ending_padding.len() != input_rank {
             return Err(Error::Type(
-                "beginningPadding and endingPadding sizes must both equal input rank".to_owned(),
+                c"beginningPadding and endingPadding sizes must both equal input rank".to_owned(),
             ));
         }
 
@@ -5127,12 +5128,12 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             if mode == "reflection" {
                 if beginning_padding[index] >= output_shape[index] {
                     return Err(Error::Type(
-                        "beginningPadding[index] must be less than input dimension in reflection mode".to_owned(),
+                        c"beginningPadding[index] must be less than input dimension in reflection mode".to_owned(),
                     ));
                 }
                 if ending_padding[index] >= output_shape[index] {
                     return Err(Error::Type(
-                        "endingPadding[index] must be less than input dimension in reflection mode"
+                        c"endingPadding[index] must be less than input dimension in reflection mode"
                             .to_owned(),
                     ));
                 }
@@ -5141,7 +5142,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             output_shape[index] = output_shape[index]
                 .checked_add(beginning_padding[index])
                 .and_then(|value| value.checked_add(ending_padding[index]))
-                .ok_or_else(|| Error::Type("invalid output shape".to_owned()))?;
+                .ok_or_else(|| Error::Type(c"invalid output shape".to_owned()))?;
         }
 
         // Step 7: If any item in |outputShape| is not a valid dimension, then throw a TypeError.
@@ -5150,7 +5151,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             shape: output_shape.clone(),
         };
         if !check_dimensions(&output_desc) {
-            return Err(Error::Type("invalid output shape".to_owned()));
+            return Err(Error::Type(c"invalid output shape".to_owned()));
         }
 
         // Step 8: Set |options|.value to the result of casting it to |input|'s data type.
@@ -5162,7 +5163,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand =
             self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
@@ -5207,19 +5208,19 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-softmax)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if input_data_type != "float32" && input_data_type != "float16" {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // 1. If |axis| is greater than or equal to |input|'s [=MLOperand/rank=], then [=exception/throw=] a {{TypeError}}.
         let axis = options.axis;
         if (axis as usize) >= input.descriptor_shape().len() {
-            return Err(Error::Type("axis out of range".to_owned()));
+            return Err(Error::Type(c"axis out of range".to_owned()));
         }
 
         // 1. *Make graph connections:*
@@ -5227,7 +5228,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -5497,19 +5498,19 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-cumulativesum)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if !["float32", "float16", "int32", "uint32", "int64", "uint64"].contains(&input_data_type)
         {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // 1. If |axis| is greater than or equal to |input|'s [=MLOperand/rank=], then [=exception/throw=] a {{TypeError}}.
         if (axis as usize) >= input.descriptor_shape().len() {
-            return Err(Error::Type("axis out of range".to_owned()));
+            return Err(Error::Type(c"axis out of range".to_owned()));
         }
 
         // 1. *Make graph connections:*
@@ -5517,7 +5518,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -5634,29 +5635,29 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and any of |input|, |options|.scale (if it exists), and |options|.bias (if it exists) returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
         if let Some(scale) = options.scale.as_ref() {
             if !self.validate_operand(scale) {
-                return Err(Error::Type("invalid operand".to_owned()));
+                return Err(Error::Type(c"invalid operand".to_owned()));
             }
         }
         if let Some(bias) = options.bias.as_ref() {
             if !self.validate_operand(bias) {
-                return Err(Error::Type("invalid operand".to_owned()));
+                return Err(Error::Type(c"invalid operand".to_owned()));
             }
         }
 
         // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-instanceNormalization)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if input_data_type != "float32" && input_data_type != "float16" {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         // Step 4: If |input|'s [=MLOperand/rank=] is not its [=/allowed rank=], then [=exception/throw=] a {{TypeError}}.
         let input_shape = input.descriptor_shape();
         if input_shape.len() != 4 {
-            return Err(Error::Type("input must be a 4-D tensor".to_owned()));
+            return Err(Error::Type(c"input must be a 4-D tensor".to_owned()));
         }
 
         // Step 5: Set |options|.epsilon to the result of casting |options|.epsilon to |input|'s [=MLOperand/dataType=].
@@ -5677,24 +5678,24 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         if let Some(scale) = options.scale.as_ref() {
             if scale.descriptor_data_type() != input_data_type {
                 return Err(Error::Type(
-                    "scale must have same dataType as input".to_owned(),
+                    c"scale must have same dataType as input".to_owned(),
                 ));
             }
             if scale.descriptor_shape().len() != 1 ||
                 scale.descriptor_shape()[0] != input_shape[axis]
             {
-                return Err(Error::Type("invalid scale shape".to_owned()));
+                return Err(Error::Type(c"invalid scale shape".to_owned()));
             }
         }
         if let Some(bias) = options.bias.as_ref() {
             if bias.descriptor_data_type() != input_data_type {
                 return Err(Error::Type(
-                    "bias must have same dataType as input".to_owned(),
+                    c"bias must have same dataType as input".to_owned(),
                 ));
             }
             if bias.descriptor_shape().len() != 1 || bias.descriptor_shape()[0] != input_shape[axis]
             {
-                return Err(Error::Type("invalid bias shape".to_owned()));
+                return Err(Error::Type(c"invalid bias shape".to_owned()));
             }
         }
 
@@ -5702,7 +5703,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 9.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -5718,13 +5719,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             input_operands.push(
                 scale
                     .id()
-                    .ok_or_else(|| Error::Type("scale operand has no backend id".to_owned()))?,
+                    .ok_or_else(|| Error::Type(c"scale operand has no backend id".to_owned()))?,
             );
         }
         if let Some(bias) = options.bias.as_ref() {
             input_operands.push(
                 bias.id()
-                    .ok_or_else(|| Error::Type("bias operand has no backend id".to_owned()))?,
+                    .ok_or_else(|| Error::Type(c"bias operand has no backend id".to_owned()))?,
             );
         }
 
@@ -5762,23 +5763,23 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and any of |input|, |options|.scale (if it exists), and |options|.bias (if it exists) returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
         if let Some(scale) = options.scale.as_ref() {
             if !self.validate_operand(scale) {
-                return Err(Error::Type("invalid operand".to_owned()));
+                return Err(Error::Type(c"invalid operand".to_owned()));
             }
         }
         if let Some(bias) = options.bias.as_ref() {
             if !self.validate_operand(bias) {
-                return Err(Error::Type("invalid operand".to_owned()));
+                return Err(Error::Type(c"invalid operand".to_owned()));
             }
         }
 
         // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-layerNormalization)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if input_data_type != "float32" && input_data_type != "float16" {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         let input_shape = input.descriptor_shape();
@@ -5789,7 +5790,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             let mut seen = std::collections::HashSet::new();
             for &axis in explicit_axes.iter() {
                 if (axis as usize) >= input_rank || !seen.insert(axis) {
-                    return Err(Error::Type("invalid axes".to_owned()));
+                    return Err(Error::Type(c"invalid axes".to_owned()));
                 }
             }
             explicit_axes.clone()
@@ -5810,21 +5811,21 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         if let Some(scale) = options.scale.as_ref() {
             if scale.descriptor_data_type() != input_data_type {
                 return Err(Error::Type(
-                    "scale must have same dataType as input".to_owned(),
+                    c"scale must have same dataType as input".to_owned(),
                 ));
             }
             if scale.descriptor_shape().len() != axes.len() {
-                return Err(Error::Type("invalid scale rank".to_owned()));
+                return Err(Error::Type(c"invalid scale rank".to_owned()));
             }
         }
         if let Some(bias) = options.bias.as_ref() {
             if bias.descriptor_data_type() != input_data_type {
                 return Err(Error::Type(
-                    "bias must have same dataType as input".to_owned(),
+                    c"bias must have same dataType as input".to_owned(),
                 ));
             }
             if bias.descriptor_shape().len() != axes.len() {
-                return Err(Error::Type("invalid bias rank".to_owned()));
+                return Err(Error::Type(c"invalid bias rank".to_owned()));
             }
         }
 
@@ -5832,17 +5833,17 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         for (index, &axis) in axes.iter().enumerate() {
             let axis_index = axis as usize;
             if axis_index >= input_rank {
-                return Err(Error::Type("axis out of range".to_owned()));
+                return Err(Error::Type(c"axis out of range".to_owned()));
             }
             let size = input_shape[axis_index];
             if let Some(scale) = options.scale.as_ref() {
                 if scale.descriptor_shape()[index] != size {
-                    return Err(Error::Type("invalid scale shape".to_owned()));
+                    return Err(Error::Type(c"invalid scale shape".to_owned()));
                 }
             }
             if let Some(bias) = options.bias.as_ref() {
                 if bias.descriptor_shape()[index] != size {
-                    return Err(Error::Type("invalid bias shape".to_owned()));
+                    return Err(Error::Type(c"invalid bias shape".to_owned()));
                 }
             }
         }
@@ -5851,7 +5852,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 10.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand = self.create_rust_operand(
             input_data_type,
             input_shape.clone(),
@@ -5866,13 +5867,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             input_operands.push(
                 scale
                     .id()
-                    .ok_or_else(|| Error::Type("scale operand has no backend id".to_owned()))?,
+                    .ok_or_else(|| Error::Type(c"scale operand has no backend id".to_owned()))?,
             );
         }
         if let Some(bias) = options.bias.as_ref() {
             input_operands.push(
                 bias.id()
-                    .ok_or_else(|| Error::Type("bias operand has no backend id".to_owned()))?,
+                    .ok_or_else(|| Error::Type(c"bias operand has no backend id".to_owned()))?,
             );
         }
 
@@ -5908,17 +5909,17 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             return Err(Error::InvalidState(None));
         }
         if !self.validate_operand_ref(input) || !self.validate_operand_ref(slope) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: Validate dataTypes per tensor limits table.
         let input_data_type = input.descriptor_data_type();
         if !["float32", "float16", "int64", "int32", "int8"].contains(&input_data_type) {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
         if slope.descriptor_data_type() != input_data_type {
             return Err(Error::Type(
-                "slope must have same dataType as input".to_owned(),
+                c"slope must have same dataType as input".to_owned(),
             ));
         }
 
@@ -5927,7 +5928,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             input.descriptor_shape(),
             slope.descriptor_shape(),
         )
-        .map_err(|e| Error::Type(e.to_string()))?;
+        .map_err(|e| Error::Type(cformat!("{e}")))?;
         let out_dtype = input_data_type;
         let desc = MLOperandDescriptor {
             dataType: Self::data_type_enum_from_str(out_dtype),
@@ -5935,10 +5936,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let slope_id = slope
             .id()
-            .ok_or_else(|| Error::Type("slope operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"slope operand has no backend id".to_owned()))?;
         let rust_operand =
             self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
@@ -5975,24 +5976,24 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-resample2d)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if !["float32", "float16", "uint8", "int8"].contains(&input_data_type) {
-            return Err(Error::Type("unsupported input dataType".to_owned()));
+            return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
         let input_shape = input.descriptor_shape();
         if input_shape.len() != 4 {
-            return Err(Error::Type("input must be a 4-D tensor".to_owned()));
+            return Err(Error::Type(c"input must be a 4-D tensor".to_owned()));
         }
 
         // Step 5: Resolve and validate |scales|.
         let scales: Vec<f32> = if let Some(ref provided_scales) = options.scales {
             if provided_scales.len() != 2 || provided_scales.iter().any(|value| **value <= 0.0) {
-                return Err(Error::Type("invalid scales".to_owned()));
+                return Err(Error::Type(c"invalid scales".to_owned()));
             }
             provided_scales.iter().map(|value| **value).collect()
         } else {
@@ -6002,7 +6003,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 6: Validate optional |sizes|.
         if let Some(ref sizes) = options.sizes {
             if sizes.len() != 2 || sizes.iter().any(|&value| value == 0) {
-                return Err(Error::Type("invalid sizes".to_owned()));
+                return Err(Error::Type(c"invalid sizes".to_owned()));
             }
         }
 
@@ -6013,14 +6014,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 .iter()
                 .any(|&axis| (axis as usize) >= input_shape.len() || !seen.insert(axis))
             {
-                return Err(Error::Type("invalid axes".to_owned()));
+                return Err(Error::Type(c"invalid axes".to_owned()));
             }
             provided_axes.clone()
         } else {
             vec![2, 3]
         };
         if axes.len() != 2 {
-            return Err(Error::Type("axes must have length 2".to_owned()));
+            return Err(Error::Type(c"axes must have length 2".to_owned()));
         }
 
         // Step 8: Calculate the output shape.
@@ -6034,7 +6035,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             };
 
             if size == 0 {
-                return Err(Error::Type("invalid output dimension".to_owned()));
+                return Err(Error::Type(c"invalid output dimension".to_owned()));
             }
 
             output_shape[axis] = size;
@@ -6049,7 +6050,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 9.1: Let |output| be the result of [=creating an MLOperand=] given [=this=] and |desc|.
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let rust_operand =
             self.create_rust_operand(input_data_type, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
@@ -6146,7 +6147,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 2: If MLGraphBuilder/validating operand with this and |input| returns false, then throw a TypeError.
         if !self.validate_operand_ref(input) {
-            return Err(Error::Type("invalid operand".to_owned()));
+            return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
         let input_shape = input.descriptor_shape();
@@ -6168,7 +6169,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             Some(permutation.as_slice()),
         ) {
             Ok(shape) => shape,
-            Err(e) => return Err(Error::Type(e.to_string())),
+            Err(e) => return Err(Error::Type(cformat!("{e}"))),
         };
 
         // Step 5.1: Let |output| be the result of copying an MLOperand given |input|.
@@ -6191,7 +6192,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         let input_id = input
             .id()
-            .ok_or_else(|| Error::Type("input operand has no backend id".to_owned()))?;
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
 
         let rust_operand = self.create_rust_operand(
             out_dtype_str,

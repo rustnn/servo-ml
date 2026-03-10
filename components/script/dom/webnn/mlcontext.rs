@@ -586,7 +586,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // implementation performs explicit validation before constructing the DOM `MLTensor`.
         if descriptor.shape.iter().any(|&d| d == 0) {
             let p = Promise::new(global, can_gc);
-            p.reject_error(Error::Type("invalid tensor descriptor".to_owned()), can_gc);
+            p.reject_error(Error::Type(c"invalid tensor descriptor".to_owned()), can_gc);
             return p;
         }
 
@@ -597,7 +597,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
                 None => {
                     let p = Promise::new(global, can_gc);
                     p.reject_error(
-                        Error::Type("tensor descriptor too large".to_owned()),
+                        Error::Type(c"tensor descriptor too large".to_owned()),
                         can_gc,
                     );
                     return p;
@@ -620,7 +620,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             _ => {
                 let p = Promise::new(global, can_gc);
                 p.reject_error(
-                    Error::Type("tensor descriptor too large".to_owned()),
+                    Error::Type(c"tensor descriptor too large".to_owned()),
                     can_gc,
                 );
                 return p;
@@ -684,7 +684,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         if tensor.context() != Dom::from_ref(self) {
             let p = Promise::new(global, can_gc);
             p.reject_error(
-                Error::Type("tensor is not owned by this context".to_owned()),
+                Error::Type(c"tensor is not owned by this context".to_owned()),
                 can_gc,
             );
             return p;
@@ -693,14 +693,14 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 4: If |tensor|.[[isDestroyed]] is true, return a rejected promise with a TypeError.
         if tensor.is_destroyed() {
             let p = Promise::new(global, can_gc);
-            p.reject_error(Error::Type("MLTensor is destroyed".to_owned()), can_gc);
+            p.reject_error(Error::Type(c"MLTensor is destroyed".to_owned()), can_gc);
             return p;
         }
 
         // Step 5: If |tensor|.[[descriptor]]..readable is false, return a rejected promise with a TypeError.
         if !tensor.readable() {
             let p = Promise::new(global, can_gc);
-            p.reject_error(Error::Type("tensor is not readable".to_owned()), can_gc);
+            p.reject_error(Error::Type(c"tensor is not readable".to_owned()), can_gc);
             return p;
         }
 
@@ -754,7 +754,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         if tensor.context() != Dom::from_ref(self) {
             let p = Promise::new(global, can_gc);
             p.reject_error(
-                Error::Type("tensor is not owned by this context".to_owned()),
+                Error::Type(c"tensor is not owned by this context".to_owned()),
                 can_gc,
             );
             return p;
@@ -763,14 +763,14 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 4: If |tensor|.[[isDestroyed]] is true, then return a new promise in |realm| rejected with a TypeError.
         if tensor.is_destroyed() {
             let p = Promise::new(global, can_gc);
-            p.reject_error(Error::Type("MLTensor is destroyed".to_owned()), can_gc);
+            p.reject_error(Error::Type(c"MLTensor is destroyed".to_owned()), can_gc);
             return p;
         }
 
         // Step 5: If |tensor|.[[descriptor]].{{MLTensorDescriptor/readable}} is false, then return a new promise in |realm| rejected with a TypeError.
         if !tensor.readable() {
             let p = Promise::new(global, can_gc);
-            p.reject_error(Error::Type("tensor is not readable".to_owned()), can_gc);
+            p.reject_error(Error::Type(c"tensor is not readable".to_owned()), can_gc);
             return p;
         }
 
@@ -841,7 +841,10 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // then return a new promise in |realm| rejected with a TypeError.
         if !crate::dom::webnn::check_dimensions(descriptor) {
             let p = Promise::new(global, can_gc);
-            p.reject_error(Error::Type("invalid operand descriptor".to_owned()), can_gc);
+            p.reject_error(
+                Error::Type(c"invalid operand descriptor".to_owned()),
+                can_gc,
+            );
             return p;
         }
 
@@ -866,7 +869,10 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
                 Some(v) => v,
                 None => {
                     let p = Promise::new(global, can_gc);
-                    p.reject_error(Error::Type("invalid operand descriptor".to_owned()), can_gc);
+                    p.reject_error(
+                        Error::Type(c"invalid operand descriptor".to_owned()),
+                        can_gc,
+                    );
                     return p;
                 },
             };
@@ -886,14 +892,17 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             Some(v) if v <= (usize::MAX as u128) => v as usize,
             _ => {
                 let p = Promise::new(global, can_gc);
-                p.reject_error(Error::Type("invalid operand descriptor".to_owned()), can_gc);
+                p.reject_error(
+                    Error::Type(c"invalid operand descriptor".to_owned()),
+                    can_gc,
+                );
                 return p;
             },
         };
         if bytes.len() != expected_len {
             let p = Promise::new(global, can_gc);
             p.reject_error(
-                Error::Type("input data length does not match descriptor".to_owned()),
+                Error::Type(c"input data length does not match descriptor".to_owned()),
                 can_gc,
             );
             return p;
@@ -937,18 +946,18 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 3: If |tensor|.[[context]] is not |this|, then throw a TypeError.
         if tensor.context() != Dom::from_ref(self) {
             return Err(Error::Type(
-                "tensor is not owned by this context".to_owned(),
+                c"tensor is not owned by this context".to_owned(),
             ));
         }
 
         // Step 4: If |tensor|.[[isDestroyed]] is true, then throw a TypeError.
         if tensor.is_destroyed() {
-            return Err(Error::Type("MLTensor is destroyed".to_owned()));
+            return Err(Error::Type(c"MLTensor is destroyed".to_owned()));
         }
 
         // Step 5: If |tensor|.[[descriptor]].{{MLTensorDescriptor/writable}} is false, then throw a TypeError.
         if !tensor.writable() {
-            return Err(Error::Type("tensor is not writable".to_owned()));
+            return Err(Error::Type(c"tensor is not writable".to_owned()));
         }
 
         // Step 6: If validating buffer with descriptor given |inputData| and |tensor|.[[descriptor]] returns false, then throw a TypeError.
@@ -969,12 +978,12 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         for &dim in tensor.shape().iter() {
             element_length = match element_length.checked_mul(dim as u128) {
                 Some(v) => v,
-                None => return Err(Error::Type("tensor descriptor too large".to_owned())),
+                None => return Err(Error::Type(c"tensor descriptor too large".to_owned())),
             };
         }
         let expected_byte_length = match element_length.checked_mul(element_size) {
             Some(v) if v <= (usize::MAX as u128) => v as usize,
-            _ => return Err(Error::Type("tensor descriptor too large".to_owned())),
+            _ => return Err(Error::Type(c"tensor descriptor too large".to_owned())),
         };
 
         // Step 7: Let |bytes| be the result of getting a copy of the bytes held by the buffer source given |inputData|.
@@ -986,7 +995,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 8: Assert: |bytes|'s length equals the tensor descriptor's byte length.
         if bytes.len() != expected_byte_length {
             return Err(Error::Type(
-                "input data length does not match tensor descriptor".to_owned(),
+                c"input data length does not match tensor descriptor".to_owned(),
             ));
         }
 
@@ -1224,13 +1233,13 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 1: If |graph|.[[context]] is not |this|, then throw a TypeError.
         if graph.context() != Dom::from_ref(self) {
             return Err(Error::Type(
-                "graph does not belong to this context".to_owned(),
+                c"graph does not belong to this context".to_owned(),
             ));
         }
 
         // Note: spec doesn't mention this, but the backend crashes on empty in- or outputs.
         if inputs.is_empty() || outputs.is_empty() {
-            return Err(Error::Type("Empty data".to_owned()));
+            return Err(Error::Type(c"Empty data".to_owned()));
         }
 
         // Step 2: If |graph|.[[isDestroyed]] is true, then throw an InvalidStateError.
@@ -1252,7 +1261,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             for other in all_tensors.iter().skip(i + 1) {
                 if t == other {
                     return Err(Error::Type(
-                        "duplicate tensor in dispatch inputs/outputs".to_owned(),
+                        c"duplicate tensor in dispatch inputs/outputs".to_owned(),
                     ));
                 }
             }
@@ -1262,11 +1271,11 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         for tensor in all_tensors.iter() {
             if tensor.context() != Dom::from_ref(self) {
                 return Err(Error::Type(
-                    "tensor is not owned by this context".to_owned(),
+                    c"tensor is not owned by this context".to_owned(),
                 ));
             }
             if tensor.is_destroyed() {
-                return Err(Error::Type("MLTensor is destroyed".to_owned()));
+                return Err(Error::Type(c"MLTensor is destroyed".to_owned()));
             }
         }
 
@@ -1292,12 +1301,12 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         for (name, tensor) in inputs.iter() {
             // Step 6.1: If |tensor|.[[isConstant]] is true, return false (per spec's validating algorithm) — treat as TypeError here.
             if tensor.is_constant() {
-                return Err(Error::Type("input tensor is constant".to_owned()));
+                return Err(Error::Type(c"input tensor is constant".to_owned()));
             }
 
             let name_str = name.as_ref();
             let Some(op_id) = find_operand_id(name_str) else {
-                return Err(Error::Type("input name not found in graph".to_owned()));
+                return Err(Error::Type(c"input name not found in graph".to_owned()));
             };
 
             // Compare descriptor: operand descriptor -> tensor descriptor
@@ -1306,10 +1315,10 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
                 let op_dtype_str = match op.descriptor.data_type {
                     rustnn::graph::DataType::Float32 => "float32",
                     rustnn::graph::DataType::Int32 => "int32",
-                    _ => return Err(Error::Type("Data type not supported".to_owned())),
+                    _ => return Err(Error::Type(c"Data type not supported".to_owned())),
                 };
                 if tensor.data_type() != op_dtype_str {
-                    return Err(Error::Type("input tensor descriptor mismatch".to_owned()));
+                    return Err(Error::Type(c"input tensor descriptor mismatch".to_owned()));
                 }
                 // Compare shape
                 let op_shape: Vec<i64> = op
@@ -1319,32 +1328,32 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
                     .map(|d| rustnn::graph::get_static_or_max_size(d) as i64)
                     .collect();
                 if tensor.shape() != &op_shape {
-                    return Err(Error::Type("input tensor shape mismatch".to_owned()));
+                    return Err(Error::Type(c"input tensor shape mismatch".to_owned()));
                 }
             } else {
-                return Err(Error::Type("input operand descriptor missing".to_owned()));
+                return Err(Error::Type(c"input operand descriptor missing".to_owned()));
             }
         }
 
         // Validate outputs similarly.
         for (name, tensor) in outputs.iter() {
             if tensor.is_constant() {
-                return Err(Error::Type("output tensor is constant".to_owned()));
+                return Err(Error::Type(c"output tensor is constant".to_owned()));
             }
 
             let name_str = name.as_ref();
             let Some(op_id) = find_operand_id(name_str) else {
-                return Err(Error::Type("output name not found in graph".to_owned()));
+                return Err(Error::Type(c"output name not found in graph".to_owned()));
             };
 
             if let Some(op) = gi.operands.get(op_id as usize) {
                 let op_dtype_str = match op.descriptor.data_type {
                     rustnn::graph::DataType::Float32 => "float32",
                     rustnn::graph::DataType::Int32 => "int32",
-                    _ => return Err(Error::Type("Data type not supported".to_owned())),
+                    _ => return Err(Error::Type(c"Data type not supported".to_owned())),
                 };
                 if tensor.data_type() != op_dtype_str {
-                    return Err(Error::Type("output tensor descriptor mismatch".to_owned()));
+                    return Err(Error::Type(c"output tensor descriptor mismatch".to_owned()));
                 }
                 let op_shape: Vec<i64> = op
                     .descriptor
@@ -1353,10 +1362,10 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
                     .map(|d| rustnn::graph::get_static_or_max_size(d) as i64)
                     .collect();
                 if tensor.shape() != &op_shape {
-                    return Err(Error::Type("output tensor shape mismatch".to_owned()));
+                    return Err(Error::Type(c"output tensor shape mismatch".to_owned()));
                 }
             } else {
-                return Err(Error::Type("output operand descriptor missing".to_owned()));
+                return Err(Error::Type(c"output operand descriptor missing".to_owned()));
             }
         }
 
@@ -1368,7 +1377,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             let op_id = find_operand_id(name_str).expect("validated above");
             let tensor_id = tensor.tensor_id();
             if tensor_id == 0 {
-                return Err(Error::Type("input tensor has no backend id".to_owned()));
+                return Err(Error::Type(c"input tensor has no backend id".to_owned()));
             }
             input_pairs.push((op_id, tensor_id));
         }
@@ -1379,7 +1388,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             let op_id = find_operand_id(name_str).expect("validated above");
             let tensor_id = tensor.tensor_id();
             if tensor_id == 0 {
-                return Err(Error::Type("output tensor has no backend id".to_owned()));
+                return Err(Error::Type(c"output tensor has no backend id".to_owned()));
             }
             output_pairs.push((op_id, tensor_id));
         }

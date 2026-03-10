@@ -1,5 +1,8 @@
-// Source: Web Neural Network API (WebNN)
-// Direct source: https://github.com/webmachinelearning/webnn
+/* This Source Code Form is subject to the terms of the Mozilla Public
+ * License, v. 2.0. If a copy of the MPL was not distributed with this
+ * file, You can obtain one at https://mozilla.org/MPL/2.0/. */
+
+// https://webmachinelearning.github.io/webnn/#idl-index
 
 [SecureContext, Exposed=(Window, Worker)]
 interface mixin NavigatorML {

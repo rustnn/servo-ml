@@ -53,6 +53,8 @@ use stylo_atoms::Atom;
 #[cfg(feature = "webgpu")]
 use webgpu_traits::WebGPUMsg;
 use webnn_traits::WebNNMsg;
+use webrender_api::ImageKey;
+use webrender_api::units::DevicePixel;
 
 /// The initial data required to create a new `Pipeline` attached to an existing `ScriptThread`.
 #[derive(Clone, Debug, Deserialize, Serialize)]
