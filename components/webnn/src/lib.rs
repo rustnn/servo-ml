@@ -843,7 +843,7 @@ fn handle_ml_compile(
                 },
             }
         },
-        Err(_) => {
+        Err(err) => {
             let reason = "conversion failed".to_string();
             let (entry_mutex, entry_condvar) = &*cache_entry;
             let mut entry = entry_mutex.lock();
@@ -851,6 +851,7 @@ fn handle_ml_compile(
             drop(entry);
             entry_condvar.notify_all();
             warn!("webnn ML thread: conversion failed for key {:?}", key);
+            println!("Failed compile for {:?} {:?}", graph_info, err);
             if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(ctx_id, key, reason)) {
                 warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
             }

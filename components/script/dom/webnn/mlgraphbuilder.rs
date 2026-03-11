@@ -10,6 +10,7 @@ use dom_struct::dom_struct;
 use half::f16;
 use js::rust::HandleObject;
 use rustnn::graph::{DataType, GraphInfo, Operand, OperandDescriptor, OperandKind, Operation};
+use rustnn::operator_options::OperatorOptions;
 use script_bindings::cformat;
 use script_bindings::codegen::GenericUnionTypes::ArrayBufferViewOrArrayBuffer;
 use script_bindings::record::Record;
@@ -196,7 +197,7 @@ impl MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes,
+                attributes: Self::operator_attributes(op_name, attributes),
                 label,
             });
         }
@@ -217,10 +218,14 @@ impl MLGraphBuilder {
                 input_operands: input_ids,
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes,
+                attributes: Self::operator_attributes(op_name, attributes),
                 label,
             });
         }
+    }
+
+    fn operator_attributes(op_name: &str, attributes: serde_json::Value) -> OperatorOptions {
+        OperatorOptions::from_json_with_op_type(op_name, &attributes).unwrap_or_default()
     }
 
     fn label_from_operator_options(options: &MLOperatorOptions) -> Option<String> {
@@ -933,7 +938,7 @@ impl MLGraphBuilder {
                 "windowDimensions": window_dimensions,
                 "strides": strides,
                 "dilations": dilations,
-                "pads": pads,
+                "padding": pads,
                 "layout": layout_str,
                 "outputShapeRounding": if options.outputShapeRounding == MLRoundingType::Floor { "floor" } else { "ceil" },
                 "outputSizes": output_sizes,
@@ -1051,7 +1056,7 @@ impl MLGraphBuilder {
         let mut attributes = serde_json::json!({
             "strides": strides,
             "dilations": dilations,
-            "pads": pads,
+            "padding": pads,
             "outputPadding": output_padding,
             "groups": options.groups,
             "inputLayout": input_layout_str,
@@ -1141,7 +1146,7 @@ impl MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: None,
                 output_operands: output_ids,
-                attributes: serde_json::json!({"axis": axis}),
+                attributes: Self::operator_attributes("split", serde_json::json!({"axis": axis})),
                 label: Self::label_from_operator_options(options),
             });
         }
@@ -1269,7 +1274,7 @@ impl MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes,
+                attributes: Self::operator_attributes(_op_name, attributes),
                 label,
             });
         }
@@ -1731,7 +1736,7 @@ impl MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({}),
+                attributes: Self::operator_attributes(op_name, serde_json::json!({})),
                 label,
             });
         }
@@ -1827,7 +1832,7 @@ impl MLGraphBuilder {
                 input_operands: vec![a_id, b_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes,
+                attributes: Self::operator_attributes(op_name, attributes),
                 label,
             });
         }
@@ -2369,7 +2374,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes,
+                attributes: Self::operator_attributes("cast", attributes),
                 label,
             });
         }
@@ -2487,7 +2492,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes,
+                attributes: Self::operator_attributes("clamp", attributes),
                 label,
             });
         }
@@ -2555,7 +2560,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes,
+                attributes: Self::operator_attributes("triangular", attributes),
                 label,
             });
         }
@@ -2681,7 +2686,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: input_ids,
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes,
+                attributes: Self::operator_attributes("concat", attributes),
                 label,
             });
         }
@@ -2888,7 +2893,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let mut attributes = serde_json::json!({
             "strides": strides,
             "dilations": dilations,
-            "pads": pads,
+            "padding": pads,
             "groups": groups,
             "inputLayout": input_layout_str,
             "filterLayout": filter_layout_str,
@@ -2928,7 +2933,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: input_ids,
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes,
+                attributes: Self::operator_attributes("conv2d", attributes),
                 label,
             });
         }
@@ -3084,6 +3089,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let attributes = serde_json::json!({
             "epsilon": epsilon,
             "axis": options.axis,
+            "scale": options.scale.as_ref().and_then(|operand| operand.id()),
+            "bias": options.bias.as_ref().and_then(|operand| operand.id()),
             "hasScale": options.scale.is_some(),
             "hasBias": options.bias.is_some(),
         });
@@ -3127,7 +3134,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands,
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes,
+                attributes: Self::operator_attributes("batchNormalization", attributes),
                 label,
             });
         }
@@ -3528,7 +3535,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({}),
+                attributes: Self::operator_attributes("tanh", serde_json::json!({})),
                 label,
             });
         }
@@ -3709,7 +3716,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![a_id, b_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({}),
+                attributes: Self::operator_attributes("matmul", serde_json::json!({})),
                 label: None,
             });
         }
@@ -3876,7 +3883,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: input_ids,
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes,
+                attributes: Self::operator_attributes("gemm", attributes),
                 label,
             });
         }
@@ -4001,7 +4008,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes,
+                attributes: Self::operator_attributes("tile", attributes),
                 label,
             });
         }
@@ -4063,7 +4070,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({ "alpha": alpha }),
+                attributes: Self::operator_attributes("elu", serde_json::json!({ "alpha": alpha })),
                 label: Self::label_from_operator_options(&options.parent),
             });
         }
@@ -4119,7 +4126,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({}),
+                attributes: Self::operator_attributes("gelu", serde_json::json!({})),
                 label: Self::label_from_operator_options(options),
             });
         }
@@ -4181,7 +4188,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({ "alpha": alpha, "beta": beta }),
+                attributes: Self::operator_attributes(
+                    "hardSigmoid",
+                    serde_json::json!({ "alpha": alpha, "beta": beta }),
+                ),
                 label: Self::label_from_operator_options(&options.parent),
             });
         }
@@ -4237,7 +4247,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({}),
+                attributes: Self::operator_attributes("hardSwish", serde_json::json!({})),
                 label: Self::label_from_operator_options(&options.parent),
             });
         }
@@ -4296,7 +4306,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({ "alpha": alpha }),
+                attributes: Self::operator_attributes(
+                    "leakyRelu",
+                    serde_json::json!({ "alpha": alpha }),
+                ),
                 label: Self::label_from_operator_options(&options.parent),
             });
         }
@@ -4358,7 +4371,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({ "alpha": alpha, "beta": beta }),
+                attributes: Self::operator_attributes(
+                    "linear",
+                    serde_json::json!({ "alpha": alpha, "beta": beta }),
+                ),
                 label: Self::label_from_operator_options(&options.parent),
             });
         }
@@ -4416,7 +4432,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({}),
+                attributes: Self::operator_attributes("sigmoid", serde_json::json!({})),
                 label: Self::label_from_operator_options(options),
             });
         }
@@ -4475,7 +4491,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({}),
+                attributes: Self::operator_attributes("softplus", serde_json::json!({})),
                 label: Self::label_from_operator_options(options),
             });
         }
@@ -4534,7 +4550,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({}),
+                attributes: Self::operator_attributes("softsign", serde_json::json!({})),
                 label: Self::label_from_operator_options(options),
             });
         }
@@ -4609,7 +4625,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({ "axes": axes }),
+                attributes: Self::operator_attributes(
+                    "reverse",
+                    serde_json::json!({ "axes": axes }),
+                ),
                 label: Self::label_from_operator_options(&options.parent),
             });
         }
@@ -5349,7 +5368,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({ "axis": axis }),
+                attributes: Self::operator_attributes(
+                    "softmax",
+                    serde_json::json!({ "axis": axis }),
+                ),
                 label: Self::label_from_operator_options(&options.parent),
             });
         }
@@ -5639,11 +5661,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({
-                    "axis": axis,
-                    "exclusive": options.exclusive,
-                    "reversed": options.reversed,
-                }),
+                attributes: Self::operator_attributes(
+                    "cumulativeSum",
+                    serde_json::json!({
+                        "axis": axis,
+                        "exclusive": options.exclusive,
+                        "reversed": options.reversed,
+                    }),
+                ),
                 label: Self::label_from_operator_options(&options.parent),
             });
         }
@@ -5833,12 +5858,15 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands,
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({
-                    "epsilon": epsilon,
-                    "layout": if options.layout == MLInputOperandLayout::Nchw { "nchw" } else { "nhwc" },
-                    "hasScale": options.scale.is_some(),
-                    "hasBias": options.bias.is_some(),
-                }),
+                attributes: Self::operator_attributes(
+                    "instanceNormalization",
+                    serde_json::json!({
+                        "epsilon": epsilon,
+                        "layout": if options.layout == MLInputOperandLayout::Nchw { "nchw" } else { "nhwc" },
+                        "hasScale": options.scale.is_some(),
+                        "hasBias": options.bias.is_some(),
+                    }),
+                ),
                 label: Self::label_from_operator_options(&options.parent),
             });
         }
@@ -5977,12 +6005,15 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands,
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({
-                    "axes": axes,
-                    "epsilon": epsilon,
-                    "hasScale": options.scale.is_some(),
-                    "hasBias": options.bias.is_some(),
-                }),
+                attributes: Self::operator_attributes(
+                    "layerNormalization",
+                    serde_json::json!({
+                        "axes": axes,
+                        "epsilon": epsilon,
+                        "hasScale": options.scale.is_some(),
+                        "hasBias": options.bias.is_some(),
+                    }),
+                ),
                 label: Self::label_from_operator_options(&options.parent),
             });
         }
@@ -6160,12 +6191,15 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: serde_json::json!({
-                    "mode": mode,
-                    "axes": axes,
-                    "scales": scales,
-                    "sizes": options.sizes.clone(),
-                }),
+                attributes: Self::operator_attributes(
+                    "resample2d",
+                    serde_json::json!({
+                        "mode": mode,
+                        "axes": axes,
+                        "scales": scales,
+                        "sizes": options.sizes.clone(),
+                    }),
+                ),
                 label: Self::label_from_operator_options(&options.parent),
             });
         }
@@ -6320,7 +6354,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes,
+                attributes: Self::operator_attributes("transpose", attributes),
                 label,
             });
         }
