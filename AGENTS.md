@@ -12,10 +12,10 @@ conventions and deeper guidance.
 **README Documentation Chain (read in order)**
 - `AGENTS.md` — top-level agent orientation and cross-cutting rules (this file).
 - `components/<component>/README.md` — component-level guidance and the consolidation point for component-wide lessons (for example `components/script/README.md`).
-- `components/<component>/dom/<subdir>/README.md` — subsystem-level guidance (keep *very* minimal; include only subsystem-specific notes, spec anchors, and TODOs).
+- `components/<component>/<subdir>/README.md` — subsystem-level guidance.
 
 **Agent pre-task checklist (MANDATORY)**
-- Step A: Read and add to your working context the README chain *for the task* in this order: `AGENTS.md` → `components/<component>/README.md` → `components/<component>/dom/<subdir>/README.md` .
+- Step A: Read and add to your working context the README chain *for the task* in this order: `AGENTS.md` → `components/<component>/README.md` → `components/<component>/<subdir>/README.md` .
 - Step B: Confirm in your first reply which README(s) you loaded.
 - Step C: If any required README or spec is missing or ambiguous, stop and ask a clarifying question before changing code.
 - Step D: Follow the documented conventions in those READMEs (for example the `components/script/README.md` "Documenting your work" rules) when implementing and commenting code.
@@ -32,19 +32,14 @@ For example, if you learn something related only to the webnn implementation, th
 add docs to `components/script/dom/webnn/README.md`, but if the lesson is relevant 
 to any web api, then add docs to `components/script/README.md`. You can also add `README.md` files; ensure those are reffered-to from the `README.md` file at the level above. For example: `components/script/README.md` should refer to the `README.md` files found in `components/script/dom/`.
 
-Principle: add lessons to the *lowest* README that makes sense. Do **not** duplicate or copy the same prose across multiple README files — put the short lesson where it belongs and, if broadly applicable, add a one-line pointer in the parent README.
+Principle: add lessons to the *lowest* README that makes sense. Do **not** duplicate or copy the same prose across multiple README files — put the lesson where it belongs.
 
 **Prose & README style:**
 - Document the *current* design/state only — do **not** leave change‑history or "I did X" comments in source or README files (for example, avoid comments like "create a single sender"). Historical context belongs in the PR description or a changelog, not inline.
 - Use neutral, factual language. Avoid subjective or minimizing words such as "small", "tiny", "minimal", "just", or "only" when describing a component or its responsibilities.
-- Automated agents must not add conversational, transient, or change‑history text to committed files — write stable, forward‑looking prose suitable for future readers.
-- Prefer importing shared message/types with `use` and referring to them unqualified in code (for example, `use webnn_traits::WebNNMsg;` then use `WebNNMsg`), rather than repeatedly using fully‑qualified paths like `webnn_traits::WebNNMsg`. (Keeps signatures and types concise.)
 
 **Other General Guidelines:**
 - Always double-check your work with `./mach check`(without additional arguments). 
 - Use `./mach` command, not cargo.
 - Do not do anything with Git.
-
-Where to look next
-- For DOM / Web API work: see `components/script/README.md`.
-- For feature-specific guidance: open the README in the component you'll modify (each component directory may contain a README).
+- Do not use fully-qualified imports.
