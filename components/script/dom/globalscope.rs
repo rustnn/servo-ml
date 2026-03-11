@@ -292,7 +292,7 @@ pub(crate) struct GlobalScope {
     #[no_trace]
     storage_threads: StorageThreads,
 
-    /// Channel to a WebNN manager (stub).
+    /// Channel to a WebNN manager.
     #[no_trace]
     webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
 
@@ -2706,20 +2706,15 @@ impl GlobalScope {
         self.downcast::<Window>().expect("expected a Window scope")
     }
 
-    /// Return the WebNN `ML` object for this global.  Worker contexts use
-    /// `WorkerNavigator`; regular windows use `Navigator`.  This helper keeps
-    /// callers from having to know which global type they're running in.
+    /// Return the WebNN `ML` object for this global.
     pub(crate) fn get_ml(&self) -> DomRoot<ML> {
-        // Prefer a Window since desktop scripts will normally be there.
         if let Some(window) = self.downcast::<Window>() {
             return window.Navigator().Ml();
         }
         if let Some(worker) = self.downcast::<WorkerGlobalScope>() {
             return worker.Navigator().Ml();
         }
-        // should only happen in bizarre globals; don't crash in production builds.
         debug_assert!(false, "get_ml called on unsupported global");
-        // return a harmless empty ML object so callers can continue
         reflect_dom_object(Box::new(ML::new_inherited()), self, CanGc::note())
     }
 
@@ -2863,7 +2858,7 @@ impl GlobalScope {
         &self.storage_threads
     }
 
-    /// Channel to the WebNN manager (stub).
+    /// Channel to the WebNN manager.
     pub(crate) fn webnn_sender(&self) -> &base::generic_channel::GenericSender<WebNNMsg> {
         &self.webnn_sender
     }
