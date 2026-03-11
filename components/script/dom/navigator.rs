@@ -465,9 +465,8 @@ impl NavigatorMethods<crate::DomTypeHolder> for Navigator {
         self.gpu.or_init(|| GPU::new(&self.global(), CanGc::note()))
     }
 
-    // https://w3c.github.io/webnn/
+    /// <https://webmachinelearning.github.io/webnn/#dom-navigatorml-ml>
     fn Ml(&self) -> DomRoot<ML> {
-        // Lazily create the `ML` object exposed at `navigator.ml`.
         self.ml.or_init(|| ML::new(&self.global(), CanGc::note()))
     }
 
