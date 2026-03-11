@@ -16,6 +16,17 @@ components/script/dom/webnn — implementation notes (minimal)
      `/// <https://webmachinelearning.github.io/webnn/#api-mlgraphbuilder-cast>`
   5. Copy spec step prose with `search-bs get` and annotate code using `Step N:` comments quoting the spec text.
 
+- For WebNN method algorithms, do not stop at the section match if the section defines multiple algorithms. Search for the exact `<dfn ...>` block, for example `search-bs search --name webnn "<dfn method for=MLGraphBuilder>cast" --around 25`, then inspect the full surrounding `<details open algorithm> ... </details>` block and enumerate its steps in code comments yourself.
+
+- WebNN anchor heuristic:
+  - If the algorithm is a method and the `<dfn>` looks like `<dfn method for=MLGraphBuilder>cast(|input|, |dataType|, |options|)</dfn>`, prefer the method anchor form `#dom-mlgraphbuilder-cast` in the top doc-comment.
+  - If the algorithm is not a method and the `<dfn>` looks like `<dfn>ConvertToFloat</dfn>`, prefer the lowercase algorithm anchor form such as `#converttofloat`.
+  - Section search results from `search-bs` often report the enclosing section anchor (for example `#api-mlgraphbuilder-binary`); use that only as a fallback when the `<dfn>` anchor is unclear.
+
+- When a WebNN algorithm references another algorithm such as `[=MLGraphBuilder/validating operand=]` or `[=copying an MLOperand=]`, search for the referenced algorithm name and again use the enclosing `<details ... algorithm>` block as the source of truth for the steps to mirror in code.
+
+- Do not confuse the standalone numeric [=cast=] algorithm in the spec's “Casting” section with the `MLGraphBuilder.cast()` method. The standalone algorithm is the source of truth for option/value coercions such as `clamp.minValue/maxValue`, `gemm.alpha/beta`, normalization `epsilon`, and similar numeric parameters. Implement it as a separate helper and route every spec step that says “the result of [=casting=] ...” through that helper.
+
 - The `MLContext` exposes a `timeline` concept in the spec. In this codebase model the timeline should be implemented as steps enqueued to a backend/task queue. See the `webnn` top-level component for more info. 
 
 - Context identifiers (`ContextId`) are defined in `components/shared/base/id.rs` as

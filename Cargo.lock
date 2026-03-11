@@ -9028,6 +9028,7 @@ dependencies = [
  "euclid",
  "flate2",
  "glow",
+ "half",
  "headers 0.4.1",
  "hkdf",
  "html5ever",

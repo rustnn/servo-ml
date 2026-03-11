@@ -78,6 +78,7 @@ glow = { workspace = true }
 headers = { workspace = true }
 hkdf = { workspace = true }
 html5ever = { workspace = true }
+half = "2"
 http = { workspace = true }
 hyper_serde = { workspace = true }
 icu_locid = { workspace = true }

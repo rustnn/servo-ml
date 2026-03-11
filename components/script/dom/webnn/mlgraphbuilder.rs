@@ -7,6 +7,7 @@ use std::collections::HashMap;
 use std::rc::Rc;
 
 use dom_struct::dom_struct;
+use half::f16;
 use js::rust::HandleObject;
 use rustnn::graph::{DataType, GraphInfo, Operand, OperandDescriptor, OperandKind, Operation};
 use script_bindings::cformat;
@@ -1340,6 +1341,121 @@ pub(crate) fn check_dimensions(descriptor: &MLOperandDescriptor) -> bool {
     true
 }
 
+/// <https://webmachinelearning.github.io/webnn/#cast>
+fn cast_number_to_data_type(x: f64, data_type: &str) -> f64 {
+    // Step 1: Switch on |dataType|.
+    match data_type {
+        // Step 1.1: {{MLOperandDataType/"float32"}} → Return [=ConvertToFloat=](|x|, 32).
+        "float32" => convert_to_float(x, 32),
+
+        // Step 1.2: {{MLOperandDataType/"float16"}} → Return [=ConvertToFloat=](|x|, 16).
+        "float16" => convert_to_float(x, 16),
+
+        // Step 1.3: {{MLOperandDataType/"int64"}} → Return [=ConvertToInt=](|x|, 64, "signed").
+        "int64" => convert_to_int(x, 64, "signed"),
+
+        // Step 1.4: {{MLOperandDataType/"uint64"}} → Return [=ConvertToInt=](|x|, 64, "unsigned").
+        "uint64" => convert_to_int(x, 64, "unsigned"),
+
+        // Step 1.5: {{MLOperandDataType/"int32"}} → Return [=ConvertToInt=](|x|, 32, "signed").
+        "int32" => convert_to_int(x, 32, "signed"),
+
+        // Step 1.6: {{MLOperandDataType/"uint32"}} → Return [=ConvertToInt=](|x|, 32, "signed").
+        // Note: the current WebNN spec text says "signed" for `uint32`; this helper intentionally mirrors the spec prose verbatim.
+        "uint32" => convert_to_int(x, 32, "signed"),
+
+        // Step 1.7: {{MLOperandDataType/"int8"}} → Return [=ConvertToInt=](|x|, 8, "signed").
+        "int8" => convert_to_int(x, 8, "signed"),
+
+        // Step 1.8: {{MLOperandDataType/"uint8"}} → Return [=ConvertToInt=](|x|, 8, "unsigned").
+        "uint8" => convert_to_int(x, 8, "unsigned"),
+
+        _ => {
+            debug_assert!(
+                false,
+                "unexpected MLOperandDataType for cast algorithm: {data_type}"
+            );
+            x
+        },
+    }
+}
+
+/// <https://webmachinelearning.github.io/webnn/#converttofloat>
+fn convert_to_float(x: f64, bit_length: u8) -> f64 {
+    // Step 1: If |x| is NaN, then return NaN.
+    if x.is_nan() {
+        return f64::NAN;
+    }
+
+    // Step 2: Switch on |bitLength|.
+    let y = match bit_length {
+        // Step 2.1: 32.
+        // Step 3: Let |y| be the number in |S| that is closest to |x|, selecting the number with an even significand if there are two [=equally close values=].
+        // Note: Rust's `f32` conversion uses IEEE-754 round-to-nearest, ties-to-even semantics and yields infinities for out-of-range finite values, which matches the spec's outcome.
+        32 => (x as f32) as f64,
+
+        // Step 2.2: 16.
+        // Step 3: Let |y| be the number in |S| that is closest to |x|, selecting the number with an even significand if there are two [=equally close values=].
+        // Note: `half::f16` provides IEEE-754 binary16 conversion with the rounding behavior required by the spec.
+        16 => f16::from_f64(x).to_f64(),
+
+        _ => {
+            debug_assert!(
+                false,
+                "unexpected bit length for ConvertToFloat: {bit_length}"
+            );
+            (x as f32) as f64
+        },
+    };
+
+    // Step 4: If |y| is |upperBound|, then return +Infinity.
+    // Step 5: If |y| is |lowerBound|, then return -Infinity.
+    // Note: the conversions above already produce infinities for out-of-range inputs, so no extra code is needed here.
+
+    // Step 6: If |y| is +0 and |x| is negative, then return -0.
+    if y == 0.0 && x.is_sign_negative() {
+        return -0.0;
+    }
+
+    // Step 7: Return |y|.
+    y
+}
+
+/// <https://webmachinelearning.github.io/webnn/#converttoint>
+fn convert_to_int(x: f64, bit_length: u8, signedness: &str) -> f64 {
+    // Step 1: If |signedness| is "unsigned", then:
+    // Step 1.1: Let |lowerBound| be 0.
+    // Step 1.2: Let |upperBound| be 2^|bitLength| - 1.
+    // Step 2: Otherwise:
+    // Step 2.1: Let |lowerBound| be -(2^|bitLength| - 1).
+    // Step 2.2: Let |upperBound| be 2^|bitLength| - 1 - 1.
+    let (lower_bound, upper_bound) = if signedness == "unsigned" {
+        (0.0, (2_f64).powi(i32::from(bit_length)) - 1.0)
+    } else {
+        (
+            -((2_f64).powi(i32::from(bit_length) - 1)),
+            (2_f64).powi(i32::from(bit_length) - 1) - 1.0,
+        )
+    };
+
+    // Step 3: If |x| is -0, then set |x| to +0.
+    let x = if x == 0.0 { 0.0 } else { x };
+
+    // Step 4: If |x| is NaN, then return +0.
+    if x.is_nan() {
+        return 0.0;
+    }
+
+    // Step 5: Set |x| to min(max(|x|, |lowerBound|), |upperBound|).
+    let x = x.clamp(lower_bound, upper_bound);
+
+    // Step 6: Round |x| to the nearest integer, choosing the even integer if it lies halfway between two, and choosing +0 rather than -0.
+    let x = x.round_ties_even();
+
+    // Step 7: Return |x|.
+    if x == 0.0 { 0.0 } else { x }
+}
+
 /// <https://webmachinelearning.github.io/webnn/#create-an-mloperand>
 fn create_an_mloperand(
     builder: &MLGraphBuilder,
@@ -2282,73 +2398,76 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
-        // Step 3: Let minValue be the options.minValue if given, or Infinity otherwise.
-        // Step 4: Set options.minValue to the result of casting minValue to input's dataType.
-        // Step 5: Let maxValue be the options.maxValue if given, or -Infinity otherwise.
-        // Step 6: Set options.maxValue to the result of casting maxValue to input's dataType.
-        // Step 7: If options.minValue is greater than options.maxValue, then throw a TypeError.
-
         let in_dtype = input.descriptor_data_type();
+
+        // Step 3: Let |minValue| be the |options|.{{MLClampOptions/minValue}} if given, or Infinity otherwise.
         let min_opt = options.minValue.as_ref().map(|v| **v);
+
+        // Step 5: Let |maxValue| be the |options|.{{MLClampOptions/maxValue}} if given, or -Infinity otherwise.
         let max_opt = options.maxValue.as_ref().map(|v| **v);
 
-        // Perform cast-to-input-dtype for comparison/recording.
-        let cast_min = |v: f64| -> serde_json::Value {
-            match in_dtype {
-                "float32" | "float16" => serde_json::json!(v),
-                "int8" => serde_json::json!(v as i8),
-                "uint8" => serde_json::json!(v as u8),
-                "int32" => serde_json::json!(v as i32),
-                "uint32" => serde_json::json!(v as u32),
-                "int64" => serde_json::json!(v as i64),
-                "uint64" => serde_json::json!(v as u64),
-                _ => serde_json::json!(v),
-            }
-        };
+        // Step 4: Set |options|.{{MLClampOptions/minValue}} to the result of [=casting=] |minValue| to |input|'s [=MLOperand/dataType=].
+        let min_casted = min_opt.map(|value| cast_number_to_data_type(value, in_dtype));
 
-        // Validate min/max ordering after casting to input dtype semantics.
-        if let (Some(min_v), Some(max_v)) = (min_opt, max_opt) {
-            if in_dtype == "float32" || in_dtype == "float16" {
-                let min_c = min_v as f64;
-                let max_c = max_v as f64;
-                if min_c > max_c {
-                    return Err(Error::Type(
-                        c"minValue must not be greater than maxValue".to_owned(),
-                    ));
-                }
-            } else {
-                let min_c = min_v as i128;
-                let max_c = max_v as i128;
-                if min_c > max_c {
-                    return Err(Error::Type(
-                        c"minValue must not be greater than maxValue".to_owned(),
-                    ));
-                }
+        // Step 6: Set |options|.{{MLClampOptions/maxValue}} to the result of [=casting=] |maxValue| to |input|'s [=MLOperand/dataType=].
+        let max_casted = max_opt.map(|value| cast_number_to_data_type(value, in_dtype));
+
+        // Step 7: If |options|.{{MLClampOptions/minValue}} is greater than |options|.{{MLClampOptions/maxValue}}, then [=exception/throw=] a {{TypeError}}.
+        if let (Some(min_value), Some(max_value)) = (min_casted, max_casted) {
+            if min_value > max_value {
+                return Err(Error::Type(
+                    c"minValue must not be greater than maxValue".to_owned(),
+                ));
             }
         }
 
-        // Make graph connections per the spec: output is copied from input.
+        // Note: the implementation records the casted values in operator attributes instead of mutating the bindings object.
+        let min_value = min_casted.map(|value| match in_dtype {
+            "float32" | "float16" => serde_json::json!(value),
+            "int8" => serde_json::json!(value as i8),
+            "uint8" => serde_json::json!(value as u8),
+            "int32" => serde_json::json!(value as i32),
+            "uint32" => serde_json::json!(value as u32),
+            "int64" => serde_json::json!(value as i64),
+            "uint64" => serde_json::json!(value as u64),
+            _ => serde_json::json!(value),
+        });
+        let max_value = max_casted.map(|value| match in_dtype {
+            "float32" | "float16" => serde_json::json!(value),
+            "int8" => serde_json::json!(value as i8),
+            "uint8" => serde_json::json!(value as u8),
+            "int32" => serde_json::json!(value as i32),
+            "uint32" => serde_json::json!(value as u32),
+            "int64" => serde_json::json!(value as i64),
+            "uint64" => serde_json::json!(value as u64),
+            _ => serde_json::json!(value),
+        });
+
+        // Step 8.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
+        // Note: the implementation allocates the backend output id before constructing the DOM operand so the operator record can reference concrete ids.
         let in_shape = input.descriptor_shape();
 
-        // Ensure input has backend id.
+        // Step 8.4: Set |operator|'s [=operator/input=] to |input|.
         let input_id = match input.id() {
             Some(i) => i,
             None => return Err(Error::Type(c"input operand has no backend id".to_owned())),
         };
+
+        // Step 8.5: Set |operator|'s [=operator/output=] to |output|.
         let rust_operand =
             self.create_rust_operand(in_dtype, in_shape.clone(), OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
-        // Build attributes: record existence flags and casted values when present.
+        // Step 8.2: Let |operator| be an [=operator=] for the "clamp" operation, given |options|.
         let mut attributes = serde_json::json!({
             "hasMinValue": min_opt.is_some(),
             "hasMaxValue": max_opt.is_some(),
         });
-        if let Some(mv) = min_opt {
-            attributes["minValue"] = cast_min(mv);
+        if let Some(mv) = min_value {
+            attributes["minValue"] = mv;
         }
-        if let Some(mv) = max_opt {
-            attributes["maxValue"] = cast_min(mv);
+        if let Some(mv) = max_value {
+            attributes["maxValue"] = mv;
         }
 
         // Optional label
@@ -2361,6 +2480,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             }
         };
 
+        // Step 8.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
             gi.operations.push(Operation {
                 op_type: "clamp".to_string(),
@@ -2374,6 +2494,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 8.1: Let |output| be the result of copying an MLOperand given |input|.
         let operand = copy_an_mloperand(input, None, Some(output_id), can_gc);
+
+        // Step 9: Return |output|.
         Ok(operand)
     }
 
@@ -2897,8 +3019,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // Step 9: Set options.epsilon to the result of casting options.epsilon to input’s dataType.
-        // `options.epsilon` is a `Finite<f64>` wrapper from bindings; dereference to `f64` for JSON.
-        let epsilon = *options.epsilon;
+        let epsilon = cast_number_to_data_type(*options.epsilon, in_dtype);
 
         // Step 10.1: If options.scale exists and its dataType is not one of its allowed data types (according to this table), then throw a TypeError.
         // Step 10.2: If options.scale exists and its shape is not equal to « input’s shape[options.axis] », then throw a TypeError.
@@ -3648,17 +3769,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             return Err(Error::Type(c"gemm inputs must be 2-D tensors".to_owned()));
         }
 
-        // Step 5 & 6: Cast alpha and beta to |a|'s data type.
-        let alpha = if a_dtype == "float32" {
-            (*options.alpha as f32) as f64
-        } else {
-            *options.alpha
-        };
-        let beta = if a_dtype == "float32" {
-            (*options.beta as f32) as f64
-        } else {
-            *options.beta
-        };
+        // Step 5: Set |options|.{{MLGemmOptions/alpha}} to the result of [=casting=] |options|.{{MLGemmOptions/alpha}} to |a|'s [=MLOperand/dataType=].
+        let alpha = cast_number_to_data_type(*options.alpha, a_dtype);
+
+        // Step 6: Set |options|.{{MLGemmOptions/beta}} to the result of [=casting=] |options|.{{MLGemmOptions/beta}} to |a|'s [=MLOperand/dataType=].
+        let beta = cast_number_to_data_type(*options.beta, a_dtype);
 
         // Steps 7–11: Shape/rank/transposition validations and inner-dimension checks.
         // Step 4: If the MLOperand/rank of any of |a| or |b| is not its allowed rank, then throw a TypeError.
@@ -3735,7 +3850,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             self.create_rust_operand(a_dtype, output_shape.clone(), OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
-        // Record operator attributes including alpha/beta and transpose flags (Steps 5/6 recorded here; casting TODO).
+        // Record operator attributes including alpha/beta and transpose flags.
         let mut attributes = serde_json::json!({
             "alpha": alpha,
             "beta": beta,
@@ -3922,11 +4037,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // 1. Set |options|.{{MLEluOptions/alpha}} to the result of [=casting=] |options|.{{MLEluOptions/alpha}} to |input|'s [=MLOperand/dataType=].
-        let alpha = if input_data_type == "float32" {
-            (*options.alpha as f32) as f64
-        } else {
-            *options.alpha
-        };
+        let alpha = cast_number_to_data_type(*options.alpha, input_data_type);
 
         // 1. *Make graph connections:*
         // 1. Let |output| be the result of [=copying an MLOperand=] given |input|.
@@ -4041,18 +4152,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // 1. Set |options|.{{MLHardSigmoidOptions/alpha}} to the result of [=casting=] |options|.{{MLHardSigmoidOptions/alpha}} to |input|'s [=MLOperand/dataType=].
-        let alpha = if input_data_type == "float32" {
-            (*options.alpha as f32) as f64
-        } else {
-            *options.alpha
-        };
+        let alpha = cast_number_to_data_type(*options.alpha, input_data_type);
 
         // 1. Set |options|.{{MLHardSigmoidOptions/beta}} to the result of [=casting=] |options|.{{MLHardSigmoidOptions/beta}} to |input|'s [=MLOperand/dataType=].
-        let beta = if input_data_type == "float32" {
-            (*options.beta as f32) as f64
-        } else {
-            *options.beta
-        };
+        let beta = cast_number_to_data_type(*options.beta, input_data_type);
 
         // 1. *Make graph connections:*
         // 1. Let |output| be the result of [=copying an MLOperand=] given |input|.
@@ -4167,11 +4270,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // 1. Set |options|.{{MLLeakyReluOptions/alpha}} to the result of [=casting=] |options|.{{MLLeakyReluOptions/alpha}} to |input|'s [=MLOperand/dataType=].
-        let alpha = if input_data_type == "float32" {
-            (*options.alpha as f32) as f64
-        } else {
-            *options.alpha
-        };
+        let alpha = cast_number_to_data_type(*options.alpha, input_data_type);
 
         // 1. *Make graph connections:*
         // 1. Let |output| be the result of [=copying an MLOperand=] given |input|.
@@ -4230,18 +4329,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // 1. Set |options|.{{MLLinearOptions/alpha}} to the result of [=casting=] |options|.{{MLLinearOptions/alpha}} to |input|'s [=MLOperand/dataType=].
-        let alpha = if input_data_type == "float32" {
-            (*options.alpha as f32) as f64
-        } else {
-            *options.alpha
-        };
+        let alpha = cast_number_to_data_type(*options.alpha, input_data_type);
 
         // 1. Set |options|.{{MLLinearOptions/beta}} to the result of [=casting=] |options|.{{MLLinearOptions/beta}} to |input|'s [=MLOperand/dataType=].
-        let beta = if input_data_type == "float32" {
-            (*options.beta as f32) as f64
-        } else {
-            *options.beta
-        };
+        let beta = cast_number_to_data_type(*options.beta, input_data_type);
 
         // 1. *Make graph connections:*
         // 1. Let |output| be the result of [=copying an MLOperand=] given |input|.
@@ -5170,6 +5261,17 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         let mut padding = beginning_padding.clone();
         padding.extend_from_slice(&ending_padding);
+        let value = cast_number_to_data_type(options.value, out_dtype);
+        let value = match out_dtype {
+            "float32" | "float16" => serde_json::json!(value),
+            "int8" => serde_json::json!(value as i8),
+            "uint8" => serde_json::json!(value as u8),
+            "int32" => serde_json::json!(value as i32),
+            "uint32" => serde_json::json!(value as u32),
+            "int64" => serde_json::json!(value as i64),
+            "uint64" => serde_json::json!(value as u64),
+            _ => serde_json::json!(value),
+        };
 
         self.push_unary_operation(
             "pad",
@@ -5180,7 +5282,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 "endingPadding": ending_padding,
                 "padding": padding,
                 "mode": mode,
-                "value": options.value,
+                "value": value,
             }),
             Self::label_from_operator_options(&options.parent),
         );
@@ -5661,11 +5763,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // Step 5: Set |options|.epsilon to the result of casting |options|.epsilon to |input|'s [=MLOperand/dataType=].
-        let epsilon = if input_data_type == "float32" {
-            (*options.epsilon as f32) as f64
-        } else {
-            *options.epsilon
-        };
+        let epsilon = cast_number_to_data_type(*options.epsilon, input_data_type);
 
         // Step 6: Let |axis| be 1 if |options|.layout is "nchw", and 3 otherwise.
         let axis = if options.layout == MLInputOperandLayout::Nchw {
@@ -5801,11 +5899,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
 
         // Step 6: Set |options|.epsilon to the result of casting |options|.epsilon to |input|'s [=MLOperand/dataType=].
-        let epsilon = if input_data_type == "float32" {
-            (*options.epsilon as f32) as f64
-        } else {
-            *options.epsilon
-        };
+        let epsilon = cast_number_to_data_type(*options.epsilon, input_data_type);
 
         // Step 7/8: Validate optional |scale| and |bias| rank and type.
         if let Some(scale) = options.scale.as_ref() {
