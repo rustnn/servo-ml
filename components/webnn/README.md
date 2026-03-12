@@ -52,6 +52,9 @@ Design notes
 - Implementation note: prefer declaring manager helper types (for example
   `Context`) at module scope rather than inside `run_manager()` so types
   are discoverable, easier to test, and stable for future backend additions.
+- Prefer module-scope helper functions over associated functions when backend
+  helper logic does not use struct state. Keep `impl` blocks focused on
+  behavior that depends on `self` or on type-specific construction.
 - When dispatching graphs we currently only support the macOS CoreML backend.
   Graphs with constant operands must have their bytes recorded (`constant-*`
   operations in `GraphInfo`) before conversion; the manager now auto-populates

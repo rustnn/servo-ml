@@ -18,6 +18,17 @@ use rustnn::GraphConverter;
 use rustnn::executors::coreml::{CoremlOutput, prepare_compiled_model_with_weights};
 use rustnn::graph::{ConstantData, DataType, GraphInfo, Operand, get_static_or_max_size};
 
+fn operand_byte_length(operand: &Operand) -> usize {
+    operand
+        .descriptor
+        .shape
+        .iter()
+        .fold(1usize, |acc, d| {
+            acc.saturating_mul(get_static_or_max_size(d) as usize)
+        })
+        .saturating_mul(operand.descriptor.data_type.bytes_per_element())
+}
+
 // helper for converting a CoreML output (or lack thereof) into the byte
 // buffer we store in the manager's tensor store.  Handles all supported
 // data types and falls back to a zeroed buffer when the output is missing.
@@ -54,28 +65,15 @@ fn process_coreml_outputs(operand: &Operand, coreml_out: Option<CoremlOutput>) -
                 }
                 bytes
             },
+            DataType::Uint8 => coreml_out.data.iter().map(|&v| v as u8).collect(),
             _other => {
-                let byte_length = operand
-                    .descriptor
-                    .shape
-                    .iter()
-                    .fold(1usize, |acc, d| {
-                        acc.saturating_mul(get_static_or_max_size(d) as usize)
-                    })
-                    .saturating_mul(4usize);
+                let byte_length = operand_byte_length(operand);
                 vec![0u8; byte_length]
             },
         }
     } else {
         // no CoreML output at all -> zero buffer
-        let byte_length = operand
-            .descriptor
-            .shape
-            .iter()
-            .fold(1usize, |acc, d| {
-                acc.saturating_mul(get_static_or_max_size(d) as usize)
-            })
-            .saturating_mul(4usize);
+        let byte_length = operand_byte_length(operand);
         vec![0u8; byte_length]
     }
 }
@@ -927,6 +925,7 @@ fn try_coreml_execute(
                             iv as f32
                         })
                         .collect(),
+                    DataType::Uint8 => buf.iter().map(|&b| b as f32).collect(),
                     _other => Vec::new(),
                 };
 
