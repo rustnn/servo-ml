@@ -850,8 +850,10 @@ fn handle_ml_compile(
             *entry = MlCacheEntry::Destroyed(reason.clone());
             drop(entry);
             entry_condvar.notify_all();
-            warn!("webnn ML thread: conversion failed for key {:?}", key);
-            println!("Failed compile for {:?} {:?}", graph_info, err);
+            warn!(
+                "webnn ML thread: conversion failed for graph: {:?} with error {:?}",
+                graph_info, err
+            );
             if let Err(e) = manager_tx.send(WebNNMsg::CompileFailed(ctx_id, key, reason)) {
                 warn!("webnn ML thread: failed to send CompileFailed: {:?}", e);
             }
