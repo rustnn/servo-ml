@@ -10,11 +10,12 @@ use dom_struct::dom_struct;
 use half::f16;
 use js::rust::HandleObject;
 use rustnn::graph::{DataType, GraphInfo, Operand, OperandDescriptor, OperandKind, Operation};
-use rustnn::operator_options::OperatorOptions;
+use rustnn::operator_options::{self as rustnn_options, OperatorOptions};
 use script_bindings::cformat;
 use script_bindings::codegen::GenericUnionTypes::ArrayBufferViewOrArrayBuffer;
 use script_bindings::record::Record;
 use script_bindings::str::USVString;
+use serde_json::Value;
 use webnn_traits::WebNNMsg;
 
 use crate::dom::bindings::cell::DomRefCell;
@@ -65,22 +66,58 @@ pub(crate) struct MLGraphBuilder {
     next_operand_id: Cell<u32>,
 }
 
-impl MLGraphBuilder {
-    /// Helper: map WebNN data type strings to binding enum variants used by descriptors.
-    fn data_type_enum_from_str(data_type: &str) -> MLOperandDataType {
-        match data_type {
-            "float32" => MLOperandDataType::Float32,
-            "float16" => MLOperandDataType::Float16,
-            "int32" => MLOperandDataType::Int32,
-            "uint32" => MLOperandDataType::Uint32,
-            "int64" => MLOperandDataType::Int64,
-            "uint64" => MLOperandDataType::Uint64,
-            "int8" => MLOperandDataType::Int8,
-            "uint8" => MLOperandDataType::Uint8,
-            _ => MLOperandDataType::Float32,
-        }
+/// Helper: map WebNN data type strings to binding enum variants used by descriptors.
+fn data_type_enum_from_str(data_type: &str) -> MLOperandDataType {
+    match data_type {
+        "float32" => MLOperandDataType::Float32,
+        "float16" => MLOperandDataType::Float16,
+        "int32" => MLOperandDataType::Int32,
+        "uint32" => MLOperandDataType::Uint32,
+        "int64" => MLOperandDataType::Int64,
+        "uint64" => MLOperandDataType::Uint64,
+        "int8" => MLOperandDataType::Int8,
+        "uint8" => MLOperandDataType::Uint8,
+        _ => MLOperandDataType::Float32,
     }
+}
 
+fn empty_operator_attributes() -> OperatorOptions {
+    OperatorOptions::default()
+}
+
+fn numeric_value_for_data_type(value: f64, data_type: &str) -> Value {
+    match data_type {
+        "float32" | "float16" => Value::from(value),
+        "int8" => Value::from(value as i8),
+        "uint8" => Value::from(value as u8),
+        "int32" => Value::from(value as i32),
+        "uint32" => Value::from(value as u32),
+        "int64" => Value::from(value as i64),
+        "uint64" => Value::from(value as u64),
+        _ => Value::from(value),
+    }
+}
+
+fn static_dimensions(dimensions: &[u32]) -> Vec<rustnn_options::MLDimension> {
+    dimensions
+        .iter()
+        .copied()
+        .map(rustnn_options::MLDimension::Static)
+        .collect()
+}
+
+fn label_from_operator_options(options: &MLOperatorOptions) -> Option<String> {
+    // Step 1: Read operator label.
+    // Step 2: Normalize empty labels to None.
+    let label = options.label.clone();
+    if label.is_empty() {
+        None
+    } else {
+        Some(label.to_string())
+    }
+}
+
+impl MLGraphBuilder {
     pub(crate) fn new_inherited(context: &MLContext) -> MLGraphBuilder {
         MLGraphBuilder {
             reflector_: Reflector::new(),
@@ -110,8 +147,8 @@ impl MLGraphBuilder {
         )
     }
 
-    pub(crate) fn context(&self) -> Dom<MLContext> {
-        self.context.clone()
+    pub(crate) fn context(&self) -> &MLContext {
+        &*self.context
     }
 
     fn can_build(&self) -> bool {
@@ -187,7 +224,7 @@ impl MLGraphBuilder {
         op_name: &str,
         input_id: u32,
         output_id: u32,
-        attributes: serde_json::Value,
+        attributes: OperatorOptions,
         label: Option<String>,
     ) {
         // Step 1: Append a unary Operation record into GraphInfo.operations.
@@ -197,7 +234,7 @@ impl MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes(op_name, attributes),
+                attributes,
                 label,
             });
         }
@@ -208,7 +245,7 @@ impl MLGraphBuilder {
         op_name: &str,
         input_ids: Vec<u32>,
         output_id: u32,
-        attributes: serde_json::Value,
+        attributes: OperatorOptions,
         label: Option<String>,
     ) {
         // Step 1: Append an Operation record with a dynamic input list into GraphInfo.operations.
@@ -218,24 +255,9 @@ impl MLGraphBuilder {
                 input_operands: input_ids,
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes(op_name, attributes),
+                attributes,
                 label,
             });
-        }
-    }
-
-    fn operator_attributes(op_name: &str, attributes: serde_json::Value) -> OperatorOptions {
-        OperatorOptions::from_json_with_op_type(op_name, &attributes).unwrap_or_default()
-    }
-
-    fn label_from_operator_options(options: &MLOperatorOptions) -> Option<String> {
-        // Step 1: Read operator label.
-        // Step 2: Normalize empty labels to None.
-        let label = options.label.clone();
-        if label.is_empty() {
-            None
-        } else {
-            Some(label.to_string())
         }
     }
 
@@ -353,8 +375,8 @@ impl MLGraphBuilder {
             op_name,
             input_operands,
             output_id,
-            serde_json::json!({}),
-            Self::label_from_operator_options(options),
+            empty_operator_attributes(),
+            label_from_operator_options(options),
         );
 
         let operand = create_an_mloperand(
@@ -426,7 +448,7 @@ impl MLGraphBuilder {
 
         // Step 6: Let |desc| be the result of [=creating an MLOperandDescriptor=] given |input|'s [=MLOperand/dataType=] and |outputShape|.
         let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype),
+            dataType: data_type_enum_from_str(out_dtype),
             shape: output_shape.clone(),
         };
 
@@ -448,8 +470,12 @@ impl MLGraphBuilder {
             op_name,
             input_id,
             output_id,
-            serde_json::json!({"axes": reduce_options.axes, "keepDimensions": reduce_options.keep_dimensions}),
-            Self::label_from_operator_options(&options.parent),
+            OperatorOptions::Reduce(rustnn_options::MLReduceOptions {
+                axes: Some(reduce_options.axes.clone()),
+                keep_dimensions: reduce_options.keep_dimensions,
+                ..Default::default()
+            }),
+            label_from_operator_options(&options.parent),
         );
 
         // Step 8: Return |output|.
@@ -493,7 +519,7 @@ impl MLGraphBuilder {
             scale.descriptor_data_type()
         };
         let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype_str),
+            dataType: data_type_enum_from_str(out_dtype_str),
             shape: input.descriptor_shape().clone(),
         };
         let input_id = input
@@ -517,8 +543,8 @@ impl MLGraphBuilder {
             op_name,
             vec![input_id, scale_id, zero_id],
             output_id,
-            serde_json::json!({}),
-            Self::label_from_operator_options(options),
+            empty_operator_attributes(),
+            label_from_operator_options(options),
         );
         Ok(create_an_mloperand(
             self,
@@ -572,7 +598,7 @@ impl MLGraphBuilder {
         .map_err(|e| Error::Type(cformat!("{e}")))?;
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype),
+            dataType: data_type_enum_from_str(out_dtype),
             shape: input.descriptor_shape().clone(),
         };
         let input_id = input
@@ -596,8 +622,11 @@ impl MLGraphBuilder {
             "scatterElements",
             vec![input_id, indices_id, updates_id],
             output_id,
-            serde_json::json!({"axis": axis}),
-            Self::label_from_operator_options(options),
+            OperatorOptions::ScatterElements(rustnn_options::MLScatterOptions {
+                axis: axis as u32,
+                ..Default::default()
+            }),
+            label_from_operator_options(options),
         );
         Ok(create_an_mloperand(
             self,
@@ -649,7 +678,7 @@ impl MLGraphBuilder {
         .map_err(|e| Error::Type(cformat!("{e}")))?;
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype),
+            dataType: data_type_enum_from_str(out_dtype),
             shape: input.descriptor_shape().clone(),
         };
         let input_id = input
@@ -673,8 +702,8 @@ impl MLGraphBuilder {
             "scatterND",
             vec![input_id, indices_id, updates_id],
             output_id,
-            serde_json::json!({}),
-            Self::label_from_operator_options(options),
+            empty_operator_attributes(),
+            label_from_operator_options(options),
         );
         Ok(create_an_mloperand(
             self,
@@ -833,7 +862,7 @@ impl MLGraphBuilder {
 
         // Step 19: Let |desc| be a copy of |input|.[[descriptor]].
         let mut desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype),
+            dataType: data_type_enum_from_str(out_dtype),
             shape: input_shape.clone(),
         };
 
@@ -934,16 +963,21 @@ impl MLGraphBuilder {
             op_name,
             input_id,
             output_id,
-            serde_json::json!({
-                "windowDimensions": window_dimensions,
-                "strides": strides,
-                "dilations": dilations,
-                "padding": pads,
-                "layout": layout_str,
-                "outputShapeRounding": if options.outputShapeRounding == MLRoundingType::Floor { "floor" } else { "ceil" },
-                "outputSizes": output_sizes,
+            OperatorOptions::Pool2d(rustnn_options::MLPool2dOptions {
+                window_dimensions: Some(window_dimensions),
+                padding: pads,
+                strides,
+                dilations,
+                layout: layout_str.to_owned(),
+                output_shape_rounding: if options.outputShapeRounding == MLRoundingType::Floor {
+                    "floor".to_owned()
+                } else {
+                    "ceil".to_owned()
+                },
+                output_sizes,
+                ..Default::default()
             }),
-            Self::label_from_operator_options(&options.parent),
+            label_from_operator_options(&options.parent),
         );
 
         // Step 22: Return |output|.
@@ -1032,7 +1066,7 @@ impl MLGraphBuilder {
         .map_err(|e| Error::Type(cformat!("{e}")))?;
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype),
+            dataType: data_type_enum_from_str(out_dtype),
             shape: output_shape.clone(),
         };
         let input_id = input
@@ -1053,28 +1087,23 @@ impl MLGraphBuilder {
             input_ids.push(bias_id);
         }
 
-        let mut attributes = serde_json::json!({
-            "strides": strides,
-            "dilations": dilations,
-            "padding": pads,
-            "outputPadding": output_padding,
-            "groups": options.groups,
-            "inputLayout": input_layout_str,
-            "filterLayout": filter_layout_str,
-        });
-        if let Some(output_sizes) = options.outputSizes.as_ref() {
-            attributes["outputSizes"] = serde_json::json!(output_sizes);
-        }
-        if options.bias.is_some() {
-            attributes["hasBias"] = serde_json::json!(true);
-        }
-
         self.push_binary_operation(
             "convTranspose2d",
             input_ids,
             output_id,
-            attributes,
-            Self::label_from_operator_options(&options.parent),
+            OperatorOptions::ConvTranspose2d(rustnn_options::MLConvTranspose2dOptions {
+                padding: pads,
+                strides,
+                dilations,
+                output_padding,
+                output_sizes: options.outputSizes.as_ref().cloned(),
+                groups: options.groups,
+                input_layout: input_layout_str.to_owned(),
+                filter_layout: filter_layout_str.to_owned(),
+                bias: options.bias.as_ref().and_then(|bias| bias.id()),
+                ..Default::default()
+            }),
+            label_from_operator_options(&options.parent),
         );
         Ok(create_an_mloperand(
             self,
@@ -1115,7 +1144,7 @@ impl MLGraphBuilder {
             .id()
             .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
         let out_dtype = input.descriptor_data_type();
-        let out_dtype_enum = Self::data_type_enum_from_str(out_dtype);
+        let out_dtype_enum = data_type_enum_from_str(out_dtype);
         let mut output_ids = Vec::with_capacity(output_shapes.len());
         let mut outputs = Vec::with_capacity(output_shapes.len());
         // Step 3: Allocate backend output operands and corresponding DOM outputs.
@@ -1146,8 +1175,11 @@ impl MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: None,
                 output_operands: output_ids,
-                attributes: Self::operator_attributes("split", serde_json::json!({"axis": axis})),
-                label: Self::label_from_operator_options(options),
+                attributes: OperatorOptions::Split(rustnn_options::MLSplitOptions {
+                    axis,
+                    ..Default::default()
+                }),
+                label: label_from_operator_options(options),
             });
         }
         Ok(outputs)
@@ -1249,12 +1281,12 @@ impl MLGraphBuilder {
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Build operation attributes per the README/spec.
-        let mut attributes = serde_json::json!({
-            "axis": axis,
-            "keepDimensions": options.keepDimensions,
+        let attributes = OperatorOptions::ArgMinMax(rustnn_options::MLArgMinMaxOptions {
+            axis,
+            keep_dimensions: options.keepDimensions,
+            output_data_type: out_dtype_str.to_owned(),
+            ..Default::default()
         });
-        // Record the explicit outputDataType when present.
-        attributes["outputDataType"] = serde_json::json!(out_dtype_str);
 
         // Optional label (MLOperatorOptions.label). Use empty => none.
         let label = {
@@ -1274,7 +1306,7 @@ impl MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes(_op_name, attributes),
+                attributes,
                 label,
             });
         }
@@ -1736,7 +1768,7 @@ impl MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes(op_name, serde_json::json!({})),
+                attributes: empty_operator_attributes(),
                 label,
             });
         }
@@ -1821,7 +1853,6 @@ impl MLGraphBuilder {
             self.create_rust_operand(a_dtype, out_shape.clone(), OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
-        let attributes = serde_json::json!({});
         let label = options_label
             .map(|s| if s.is_empty() { None } else { Some(s) })
             .flatten();
@@ -1832,7 +1863,7 @@ impl MLGraphBuilder {
                 input_operands: vec![a_id, b_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes(op_name, attributes),
+                attributes: empty_operator_attributes(),
                 label,
             });
         }
@@ -2002,7 +2033,9 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-constant-tensor>
     fn Constant_(&self, tensor: &MLTensor, can_gc: CanGc) -> Fallible<DomRoot<MLOperand>> {
         // Step 1: If tensor.[[context]] is not this.[[context]], throw a TypeError.
-        if tensor.context() != self.context() {
+        // `tensor.context()` and `self.context()` now both return `&MLContext`.
+        // Compare by pointer rather than relying on `Dom` equality.
+        if !std::ptr::eq(tensor.context(), self.context()) {
             return Err(Error::Type(
                 c"tensor is not owned by this builder's context".to_owned(),
             ));
@@ -2357,7 +2390,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Build operation attributes and optional label (recording operator metadata).
-        let attributes = serde_json::json!({ "dataType": out_dtype_str });
+        let attributes = OperatorOptions::Cast(rustnn_options::MLCastOptions {
+            to: out_dtype_str.to_owned(),
+            ..Default::default()
+        });
 
         let label = {
             let l = options.label.clone();
@@ -2374,7 +2410,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("cast", attributes),
+                attributes,
                 label,
             });
         }
@@ -2427,26 +2463,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // Note: the implementation records the casted values in operator attributes instead of mutating the bindings object.
-        let min_value = min_casted.map(|value| match in_dtype {
-            "float32" | "float16" => serde_json::json!(value),
-            "int8" => serde_json::json!(value as i8),
-            "uint8" => serde_json::json!(value as u8),
-            "int32" => serde_json::json!(value as i32),
-            "uint32" => serde_json::json!(value as u32),
-            "int64" => serde_json::json!(value as i64),
-            "uint64" => serde_json::json!(value as u64),
-            _ => serde_json::json!(value),
-        });
-        let max_value = max_casted.map(|value| match in_dtype {
-            "float32" | "float16" => serde_json::json!(value),
-            "int8" => serde_json::json!(value as i8),
-            "uint8" => serde_json::json!(value as u8),
-            "int32" => serde_json::json!(value as i32),
-            "uint32" => serde_json::json!(value as u32),
-            "int64" => serde_json::json!(value as i64),
-            "uint64" => serde_json::json!(value as u64),
-            _ => serde_json::json!(value),
-        });
+        let min_value = min_casted.map(|value| numeric_value_for_data_type(value, in_dtype));
+        let max_value = max_casted.map(|value| numeric_value_for_data_type(value, in_dtype));
 
         // Step 8.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
         // Note: the implementation allocates the backend output id before constructing the DOM operand so the operator record can reference concrete ids.
@@ -2464,16 +2482,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Step 8.2: Let |operator| be an [=operator=] for the "clamp" operation, given |options|.
-        let mut attributes = serde_json::json!({
-            "hasMinValue": min_opt.is_some(),
-            "hasMaxValue": max_opt.is_some(),
+        let attributes = OperatorOptions::Clamp(rustnn_options::MLClampOptions {
+            min_value,
+            max_value,
+            ..Default::default()
         });
-        if let Some(mv) = min_value {
-            attributes["minValue"] = mv;
-        }
-        if let Some(mv) = max_value {
-            attributes["maxValue"] = mv;
-        }
 
         // Optional label
         let label = {
@@ -2492,7 +2505,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("clamp", attributes),
+                attributes,
                 label,
             });
         }
@@ -2535,9 +2548,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Step 4.2: Let operator be an operator for the "triangular" operation, given options.
-        let attributes = serde_json::json!({
-            "upper": options.upper,
-            "diagonal": options.diagonal,
+        let attributes = OperatorOptions::Triangular(rustnn_options::MLTriangularOptions {
+            upper: Some(options.upper),
+            diagonal: options.diagonal,
+            ..Default::default()
         });
 
         let label = {
@@ -2560,7 +2574,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("triangular", attributes),
+                attributes,
                 label,
             });
         }
@@ -2661,7 +2675,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Build attributes and optional label
-        let attributes = serde_json::json!({ "axis": axis });
+        let attributes = OperatorOptions::Concat(rustnn_options::MLConcatOptions {
+            axis,
+            ..Default::default()
+        });
         let label = {
             let l = options.label.clone();
             if l.is_empty() {
@@ -2686,7 +2703,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: input_ids,
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("concat", attributes),
+                attributes,
                 label,
             });
         }
@@ -2890,17 +2907,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Build attributes and optional label.
-        let mut attributes = serde_json::json!({
-            "strides": strides,
-            "dilations": dilations,
-            "padding": pads,
-            "groups": groups,
-            "inputLayout": input_layout_str,
-            "filterLayout": filter_layout_str,
+        let attributes = OperatorOptions::Conv2d(rustnn_options::MLConv2dOptions {
+            padding: pads,
+            strides,
+            dilations,
+            groups,
+            input_layout: input_layout_str.to_owned(),
+            filter_layout: filter_layout_str.to_owned(),
+            bias: options.bias.as_ref().and_then(|bias| bias.id()),
+            ..Default::default()
         });
-        if options.bias.is_some() {
-            attributes["hasBias"] = serde_json::json!(true);
-        }
 
         let label = {
             let l = options.parent.label.clone();
@@ -2933,7 +2949,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: input_ids,
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("conv2d", attributes),
+                attributes,
                 label,
             });
         }
@@ -3086,14 +3102,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Build operation attributes and optional label (recording operator metadata).
-        let attributes = serde_json::json!({
-            "epsilon": epsilon,
-            "axis": options.axis,
-            "scale": options.scale.as_ref().and_then(|operand| operand.id()),
-            "bias": options.bias.as_ref().and_then(|operand| operand.id()),
-            "hasScale": options.scale.is_some(),
-            "hasBias": options.bias.is_some(),
-        });
+        let attributes =
+            OperatorOptions::BatchNormalization(rustnn_options::MLBatchNormalizationOptions {
+                scale: options.scale.as_ref().and_then(|operand| operand.id()),
+                bias: options.bias.as_ref().and_then(|operand| operand.id()),
+                axis: options.axis,
+                epsilon,
+                ..Default::default()
+            });
 
         let label = {
             let l = options.parent.label.clone();
@@ -3134,7 +3150,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands,
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("batchNormalization", attributes),
+                attributes,
                 label,
             });
         }
@@ -3535,7 +3551,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("tanh", serde_json::json!({})),
+                attributes: empty_operator_attributes(),
                 label,
             });
         }
@@ -3716,7 +3732,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![a_id, b_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("matmul", serde_json::json!({})),
+                attributes: empty_operator_attributes(),
                 label: None,
             });
         }
@@ -3858,13 +3874,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Record operator attributes including alpha/beta and transpose flags.
-        let mut attributes = serde_json::json!({
-            "alpha": alpha,
-            "beta": beta,
-            "aTranspose": options.aTranspose,
-            "bTranspose": options.bTranspose,
+        let attributes = OperatorOptions::Gemm(rustnn_options::MLGemmOptions {
+            c: options.c.as_ref().and_then(|operand| operand.id()),
+            alpha,
+            beta,
+            a_transpose: options.aTranspose,
+            b_transpose: options.bTranspose,
+            ..Default::default()
         });
-        attributes["hasBias"] = serde_json::json!(options.c.is_some());
 
         // Optional label (operator metadata)
         let label = {
@@ -3883,7 +3900,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: input_ids,
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("gemm", attributes),
+                attributes,
                 label,
             });
         }
@@ -3988,8 +4005,9 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Step 8.2: Let |operator| be an operator for the "tile" operation, given |options|.
-        let attributes = serde_json::json!({
-            "repetitions": repetitions,
+        let attributes = OperatorOptions::Tile(rustnn_options::MLTileOptions {
+            repetitions,
+            ..Default::default()
         });
 
         let label = {
@@ -4008,7 +4026,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("tile", attributes),
+                attributes,
                 label,
             });
         }
@@ -4070,8 +4088,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("elu", serde_json::json!({ "alpha": alpha })),
-                label: Self::label_from_operator_options(&options.parent),
+                attributes: OperatorOptions::Elu(rustnn_options::MLEluOptions {
+                    alpha,
+                    ..Default::default()
+                }),
+                label: label_from_operator_options(&options.parent),
             });
         }
 
@@ -4126,8 +4147,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("gelu", serde_json::json!({})),
-                label: Self::label_from_operator_options(options),
+                attributes: empty_operator_attributes(),
+                label: label_from_operator_options(options),
             });
         }
 
@@ -4188,11 +4209,12 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes(
-                    "hardSigmoid",
-                    serde_json::json!({ "alpha": alpha, "beta": beta }),
-                ),
-                label: Self::label_from_operator_options(&options.parent),
+                attributes: OperatorOptions::HardSigmoid(rustnn_options::MLHardSigmoidOptions {
+                    alpha,
+                    beta,
+                    ..Default::default()
+                }),
+                label: label_from_operator_options(&options.parent),
             });
         }
 
@@ -4247,8 +4269,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("hardSwish", serde_json::json!({})),
-                label: Self::label_from_operator_options(&options.parent),
+                attributes: OperatorOptions::HardSwish(
+                    rustnn_options::MLHardSwishOptions::default(),
+                ),
+                label: label_from_operator_options(&options.parent),
             });
         }
 
@@ -4306,11 +4330,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes(
-                    "leakyRelu",
-                    serde_json::json!({ "alpha": alpha }),
-                ),
-                label: Self::label_from_operator_options(&options.parent),
+                attributes: OperatorOptions::LeakyRelu(rustnn_options::MLLeakyReluOptions {
+                    alpha,
+                    ..Default::default()
+                }),
+                label: label_from_operator_options(&options.parent),
             });
         }
 
@@ -4371,11 +4395,12 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes(
-                    "linear",
-                    serde_json::json!({ "alpha": alpha, "beta": beta }),
-                ),
-                label: Self::label_from_operator_options(&options.parent),
+                attributes: OperatorOptions::Linear(rustnn_options::MLLinearOptions {
+                    alpha,
+                    beta,
+                    ..Default::default()
+                }),
+                label: label_from_operator_options(&options.parent),
             });
         }
 
@@ -4432,8 +4457,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("sigmoid", serde_json::json!({})),
-                label: Self::label_from_operator_options(options),
+                attributes: empty_operator_attributes(),
+                label: label_from_operator_options(options),
             });
         }
 
@@ -4491,8 +4516,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("softplus", serde_json::json!({})),
-                label: Self::label_from_operator_options(options),
+                attributes: empty_operator_attributes(),
+                label: label_from_operator_options(options),
             });
         }
 
@@ -4550,8 +4575,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("softsign", serde_json::json!({})),
-                label: Self::label_from_operator_options(options),
+                attributes: empty_operator_attributes(),
+                label: label_from_operator_options(options),
             });
         }
 
@@ -4625,11 +4650,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes(
-                    "reverse",
-                    serde_json::json!({ "axes": axes }),
-                ),
-                label: Self::label_from_operator_options(&options.parent),
+                attributes: OperatorOptions::Reverse(rustnn_options::MLReverseOptions {
+                    axes: Some(axes),
+                    ..Default::default()
+                }),
+                label: label_from_operator_options(&options.parent),
             });
         }
 
@@ -4841,7 +4866,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype),
+            dataType: data_type_enum_from_str(out_dtype),
             shape: new_shape.clone(),
         };
 
@@ -4857,8 +4882,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             "reshape",
             input_id,
             output_id,
-            serde_json::json!({"newShape": new_shape}),
-            Self::label_from_operator_options(options),
+            OperatorOptions::Reshape(rustnn_options::MLReshapeOptions {
+                new_shape: static_dimensions(&new_shape),
+                ..Default::default()
+            }),
+            label_from_operator_options(options),
         );
 
         Ok(copy_an_mloperand(
@@ -4893,7 +4921,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 .map_err(|e| Error::Type(cformat!("{e}")))?;
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype),
+            dataType: data_type_enum_from_str(out_dtype),
             shape: output_shape.clone(),
         };
         let input_id = input
@@ -4907,8 +4935,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             "expand",
             input_id,
             output_id,
-            serde_json::json!({"newShape": new_shape}),
-            Self::label_from_operator_options(options),
+            OperatorOptions::Expand(rustnn_options::MLExpandOptions {
+                new_shape: static_dimensions(&new_shape),
+                ..Default::default()
+            }),
+            label_from_operator_options(options),
         );
         Ok(copy_an_mloperand(
             input,
@@ -4943,7 +4974,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 .map_err(|e| Error::Type(cformat!("{e}")))?;
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype),
+            dataType: data_type_enum_from_str(out_dtype),
             shape: output_shape.clone(),
         };
         let input_id = input
@@ -4957,8 +4988,12 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             "slice",
             input_id,
             output_id,
-            serde_json::json!({"starts": starts, "sizes": sizes}),
-            Self::label_from_operator_options(options),
+            OperatorOptions::Slice(rustnn_options::MLSliceOptions {
+                starts,
+                sizes,
+                ..Default::default()
+            }),
+            label_from_operator_options(options),
         );
         Ok(copy_an_mloperand(
             input,
@@ -5007,7 +5042,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         .map_err(|e| Error::Type(cformat!("{e}")))?;
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype),
+            dataType: data_type_enum_from_str(out_dtype),
             shape: output_shape.clone(),
         };
         let input_id = input
@@ -5023,8 +5058,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             "gather",
             vec![input_id, indices_id],
             output_id,
-            serde_json::json!({"axis": axis}),
-            Self::label_from_operator_options(&options.parent),
+            OperatorOptions::Gather(rustnn_options::MLGatherOptions {
+                axis,
+                ..Default::default()
+            }),
+            label_from_operator_options(&options.parent),
         );
         Ok(create_an_mloperand(
             self,
@@ -5091,7 +5129,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_shape = indices.descriptor_shape().clone();
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype),
+            dataType: data_type_enum_from_str(out_dtype),
             shape: output_shape.clone(),
         };
         let input_id = input
@@ -5107,8 +5145,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             "gatherElements",
             vec![input_id, indices_id],
             output_id,
-            serde_json::json!({"axis": options.axis}),
-            Self::label_from_operator_options(&options.parent),
+            OperatorOptions::Gather(rustnn_options::MLGatherOptions {
+                axis: options.axis,
+                ..Default::default()
+            }),
+            label_from_operator_options(&options.parent),
         );
         Ok(create_an_mloperand(
             self,
@@ -5165,7 +5206,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         output_shape.extend_from_slice(&input_shape[k..]);
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype),
+            dataType: data_type_enum_from_str(out_dtype),
             shape: output_shape.clone(),
         };
         let input_id = input
@@ -5181,8 +5222,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             "gatherND",
             vec![input_id, indices_id],
             output_id,
-            serde_json::json!({}),
-            Self::label_from_operator_options(options),
+            empty_operator_attributes(),
+            label_from_operator_options(options),
         );
         Ok(create_an_mloperand(
             self,
@@ -5257,7 +5298,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 7: If any item in |outputShape| is not a valid dimension, then throw a TypeError.
         let output_desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(input.descriptor_data_type()),
+            dataType: data_type_enum_from_str(input.descriptor_data_type()),
             shape: output_shape.clone(),
         };
         if !check_dimensions(&output_desc) {
@@ -5268,7 +5309,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Note: value casting is represented in operator attributes for backend consumption.
         let out_dtype = input.descriptor_data_type();
         let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype),
+            dataType: data_type_enum_from_str(out_dtype),
             shape: output_shape.clone(),
         };
         let input_id = input
@@ -5278,32 +5319,21 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
-        let mut padding = beginning_padding.clone();
-        padding.extend_from_slice(&ending_padding);
         let value = cast_number_to_data_type(options.value, out_dtype);
-        let value = match out_dtype {
-            "float32" | "float16" => serde_json::json!(value),
-            "int8" => serde_json::json!(value as i8),
-            "uint8" => serde_json::json!(value as u8),
-            "int32" => serde_json::json!(value as i32),
-            "uint32" => serde_json::json!(value as u32),
-            "int64" => serde_json::json!(value as i64),
-            "uint64" => serde_json::json!(value as u64),
-            _ => serde_json::json!(value),
-        };
+        let value = numeric_value_for_data_type(value, out_dtype);
 
         self.push_unary_operation(
             "pad",
             input_id,
             output_id,
-            serde_json::json!({
-                "beginningPadding": beginning_padding,
-                "endingPadding": ending_padding,
-                "padding": padding,
-                "mode": mode,
-                "value": value,
+            OperatorOptions::Pad(rustnn_options::MLPadOptions {
+                mode: mode.to_owned(),
+                value: Some(value),
+                beginning_padding,
+                ending_padding,
+                ..Default::default()
             }),
-            Self::label_from_operator_options(&options.parent),
+            label_from_operator_options(&options.parent),
         );
 
         // Step 9: Return |output|.
@@ -5368,11 +5398,11 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes(
-                    "softmax",
-                    serde_json::json!({ "axis": axis }),
-                ),
-                label: Self::label_from_operator_options(&options.parent),
+                attributes: OperatorOptions::Softmax(rustnn_options::MLSoftmaxOptions {
+                    axis,
+                    ..Default::default()
+                }),
+                label: label_from_operator_options(&options.parent),
             });
         }
 
@@ -5661,15 +5691,15 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes(
-                    "cumulativeSum",
-                    serde_json::json!({
-                        "axis": axis,
-                        "exclusive": options.exclusive,
-                        "reversed": options.reversed,
-                    }),
+                attributes: OperatorOptions::CumulativeSum(
+                    rustnn_options::MLCumulativeSumOptions {
+                        axis,
+                        exclusive: options.exclusive,
+                        reversed: options.reversed,
+                        ..Default::default()
+                    },
                 ),
-                label: Self::label_from_operator_options(&options.parent),
+                label: label_from_operator_options(&options.parent),
             });
         }
 
@@ -5858,16 +5888,22 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands,
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes(
-                    "instanceNormalization",
-                    serde_json::json!({
-                        "epsilon": epsilon,
-                        "layout": if options.layout == MLInputOperandLayout::Nchw { "nchw" } else { "nhwc" },
-                        "hasScale": options.scale.is_some(),
-                        "hasBias": options.bias.is_some(),
-                    }),
+                attributes: OperatorOptions::InstanceNormalization(
+                    rustnn_options::MLInstanceNormalizationOptions {
+                        scale: options.scale.as_ref().and_then(|operand| operand.id()),
+                        bias: options.bias.as_ref().and_then(|operand| operand.id()),
+                        has_scale: Some(options.scale.is_some()),
+                        has_bias: Some(options.bias.is_some()),
+                        epsilon,
+                        layout: if options.layout == MLInputOperandLayout::Nchw {
+                            "nchw".to_owned()
+                        } else {
+                            "nhwc".to_owned()
+                        },
+                        ..Default::default()
+                    },
                 ),
-                label: Self::label_from_operator_options(&options.parent),
+                label: label_from_operator_options(&options.parent),
             });
         }
 
@@ -6005,16 +6041,18 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands,
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes(
-                    "layerNormalization",
-                    serde_json::json!({
-                        "axes": axes,
-                        "epsilon": epsilon,
-                        "hasScale": options.scale.is_some(),
-                        "hasBias": options.bias.is_some(),
-                    }),
+                attributes: OperatorOptions::LayerNormalization(
+                    rustnn_options::MLLayerNormalizationOptions {
+                        scale: options.scale.as_ref().and_then(|operand| operand.id()),
+                        bias: options.bias.as_ref().and_then(|operand| operand.id()),
+                        has_scale: Some(options.scale.is_some()),
+                        has_bias: Some(options.bias.is_some()),
+                        axes: Some(axes),
+                        epsilon,
+                        ..Default::default()
+                    },
                 ),
-                label: Self::label_from_operator_options(&options.parent),
+                label: label_from_operator_options(&options.parent),
             });
         }
 
@@ -6056,7 +6094,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         .map_err(|e| Error::Type(cformat!("{e}")))?;
         let out_dtype = input_data_type;
         let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(out_dtype),
+            dataType: data_type_enum_from_str(out_dtype),
             shape: output_shape.clone(),
         };
         let input_id = input
@@ -6072,8 +6110,8 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             "prelu",
             vec![input_id, slope_id],
             output_id,
-            serde_json::json!({}),
-            Self::label_from_operator_options(options),
+            empty_operator_attributes(),
+            label_from_operator_options(options),
         );
         Ok(create_an_mloperand(
             self,
@@ -6167,7 +6205,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         let desc = MLOperandDescriptor {
-            dataType: Self::data_type_enum_from_str(input_data_type),
+            dataType: data_type_enum_from_str(input_data_type),
             shape: output_shape.clone(),
         };
 
@@ -6191,16 +6229,14 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes(
-                    "resample2d",
-                    serde_json::json!({
-                        "mode": mode,
-                        "axes": axes,
-                        "scales": scales,
-                        "sizes": options.sizes.clone(),
-                    }),
-                ),
-                label: Self::label_from_operator_options(&options.parent),
+                attributes: OperatorOptions::Resample2d(rustnn_options::MLResample2dOptions {
+                    mode: mode.to_owned(),
+                    scales,
+                    sizes: options.sizes.as_ref().cloned(),
+                    axes,
+                    ..Default::default()
+                }),
+                label: label_from_operator_options(&options.parent),
             });
         }
 
@@ -6335,8 +6371,9 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
 
         // Step 5.2: Let |operator| be an operator for the "transpose" operation, given |options|.
         // Step 5.3-5.5: Record operator input/output connections.
-        let attributes = serde_json::json!({
-            "permutation": permutation,
+        let attributes = OperatorOptions::Transpose(rustnn_options::MLTransposeOptions {
+            permutation,
+            ..Default::default()
         });
 
         let label = {
@@ -6354,7 +6391,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
                 input_operands: vec![input_id],
                 output_operand: Some(output_id),
                 output_operands: Vec::new(),
-                attributes: Self::operator_attributes("transpose", attributes),
+                attributes,
                 label,
             });
         }

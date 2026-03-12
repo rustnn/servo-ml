@@ -64,8 +64,12 @@ impl MLGraph {
         )
     }
 
-    pub(crate) fn context(&self) -> Dom<MLContext> {
-        self.context.clone()
+    /// Return a non-owning borrow of the associated context.
+    ///
+    /// See `MLGraphBuilder::context` for background on why this returns a
+    /// reference instead of `Dom<MLContext>`.
+    pub(crate) fn context(&self) -> &MLContext {
+        &*self.context
     }
 
     pub(crate) fn is_destroyed(&self) -> bool {

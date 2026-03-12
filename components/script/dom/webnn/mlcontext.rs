@@ -681,7 +681,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 2: Let |realm| be this's relevant realm (represented by `global`).
 
         // Step 3: If |tensor|.[[context]] is not |this|, return a rejected promise with a TypeError.
-        if tensor.context() != Dom::from_ref(self) {
+        if !std::ptr::eq(tensor.context(), self) {
             let p = Promise::new(global, can_gc);
             p.reject_error(
                 Error::Type(c"tensor is not owned by this context".to_owned()),
@@ -751,7 +751,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 2: Let |realm| be this's relevant realm (represented by `global`).
 
         // Step 3: If |tensor|.[[context]] is not |this|, then return a new promise in |realm| rejected with a TypeError.
-        if tensor.context() != Dom::from_ref(self) {
+        if !std::ptr::eq(tensor.context(), self) {
             let p = Promise::new(global, can_gc);
             p.reject_error(
                 Error::Type(c"tensor is not owned by this context".to_owned()),
@@ -944,7 +944,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         // Step 2: Let |realm| be this's relevant realm.
 
         // Step 3: If |tensor|.[[context]] is not |this|, then throw a TypeError.
-        if tensor.context() != Dom::from_ref(self) {
+        if !std::ptr::eq(tensor.context(), self) {
             return Err(Error::Type(
                 c"tensor is not owned by this context".to_owned(),
             ));
@@ -1231,7 +1231,9 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
         outputs: MLNamedTensors,
     ) -> Fallible<()> {
         // Step 1: If |graph|.[[context]] is not |this|, then throw a TypeError.
-        if graph.context() != Dom::from_ref(self) {
+        // `graph.context()` now returns a borrowed reference, so we can use
+        // `ptr::eq` rather than constructing a temporary `Dom`.
+        if !std::ptr::eq(graph.context(), self) {
             return Err(Error::Type(
                 c"graph does not belong to this context".to_owned(),
             ));
@@ -1269,7 +1271,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
 
         // Step 5: For each tensor of |allTensors|: validate ownership and state.
         for tensor in all_tensors.iter() {
-            if tensor.context() != Dom::from_ref(self) {
+            if !std::ptr::eq(tensor.context(), self) {
                 return Err(Error::Type(
                     c"tensor is not owned by this context".to_owned(),
                 ));

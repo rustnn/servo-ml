@@ -105,8 +105,9 @@ impl MLTensor {
 
     // Internal accessors for other components to use. DOM structs must not expose
     // fields publicly; use these instead to inspect/manipulate internal slots.
-    pub(crate) fn context(&self) -> Dom<MLContext> {
-        self.context.clone()
+    /// Borrow the context that owns this tensor.
+    pub(crate) fn context(&self) -> &MLContext {
+        &*self.context
     }
 
     pub(crate) fn data_type(&self) -> &str {
