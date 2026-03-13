@@ -51,13 +51,10 @@ pub(crate) struct MLGraphBuilder {
     /// Built state represented by `graph_info: Option<GraphInfo>` (None => built).
 
     /// <https://webmachinelearning.github.io/webnn/#computational-graph-input>
-    // NOTE: DOM-level storage for `inputs`, `constants`, and `operand_map` was removed.
     // All graph bookkeeping (backend operands, input/constant ids, constant bytes, etc.)
-    // now lives in `graph_info` (the rustnn `GraphInfo`). The builder still creates and
-    // returns `MLOperand` DOM objects to callers, but it no longer keeps separate DOM
-    // lists or a mapping from backend id -> DOM operand.
+    // lives in `graph_info` (the rustnn `GraphInfo`).
 
-    /// Implementation-defined graph representation (rustnn `GraphInfo`) used to build backend graphs.
+    /// <https://webmachinelearning.github.io/webnn/#computational-graph>
     #[no_trace]
     #[ignore_malloc_size_of = "rustnn::GraphInfo is external; skip malloc-size accounting"]
     graph_info: DomRefCell<Option<GraphInfo>>,
@@ -66,7 +63,7 @@ pub(crate) struct MLGraphBuilder {
     next_operand_id: Cell<u32>,
 }
 
-/// Helper: map WebNN data type strings to binding enum variants used by descriptors.
+/// Map WebNN data type strings to binding enum variants used by descriptors.
 fn data_type_enum_from_str(data_type: &str) -> MLOperandDataType {
     match data_type {
         "float32" => MLOperandDataType::Float32,
@@ -107,8 +104,6 @@ fn static_dimensions(dimensions: &[u32]) -> Vec<rustnn_options::MLDimension> {
 }
 
 fn label_from_operator_options(options: &MLOperatorOptions) -> Option<String> {
-    // Step 1: Read operator label.
-    // Step 2: Normalize empty labels to None.
     let label = options.label.clone();
     if label.is_empty() {
         None
@@ -171,16 +166,13 @@ impl MLGraphBuilder {
     /// This centralizes the `next_operand_id` increment + GraphInfo mutation logic
     /// so callers only need to construct a rustnn `Operand` and call this helper.
     fn push_operand_to_graph(&self, operand: Operand, add_to_inputs: bool) -> u32 {
-        // Step 1: Read the next backend operand id.
         let id = self.next_operand_id.get();
-        // Step 2: Append the operand to GraphInfo and optionally mark it as an input operand.
         if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
             gi.operands.push(operand);
             if add_to_inputs {
                 gi.input_operands.push(id);
             }
         }
-        // Step 3: Advance the id counter and return the id assigned to this operand.
         self.next_operand_id.set(id + 1);
         id
     }
@@ -194,7 +186,6 @@ impl MLGraphBuilder {
         kind: OperandKind,
         name: Option<String>,
     ) -> Operand {
-        // Step 1: Convert WebNN data type strings to rustnn graph data types.
         let rust_data_type = match data_type_str {
             "float32" => DataType::Float32,
             "float16" => DataType::Float16,
@@ -205,13 +196,11 @@ impl MLGraphBuilder {
             "int64" => DataType::Int64,
             _ => DataType::Float32,
         };
-        // Step 2: Construct the rustnn OperandDescriptor with converted shape dimensions.
         let desc = OperandDescriptor {
             data_type: rust_data_type,
             shape: rustnn::graph::to_dimension_vector(&shape),
             pending_permutation: Vec::new(),
         };
-        // Step 3: Return a rustnn Operand carrying descriptor, kind, and optional name.
         Operand {
             descriptor: desc,
             kind,
@@ -227,7 +216,6 @@ impl MLGraphBuilder {
         attributes: OperatorOptions,
         label: Option<String>,
     ) {
-        // Step 1: Append a unary Operation record into GraphInfo.operations.
         if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
             gi.operations.push(Operation {
                 op_type: op_name.to_string(),
@@ -248,7 +236,6 @@ impl MLGraphBuilder {
         attributes: OperatorOptions,
         label: Option<String>,
     ) {
-        // Step 1: Append an Operation record with a dynamic input list into GraphInfo.operations.
         if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
             gi.operations.push(Operation {
                 op_type: op_name.to_string(),
