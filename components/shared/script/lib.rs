@@ -379,7 +379,7 @@ pub struct InitialScriptState {
     /// A channel to the storage manager thread.
     pub storage_threads: StorageThreads,
     /// A channel to the WebNN manager (stub).
-    pub webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
+    pub webnn_sender: GenericSender<WebNNMsg>,
     /// A channel to the bluetooth thread.
     #[cfg(feature = "bluetooth")]
     pub bluetooth_sender: GenericSender<BluetoothRequest>,

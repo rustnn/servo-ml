@@ -5,12 +5,12 @@
 use std::collections::HashMap;
 use std::path::PathBuf;
 
-/// An MLContext identifier.  Defined in `base::id` alongside other
+/// An MLContext identifier.  Defined in `servo_base::id` alongside other
 /// pipeline-scoped ids; it uses the usual namespace machinery to stay unique
 /// across workers.
 /// All other ids useed in webnn are unique only in so far as they are used
 /// in a way that is nested to a context id.
-pub use base::id::MLContextId as ContextId;
+pub use servo_base::id::MLContextId as ContextId;
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize, PartialEq, Eq, Hash)]

@@ -466,7 +466,7 @@ pub struct WorkerGlobalScopeInit {
     /// Chan to a storage thread
     pub storage_threads: StorageThreads,
     /// Chan to the WebNN manager
-    pub webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
+    pub webnn_sender: GenericSender<WebNNMsg>,
     /// Chan to the memory profiler
     pub mem_profiler_chan: mem::ProfilerChan,
     /// Chan to the time profiler

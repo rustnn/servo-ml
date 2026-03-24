@@ -3726,7 +3726,7 @@ impl Window {
         image_cache: Arc<dyn ImageCache>,
         resource_threads: ResourceThreads,
         storage_threads: StorageThreads,
-        webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
+        webnn_sender: GenericSender<WebNNMsg>,
         #[cfg(feature = "bluetooth")] bluetooth_thread: GenericSender<BluetoothRequest>,
         mem_profiler_chan: MemProfilerChan,
         time_profiler_chan: TimeProfilerChan,

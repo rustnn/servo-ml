@@ -350,7 +350,7 @@ pub struct Constellation<STF, SWF> {
     pub(crate) private_storage_threads: StorageThreads,
 
     /// A channel for the constellation to send messages to the WebNN manager.
-    pub(crate) webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
+    pub(crate) webnn_sender: GenericSender<WebNNMsg>,
 
     /// The JoinHandle for the WebNN manager thread (if any).
     pub(crate) webnn_join_handle: Option<JoinHandle<()>>,
@@ -547,7 +547,7 @@ pub struct InitialConstellationState {
     pub private_storage_threads: StorageThreads,
 
     /// A channel to the WebNN manager (stub).
-    pub webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
+    pub webnn_sender: GenericSender<WebNNMsg>,
 
     /// Join handle for the WebNN manager thread (if available).
     pub webnn_join_handle: Option<JoinHandle<()>>,

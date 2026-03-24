@@ -291,7 +291,7 @@ pub struct ScriptThread {
 
     /// Channel to a WebNN manager (stub).
     #[no_trace]
-    webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
+    webnn_sender: generic_channel::GenericSender<WebNNMsg>,
 
     /// A queue of tasks to be executed in this script-thread.
     task_queue: TaskQueue<MainThreadScriptMsg>,

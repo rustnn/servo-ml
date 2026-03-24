@@ -63,7 +63,7 @@ use script_bindings::codegen::GenericBindings::WorkerNavigatorBinding::WorkerNav
 use script_bindings::interfaces::GlobalScopeHelpers;
 use script_bindings::settings_stack::run_a_script;
 use servo_base::generic_channel;
-use servo_base::generic_channel::{GenericCallback, GenericSend};
+use servo_base::generic_channel::{GenericCallback, GenericSend, GenericSender};
 use servo_base::id::{
     BlobId, BroadcastChannelRouterId, MessagePortId, MessagePortRouterId, PipelineId,
     ServiceWorkerId, ServiceWorkerRegistrationId, WebViewId,
@@ -294,7 +294,7 @@ pub(crate) struct GlobalScope {
 
     /// Channel to a WebNN manager.
     #[no_trace]
-    webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
+    webnn_sender: GenericSender<WebNNMsg>,
 
     /// The mechanism by which time-outs and intervals are scheduled.
     /// <https://html.spec.whatwg.org/multipage/#timers>
@@ -772,7 +772,7 @@ impl GlobalScope {
         script_to_embedder_chan: ScriptToEmbedderChan,
         resource_threads: ResourceThreads,
         storage_threads: StorageThreads,
-        webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
+        webnn_sender: GenericSender<WebNNMsg>,
         origin: MutableOrigin,
         creation_url: ServoUrl,
         top_level_creation_url: Option<ServoUrl>,
@@ -2859,7 +2859,7 @@ impl GlobalScope {
     }
 
     /// Channel to the WebNN manager.
-    pub(crate) fn webnn_sender(&self) -> &base::generic_channel::GenericSender<WebNNMsg> {
+    pub(crate) fn webnn_sender(&self) -> &GenericSender<WebNNMsg> {
         &self.webnn_sender
     }
 

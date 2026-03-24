@@ -9,7 +9,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 use std::thread::{self, JoinHandle};
 
-use base::generic_channel::{GenericReceiver, GenericSender, channel};
+use servo_base::generic_channel::{channel, GenericReceiver, GenericSender};
 use log::{debug, warn};
 use parking_lot::{Condvar, Mutex, RwLock};
 use profile_traits::generic_callback::GenericCallback;

@@ -1065,7 +1065,7 @@ fn create_constellation(
     async_runtime: Box<dyn net_traits::AsyncRuntime>,
     public_storage_threads: StorageThreads,
     private_storage_threads: StorageThreads,
-    webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
+    webnn_sender: GenericSender<WebNNMsg>,
     webnn_join_handle: Option<std::thread::JoinHandle<()>>,
 ) {
     // Global configuration options, parsed from the command line.

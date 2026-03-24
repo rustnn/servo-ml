@@ -10,7 +10,7 @@ name = "webnn"
 path = "src/lib.rs"
 
 [dependencies]
-base = { workspace = true }
+servo-base = { workspace = true }
 log = { workspace = true }
 parking_lot = { workspace = true }
 rayon = { workspace = true }

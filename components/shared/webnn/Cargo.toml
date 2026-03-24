@@ -11,7 +11,7 @@ path = "src/lib.rs"
 
 [dependencies]
 serde = { workspace = true }
-base = { workspace = true }
+servo-base = { workspace = true }
 malloc_size_of = { workspace = true }
 malloc_size_of_derive = { workspace = true }
 profile_traits = { workspace = true }

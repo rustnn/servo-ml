@@ -91,7 +91,7 @@ impl DebuggerGlobalScope {
         script_to_embedder_chan: ScriptToEmbedderChan,
         resource_threads: ResourceThreads,
         storage_threads: StorageThreads,
-        webnn_sender: base::generic_channel::GenericSender<WebNNMsg>,
+        webnn_sender: GenericSender<WebNNMsg>,
         #[cfg(feature = "webgpu")] gpu_id_hub: std::sync::Arc<IdentityHub>,
         cx: &mut JSContext,
     ) -> DomRoot<Self> {
