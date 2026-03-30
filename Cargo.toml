@@ -400,3 +400,5 @@ egui-winit = { git = "https://github.com/emilk/egui.git", rev = "5d8f393335e0517
 # [patch."https://github.com/servo/<repository>"]
 # <crate> = { path = "/path/to/local/checkout" }
 #
+
+taffy = { path = "scratchpad/taffy" }

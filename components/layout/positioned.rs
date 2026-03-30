@@ -460,8 +460,6 @@ impl HoistedAbsolutelyPositionedBox {
 
         let box_offset = style.box_offsets(containing_block.style.writing_mode);
 
-        // When the "static-position rect" doesn't come into play, we do not do any alignment
-        // in the inline axis.
         let inline_box_offsets = box_offset.inline_sides().percentages_relative_to(cbis);
         let inline_alignment = match inline_box_offsets.either_specified() {
             true => style.clone_justify_self().0,
@@ -484,8 +482,6 @@ impl HoistedAbsolutelyPositionedBox {
             is_table_or_replaced,
         };
 
-        // When the "static-position rect" doesn't come into play, we re-resolve "align-self"
-        // against this containing block.
         let block_box_offsets = box_offset.block_sides().percentages_relative_to(cbbs);
         let block_alignment = match block_box_offsets.either_specified() {
             true => style.clone_align_self().0,
