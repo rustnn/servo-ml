@@ -40,6 +40,7 @@ Principle: add lessons to the *lowest* README that makes sense. Do **not** dupli
 
 **Other General Guidelines:**
 - Always double-check your work with `./mach check`(without additional arguments). 
+- When validating with `./mach test-wpt --release`, build the binary first with `./mach build --release`; if you are already doing that build for test validation, do not run `./mach check` in the same flow.
 - Use `./mach` command, not cargo.
 - Do not do anything with Git.
 - Do not use fully-qualified imports.

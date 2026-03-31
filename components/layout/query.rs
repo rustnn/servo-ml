@@ -36,6 +36,7 @@ use style::stylist::RuleInclusion;
 use style::traversal::resolve_style;
 use style::values::computed::transform::Matrix3D;
 use style::values::computed::{Float, Size};
+use style::values::generics::grid::{LineNameList, LineNameListValue, RepeatCount};
 use style::values::generics::font::LineHeight;
 use style::values::generics::position::AspectRatio;
 use style::values::specified::GenericGridTemplateComponent;
@@ -438,6 +439,83 @@ fn resolve_grid_template(
     style: &ComputedValues,
     longhand_id: LonghandId,
 ) -> Option<String> {
+    fn serialize_line_name_set(line_names: &[style::values::CustomIdent]) -> String {
+        if line_names.is_empty() {
+            String::from("[]")
+        } else {
+            format!("[{}]", line_names.iter().map(ToCss::to_css_string).join(" "))
+        }
+    }
+
+    fn serialize_subgrid_track_list(line_names: &LineNameList<i32>, used_track_count: usize) -> String {
+        let line_slot_count = used_track_count.saturating_add(1);
+        let mut fixed_slot_count = 0usize;
+        let mut auto_repeat_pattern: Option<Vec<Box<[style::values::CustomIdent]>>> = None;
+
+        for value in line_names.line_names.iter() {
+            match value {
+                LineNameListValue::LineNames(_) => fixed_slot_count += 1,
+                LineNameListValue::Repeat(repeat) => match repeat.count {
+                    RepeatCount::Number(count) => {
+                        fixed_slot_count += (count as usize) * repeat.line_names.len();
+                    },
+                    RepeatCount::AutoFill | RepeatCount::AutoFit => {
+                        auto_repeat_pattern = Some(
+                            repeat
+                                .line_names
+                                .iter()
+                                .map(|names| names.iter().cloned().collect::<Vec<_>>().into_boxed_slice())
+                                .collect(),
+                        );
+                    },
+                },
+            }
+        }
+
+        let auto_repeat_count = auto_repeat_pattern
+            .as_ref()
+            .map(|pattern| {
+                if pattern.is_empty() {
+                    0
+                } else {
+                    line_slot_count.saturating_sub(fixed_slot_count) / pattern.len()
+                }
+            })
+            .unwrap_or(0);
+
+        let mut serialized_line_sets = Vec::with_capacity(line_slot_count);
+        for value in line_names.line_names.iter() {
+            match value {
+                LineNameListValue::LineNames(names) => {
+                    serialized_line_sets.push(serialize_line_name_set(names));
+                },
+                LineNameListValue::Repeat(repeat) => {
+                    let repeat_count = match repeat.count {
+                        RepeatCount::Number(count) => count as usize,
+                        RepeatCount::AutoFill | RepeatCount::AutoFit => auto_repeat_count,
+                    };
+
+                    for _ in 0..repeat_count {
+                        for names in repeat.line_names.iter() {
+                            serialized_line_sets.push(serialize_line_name_set(names));
+                        }
+                    }
+                },
+            }
+
+            if serialized_line_sets.len() >= line_slot_count {
+                break;
+            }
+        }
+
+        serialized_line_sets.truncate(line_slot_count);
+        while serialized_line_sets.len() < line_slot_count {
+            serialized_line_sets.push(String::from("[]"));
+        }
+
+        format!("subgrid {}", serialized_line_sets.join(" "))
+    }
+
     /// <https://drafts.csswg.org/css-grid/#resolved-track-list-standalone>
     fn serialize_standalone_non_subgrid_track_list(track_sizes: &[Au]) -> Option<String> {
         match track_sizes.is_empty() {
@@ -485,8 +563,10 @@ fn resolve_grid_template(
         // > serialized as the subgrid keyword followed by a list representing each of its lines as a
         // > line name set of all the line’s names explicitly defined on the subgrid (not including those
         // > adopted from the parent grid), without using the repeat() notation.
-        // TODO: implement subgrid
-        GenericGridTemplateComponent::Subgrid(_) => None,
+        GenericGridTemplateComponent::Subgrid(line_names) => Some(serialize_subgrid_track_list(
+            line_names,
+            track_info.sizes.len(),
+        )),
     }
 }
 

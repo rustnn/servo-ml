@@ -4,6 +4,7 @@
 
 use app_units::Au;
 use atomic_refcell::{AtomicRef, AtomicRefCell};
+use style::logical_geometry::WritingMode;
 use style::properties::ComputedValues;
 use style::values::computed::CSSPixelLength;
 use style::values::computed::length_percentage::CalcLengthPercentage;
@@ -46,6 +47,31 @@ fn resolve_content_size(constraint: AvailableSpace, content_sizes: ContentSizes)
     }
 }
 
+fn first_fragment_baseline(
+    fragments: &[Fragment],
+    writing_mode: WritingMode,
+    block_offset: Au,
+) -> Option<Au> {
+    fragments.iter().find_map(|fragment| match fragment {
+        Fragment::Text(text_fragment) => {
+            let text_fragment = text_fragment.borrow();
+            Some(block_offset + text_fragment.base.rect.origin.y + text_fragment.font_metrics.ascent)
+        },
+        Fragment::Box(box_fragment) | Fragment::Float(box_fragment) => {
+            let box_fragment = box_fragment.borrow();
+            let child_offset = block_offset + box_fragment.base.rect.origin.y;
+            box_fragment
+                .baselines(writing_mode)
+                .first
+                .map(|baseline| child_offset + baseline)
+                .or_else(|| first_fragment_baseline(&box_fragment.children, writing_mode, child_offset))
+        },
+        Fragment::Positioning(_) | Fragment::AbsoluteOrFixedPositioned(_) | Fragment::Image(_) | Fragment::IFrame(_) => {
+            None
+        },
+    })
+}
+
 #[inline(always)]
 fn with_independent_formatting_context<T>(
     item: &mut TaffyItemBoxInner,
@@ -67,6 +93,7 @@ struct TaffyContainerContext<'a> {
     positioning_context: &'a mut PositioningContext,
     content_box_size_override: &'a ContainingBlock<'a>,
     style: &'a ComputedValues,
+    current_subgrid_context: Option<&'a taffy::SubgridContext<Atom>>,
     specific_layout_info: Option<SpecificLayoutInfo>,
 
     /// Temporary location for children specific info, which will be moved into child fragments
@@ -137,6 +164,7 @@ impl taffy::LayoutPartialTree for TaffyContainerContext<'_> {
     ) -> taffy::LayoutOutput {
         let mut child = (*self.source_child_nodes[usize::from(node_id)]).borrow_mut();
         let child = &mut *child;
+        let child_subgrid_context = child.subgrid_context.clone();
 
         with_independent_formatting_context(
             &mut child.taffy_level_box,
@@ -180,8 +208,11 @@ impl taffy::LayoutPartialTree for TaffyContainerContext<'_> {
                     };
 
                     // TODO: pass min- and max- size
-                    let result = independent_context
-                        .inline_content_sizes(self.layout_context, &constraint_space);
+                    let result = independent_context.inline_content_sizes_with_subgrid_context(
+                        self.layout_context,
+                        &constraint_space,
+                        child_subgrid_context.as_ref(),
+                    );
                     let adjusted_available_space = inputs
                         .available_space
                         .width
@@ -216,13 +247,14 @@ impl taffy::LayoutPartialTree for TaffyContainerContext<'_> {
                 };
 
                 child.positioning_context = PositioningContext::default();
-                let layout = independent_context.layout(
+                let layout = independent_context.layout_with_subgrid_context(
                     self.layout_context,
                     &mut child.positioning_context,
                     &content_box_size_override,
                     containing_block,
                     preferred_aspect_ratio,
                     &lazy_block_size,
+                    child_subgrid_context.as_ref(),
                 );
 
                 child.child_fragments = layout.fragments;
@@ -282,6 +314,22 @@ impl taffy::LayoutGridContainer for TaffyContainerContext<'_> {
         TaffyStyloStyle::new(stylo_style, is_replaced)
     }
 
+    fn set_grid_child_subgrid_context(
+        &mut self,
+        child_node_id: taffy::NodeId,
+        context: Option<taffy::SubgridContext<Self::CustomIdent>>,
+    ) {
+        let id = usize::from(child_node_id);
+        (*self.source_child_nodes[id]).borrow_mut().subgrid_context = context;
+    }
+
+    fn get_grid_container_subgrid_context(
+        &self,
+        _node_id: taffy::NodeId,
+    ) -> Option<&taffy::SubgridContext<Self::CustomIdent>> {
+        self.current_subgrid_context
+    }
+
     fn set_detailed_grid_info(
         &mut self,
         _node_id: taffy::NodeId,
@@ -297,7 +345,22 @@ impl ComputeInlineContentSizes for TaffyContainer {
     fn compute_inline_content_sizes(
         &self,
         layout_context: &LayoutContext,
+        constraint_space: &ConstraintSpace,
+    ) -> InlineContentSizesResult {
+        self.compute_inline_content_sizes_with_subgrid_context(
+            layout_context,
+            constraint_space,
+            None,
+        )
+    }
+}
+
+impl TaffyContainer {
+    pub(crate) fn compute_inline_content_sizes_with_subgrid_context(
+        &self,
+        layout_context: &LayoutContext,
         _constraint_space: &ConstraintSpace,
+        subgrid_context: Option<&taffy::SubgridContext<Atom>>,
     ) -> InlineContentSizesResult {
         let style = &self.style;
 
@@ -330,6 +393,7 @@ impl ComputeInlineContentSizes for TaffyContainer {
             positioning_context: &mut PositioningContext::default(),
             content_box_size_override: containing_block,
             style,
+            current_subgrid_context: subgrid_context,
             source_child_nodes: &self.children,
             specific_layout_info: None,
             child_specific_layout_infos: vec![None; self.children.len()],
@@ -370,9 +434,7 @@ impl ComputeInlineContentSizes for TaffyContainer {
             depends_on_block_constraints: true,
         }
     }
-}
 
-impl TaffyContainer {
     /// <https://drafts.csswg.org/css-grid/#layout-algorithm>
     pub(crate) fn layout(
         &self,
@@ -381,11 +443,29 @@ impl TaffyContainer {
         content_box_size_override: &ContainingBlock,
         containing_block: &ContainingBlock,
     ) -> CacheableLayoutResult {
+        self.layout_with_subgrid_context(
+            layout_context,
+            positioning_context,
+            content_box_size_override,
+            containing_block,
+            None,
+        )
+    }
+
+    pub(crate) fn layout_with_subgrid_context(
+        &self,
+        layout_context: &LayoutContext,
+        positioning_context: &mut PositioningContext,
+        content_box_size_override: &ContainingBlock,
+        containing_block: &ContainingBlock,
+        subgrid_context: Option<&taffy::SubgridContext<Atom>>,
+    ) -> CacheableLayoutResult {
         let mut container_ctx = TaffyContainerContext {
             layout_context,
             positioning_context,
             content_box_size_override,
             style: content_box_size_override.style,
+            current_subgrid_context: subgrid_context,
             source_child_nodes: &self.children,
             specific_layout_info: None,
             child_specific_layout_infos: vec![None; self.children.len()],
@@ -574,11 +654,17 @@ impl TaffyContainer {
             })
             .collect();
 
+        let exported_first_baseline = first_fragment_baseline(&fragments, container_ctx.style.writing_mode, Au::zero())
+            .or_else(|| output.first_baselines.y.map(Au::from_f32_px));
+
         CacheableLayoutResult {
             fragments,
             content_block_size: Au::from_f32_px(output.size.height) - pbm.padding_border_sums.block,
             content_inline_size_for_table: None,
-            baselines: Baselines::default(),
+            baselines: Baselines {
+                first: exported_first_baseline,
+                last: None,
+            },
 
             // TODO: determine this accurately
             //

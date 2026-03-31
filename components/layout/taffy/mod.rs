@@ -9,6 +9,7 @@ use app_units::Au;
 use malloc_size_of_derive::MallocSizeOf;
 use script::layout_dom::ServoThreadSafeLayoutNode;
 use servo_arc::Arc;
+use style::Atom;
 use style::context::SharedStyleContext;
 use style::properties::ComputedValues;
 use stylo_taffy::TaffyStyloStyle;
@@ -85,6 +86,8 @@ pub(crate) struct TaffyItemBox {
     pub(crate) taffy_layout: taffy::Layout,
     pub(crate) child_fragments: Vec<Fragment>,
     pub(crate) positioning_context: PositioningContext,
+    #[ignore_malloc_size_of = "Subgrid context is transient layout state"]
+    pub(crate) subgrid_context: Option<taffy::SubgridContext<Atom>>,
     pub(crate) style: Arc<ComputedValues>,
     pub(crate) taffy_level_box: TaffyItemBoxInner,
 }
@@ -120,6 +123,7 @@ impl TaffyItemBox {
             taffy_layout: Default::default(),
             child_fragments: Vec::new(),
             positioning_context: PositioningContext::default(),
+            subgrid_context: None,
             style,
             taffy_level_box: inner,
         }

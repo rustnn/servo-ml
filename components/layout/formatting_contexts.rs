@@ -7,6 +7,7 @@ use layout_api::wrapper_traits::ThreadSafeLayoutNode;
 use malloc_size_of_derive::MallocSizeOf;
 use script::layout_dom::{ServoLayoutElement, ServoThreadSafeLayoutNode};
 use servo_arc::Arc;
+use style::Atom;
 use style::context::SharedStyleContext;
 use style::logical_geometry::Direction;
 use style::properties::ComputedValues;
@@ -249,6 +250,38 @@ impl IndependentFormattingContext {
         layout_context: &LayoutContext,
         constraint_space: &ConstraintSpace,
     ) -> InlineContentSizesResult {
+        self.inline_content_sizes_with_subgrid_context(layout_context, constraint_space, None)
+    }
+
+    pub(crate) fn inline_content_sizes_with_subgrid_context(
+        &self,
+        layout_context: &LayoutContext,
+        constraint_space: &ConstraintSpace,
+        subgrid_context: Option<&taffy::SubgridContext<Atom>>,
+    ) -> InlineContentSizesResult {
+        if subgrid_context.is_some() {
+            return match &self.contents {
+                IndependentFormattingContextContents::Replaced(inner, _) => {
+                    inner.compute_inline_content_sizes(layout_context, constraint_space)
+                },
+                IndependentFormattingContextContents::Flow(inner) => inner
+                    .contents
+                    .compute_inline_content_sizes(layout_context, constraint_space),
+                IndependentFormattingContextContents::Flex(inner) => {
+                    inner.compute_inline_content_sizes(layout_context, constraint_space)
+                },
+                IndependentFormattingContextContents::Grid(inner) => inner
+                    .compute_inline_content_sizes_with_subgrid_context(
+                        layout_context,
+                        constraint_space,
+                        subgrid_context,
+                    ),
+                IndependentFormattingContextContents::Table(inner) => {
+                    inner.compute_inline_content_sizes(layout_context, constraint_space)
+                },
+            };
+        }
+
         self.base
             .inline_content_sizes(layout_context, constraint_space, &self.contents)
     }
@@ -392,6 +425,7 @@ impl IndependentFormattingContext {
         containing_block: &ContainingBlock,
         preferred_aspect_ratio: Option<AspectRatio>,
         lazy_block_size: &LazySize,
+        subgrid_context: Option<&taffy::SubgridContext<Atom>>,
     ) -> CacheableLayoutResult {
         match &self.contents {
             IndependentFormattingContextContents::Replaced(replaced, widget) => {
@@ -428,11 +462,12 @@ impl IndependentFormattingContext {
                 containing_block_for_children,
                 lazy_block_size,
             ),
-            IndependentFormattingContextContents::Grid(fc) => fc.layout(
+            IndependentFormattingContextContents::Grid(fc) => fc.layout_with_subgrid_context(
                 layout_context,
                 positioning_context,
                 containing_block_for_children,
                 containing_block,
+                subgrid_context,
             ),
             IndependentFormattingContextContents::Table(table) => table.layout(
                 layout_context,
@@ -453,6 +488,39 @@ impl IndependentFormattingContext {
         preferred_aspect_ratio: Option<AspectRatio>,
         lazy_block_size: &LazySize,
     ) -> CacheableLayoutResult {
+        self.layout_with_subgrid_context(
+            layout_context,
+            positioning_context,
+            containing_block_for_children,
+            containing_block,
+            preferred_aspect_ratio,
+            lazy_block_size,
+            None,
+        )
+    }
+
+    pub(crate) fn layout_with_subgrid_context(
+        &self,
+        layout_context: &LayoutContext,
+        positioning_context: &mut PositioningContext,
+        containing_block_for_children: &ContainingBlock,
+        containing_block: &ContainingBlock,
+        preferred_aspect_ratio: Option<AspectRatio>,
+        lazy_block_size: &LazySize,
+        subgrid_context: Option<&taffy::SubgridContext<Atom>>,
+    ) -> CacheableLayoutResult {
+        if subgrid_context.is_some() {
+            return self.layout_without_caching(
+                layout_context,
+                positioning_context,
+                containing_block_for_children,
+                containing_block,
+                preferred_aspect_ratio,
+                lazy_block_size,
+                subgrid_context,
+            );
+        }
+
         if let Some(cache) = self.base.cached_layout_result.borrow().as_ref() {
             let cache = &**cache;
             if cache.containing_block_for_children_size.inline ==
@@ -480,6 +548,7 @@ impl IndependentFormattingContext {
             containing_block,
             preferred_aspect_ratio,
             lazy_block_size,
+            subgrid_context,
         );
 
         *self.base.cached_layout_result.borrow_mut() =

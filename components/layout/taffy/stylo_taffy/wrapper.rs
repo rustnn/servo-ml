@@ -7,7 +7,7 @@ use std::ops::Deref;
 use style::properties::ComputedValues;
 use style::values::CustomIdent;
 use style::values::computed::{BorderSideWidth, GridTemplateAreas, LengthPercentage};
-use style::values::generics::grid::{TrackListValue, TrackRepeat, TrackSize};
+use style::values::generics::grid::{LineNameList, LineNameListValue, RepeatCount, TrackListValue, TrackRepeat, TrackSize};
 use style::values::specified::BorderStyle;
 use style::values::specified::position::NamedArea;
 use style::{Atom, OwnedSlice};
@@ -175,27 +175,55 @@ type SliceMapIter<'a, Input, Output> =
 type SliceMapRefIter<'a, Input, Output> =
     core::iter::Map<core::slice::Iter<'a, Input>, for<'c> fn(&'c Input) -> &'c Output>;
 
-// Line name iterator type aliases
-type LineNameSetIter<'a> = SliceMapRefIter<'a, CustomIdent, Atom>;
-type LineNameIter<'a> = core::iter::Map<
-    core::slice::Iter<'a, OwnedSlice<CustomIdent>>,
-    fn(&OwnedSlice<CustomIdent>) -> LineNameSetIter<'_>,
->;
-
 #[derive(Clone)]
-pub struct StyloLineNameIter<'a>(LineNameIter<'a>);
+pub struct StyloLineNameIter<'a> {
+    names: Vec<&'a OwnedSlice<CustomIdent>>,
+    index: usize,
+}
 impl<'a> StyloLineNameIter<'a> {
     fn new(names: &'a OwnedSlice<OwnedSlice<CustomIdent>>) -> Self {
-        Self(names.iter().map(|names| names.iter().map(|ident| &ident.0)))
+        Self {
+            names: names.iter().collect(),
+            index: 0,
+        }
+    }
+
+    fn new_subgrid(names: &'a LineNameList<i32>) -> Self {
+        let mut expanded = Vec::with_capacity(names.expanded_line_names_length);
+
+        for value in names.line_names.iter() {
+            match value {
+                LineNameListValue::LineNames(line_names) => expanded.push(line_names),
+                LineNameListValue::Repeat(repeat) => match repeat.count {
+                    RepeatCount::Number(count) => {
+                        for _ in 0..count {
+                            expanded.extend(repeat.line_names.iter());
+                        }
+                    },
+                    RepeatCount::AutoFill | RepeatCount::AutoFit => {
+                        // The used expansion count for auto-fill on subgrid axes depends on the
+                        // subgrid span in the parent grid, which is resolved later in layout.
+                    },
+                },
+            }
+        }
+
+        Self {
+            names: expanded,
+            index: 0,
+        }
     }
 }
 impl<'a> Iterator for StyloLineNameIter<'a> {
     type Item = core::iter::Map<core::slice::Iter<'a, CustomIdent>, fn(&CustomIdent) -> &Atom>;
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next()
+        let names = *self.names.get(self.index)?;
+        self.index += 1;
+        Some(names.iter().map(|ident| &ident.0))
     }
     fn size_hint(&self) -> (usize, Option<usize>) {
-        self.0.size_hint()
+        let remaining = self.names.len().saturating_sub(self.index);
+        (remaining, Some(remaining))
     }
 }
 impl ExactSizeIterator for StyloLineNameIter<'_> {}
@@ -365,6 +393,32 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridContainerStyle for TaffyStylo
         }
     }
 
+    fn grid_axis_kind(&self, axis: taffy::AbsoluteAxis) -> taffy::GridAxisKind {
+        match axis {
+            taffy::AbsoluteAxis::Horizontal => match &self.style.get_position().grid_template_columns {
+                stylo::GenericGridTemplateComponent::Subgrid(_) => taffy::GridAxisKind::Subgrid,
+                _ => taffy::GridAxisKind::Standalone,
+            },
+            taffy::AbsoluteAxis::Vertical => match &self.style.get_position().grid_template_rows {
+                stylo::GenericGridTemplateComponent::Subgrid(_) => taffy::GridAxisKind::Subgrid,
+                _ => taffy::GridAxisKind::Standalone,
+            },
+        }
+    }
+
+    fn subgrid_line_names(&self, axis: taffy::AbsoluteAxis) -> Option<Self::TemplateLineNames<'_>> {
+        match axis {
+            taffy::AbsoluteAxis::Horizontal => match &self.style.get_position().grid_template_columns {
+                stylo::GenericGridTemplateComponent::Subgrid(list) => Some(StyloLineNameIter::new_subgrid(list)),
+                _ => None,
+            },
+            taffy::AbsoluteAxis::Vertical => match &self.style.get_position().grid_template_rows {
+                stylo::GenericGridTemplateComponent::Subgrid(list) => Some(StyloLineNameIter::new_subgrid(list)),
+                _ => None,
+            },
+        }
+    }
+
     #[inline]
     fn grid_auto_flow(&self) -> taffy::GridAutoFlow {
         convert::grid_auto_flow(self.style.get_position().grid_auto_flow)
@@ -427,5 +481,10 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridItemStyle for TaffyStyloStyle
     #[inline]
     fn justify_self(&self) -> Option<taffy::AlignSelf> {
         convert::item_alignment(self.style.get_position().justify_self.0)
+    }
+
+    #[inline]
+    fn subgrid_axis_kind(&self, axis: taffy::AbsoluteAxis) -> taffy::GridAxisKind {
+        <Self as taffy::GridContainerStyle>::grid_axis_kind(self, axis)
     }
 }
