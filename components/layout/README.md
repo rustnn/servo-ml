@@ -6,7 +6,8 @@ workspace-patched Taffy crate in `scratchpad/taffy`.
 ## CSS Grid Work
 
 - Treat the CSS Grid specification as the source of truth. The indexed spec is
-  available through `search-bs` as `css-grid`.
+  available through `search-bs` as `css-grid`, and the full spec is available at
+  `scratchpad/css-grid-spec.html`.
 - For explicit-grid and auto-repeat changes, consult CSS Grid section 7.1
   (The Explicit Grid), section 7.2 (Explicit Track Sizing), and section 7.2.3.2
   (Repeat-to-fill: `auto-fill` and `auto-fit` repetitions).
