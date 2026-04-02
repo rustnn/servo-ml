@@ -15,6 +15,14 @@ workspace-patched Taffy crate in `scratchpad/taffy`.
   `repeat(2, 10px) repeat(auto-fill, 20px)` contributes two explicit tracks
   before the auto-repeat clause is expanded.
 - check the plan in `scratchpad/taffy-grid-test-analysis.md`
+- Keep the current subgrid bring-up status in `scratchpad/taffy-subgrid-plan.md`.
+- For subgrid placement work, treat raw candidate spans and final clamped spans as
+  different concepts. Bounds checks need to happen on the raw candidate before the
+  placement is clamped back into the explicit subgrid span, otherwise auto-placement
+  can probe the same occupied area indefinitely.
+- When a CSS Grid failure is performance-sensitive, first determine whether the issue
+  is search-path behavior or final geometry. Placement loops and visual sizing
+  mismatches often need different debugging strategies.
 
 ## Validation
 
@@ -37,9 +45,18 @@ workspace-patched Taffy crate in `scratchpad/taffy`.
 - Prefer clean, rule-isolated subgrid tests over broad unexpected-result counts. Tests
   whose references depend only on features Servo already supports are better progress
   signals than mixed-feature reftests.
+- Raw `--log-raw` output is easier to reuse if it is written to a file and inspected
+  with `scratchpad/reftest_log_tool.py` rather than pasting it into the old XHTML
+  analyzer.
+- Use `python3 scratchpad/reftest_log_tool.py summary <log>` to list reftest failures
+  and `python3 scratchpad/reftest_log_tool.py extract <log> --output-dir <dir>` to
+  decode embedded screenshots and manifests for later inspection.
 - For visual CSS Grid mismatches, rendering a single test page directly through
   `target/release/servoshell --headless -o ... file:///...` is useful for checking the
   actual geometry before chasing reftest infrastructure details.
 - Avoid leaving screenshot or ad hoc WPT processes running while rerunning targeted
   tests. Stray background runs can keep the WPT ports bound and contaminate later test
   invocations.
+- When comparing reftest failures, use the smallest reproducible set first:
+  isolated single-test reruns, then small paired reruns for regression checking, and
+  only then broader directory coverage.
