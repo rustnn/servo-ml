@@ -8,6 +8,11 @@ workspace-patched Taffy crate in `scratchpad/taffy`.
 - Treat the CSS Grid specification as the source of truth. The indexed spec is
   available through `search-bs` as `css-grid`, and the full spec is available at
   `scratchpad/css-grid-spec.html`.
+- Keep the workspace `taffy` dependency patched to `scratchpad/taffy` when
+  working on Servo's Taffy adapter. The code under
+  `components/layout/taffy/stylo_taffy/` tracks the vendored crate API and can
+  fail to build against the published crates.io release when that patch is
+  missing.
 - For explicit-grid and auto-repeat changes, consult CSS Grid section 7.1
   (The Explicit Grid), section 7.2 (Explicit Track Sizing), and section 7.2.3.2
   (Repeat-to-fill: `auto-fill` and `auto-fit` repetitions).

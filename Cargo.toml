@@ -376,6 +376,8 @@ codegen-units = 1
 #
 # Or for CSP crate:
 # content-security-policy = { path = "../rust-content-security-policy" }
+
+taffy = { path = "scratchpad/taffy" }
 #
 # Pending egui bumping their accesskit version: https://github.com/emilk/egui/pull/7850
 # This is only used in servoshell.
