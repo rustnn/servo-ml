@@ -55,6 +55,14 @@ impl<T: Deref<Target = ComputedValues>> taffy::CoreStyle for TaffyStyloStyle<T> 
     }
 
     #[inline]
+    fn direction(&self) -> taffy::Direction {
+        match self.style.get_inherited_box().direction {
+            stylo::Direction::Ltr => taffy::Direction::Ltr,
+            stylo::Direction::Rtl => taffy::Direction::Rtl,
+        }
+    }
+
+    #[inline]
     fn overflow(&self) -> taffy::Point<taffy::Overflow> {
         let box_styles = self.style.get_box();
         taffy::Point {

@@ -142,13 +142,23 @@ impl taffy::LayoutPartialTree for TaffyContainerContext<'_> {
             &mut child.taffy_level_box,
             |independent_context| -> taffy::LayoutOutput {
                 // TODO: re-evaluate sizing constraint conversions in light of recent layout changes
-                let containing_block = &self.content_box_size_override;
+                let containing_block = ContainingBlock {
+                    size: ContainingBlockSize {
+                        inline: inputs.parent_size.width.map(Au::from_f32_px).unwrap_or_default(),
+                        block: inputs
+                            .parent_size
+                            .height
+                            .map(Au::from_f32_px)
+                            .map_or_else(SizeConstraint::default, SizeConstraint::Definite),
+                    },
+                    style: self.content_box_size_override.style,
+                };
                 let style = independent_context.style();
 
                 // Adjust known_dimensions from border box to content box
                 let pbm = independent_context
                     .layout_style()
-                    .padding_border_margin(containing_block);
+                    .padding_border_margin(&containing_block);
                 let pb_sum = pbm.padding_border_sums.map(|v| v.to_f32_px());
                 let margin_sum = pbm.margin.auto_is(Au::zero).sum().map(|v| v.to_f32_px());
                 let content_box_inset = pb_sum + margin_sum;
@@ -220,7 +230,7 @@ impl taffy::LayoutPartialTree for TaffyContainerContext<'_> {
                     self.layout_context,
                     &mut child.positioning_context,
                     &content_box_size_override,
-                    containing_block,
+                    &containing_block,
                     preferred_aspect_ratio,
                     &lazy_block_size,
                 );
