@@ -200,6 +200,9 @@ impl SpecificTaffyGridInfo {
     fn from_detailed_grid_layout(grid_info: taffy::DetailedGridInfo) -> Self {
         Self {
             rows: SpecificTaffyGridTrackInfo {
+                negative_implicit_tracks: grid_info.rows.negative_implicit_tracks,
+                explicit_tracks: grid_info.rows.explicit_tracks,
+                positive_implicit_tracks: grid_info.rows.positive_implicit_tracks,
                 sizes: grid_info
                     .rows
                     .sizes
@@ -208,6 +211,9 @@ impl SpecificTaffyGridInfo {
                     .collect(),
             },
             columns: SpecificTaffyGridTrackInfo {
+                negative_implicit_tracks: grid_info.columns.negative_implicit_tracks,
+                explicit_tracks: grid_info.columns.explicit_tracks,
+                positive_implicit_tracks: grid_info.columns.positive_implicit_tracks,
                 sizes: grid_info
                     .columns
                     .sizes
@@ -221,5 +227,8 @@ impl SpecificTaffyGridInfo {
 
 #[derive(Clone, Debug, MallocSizeOf)]
 pub(crate) struct SpecificTaffyGridTrackInfo {
+    pub negative_implicit_tracks: u16,
+    pub explicit_tracks: u16,
+    pub positive_implicit_tracks: u16,
     pub sizes: Box<[Au]>,
 }

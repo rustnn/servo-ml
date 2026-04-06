@@ -3,11 +3,16 @@
 This component owns Servo's layout integration, including CSS Grid through the
 workspace-patched Taffy crate in `scratchpad/taffy`.
 
+For all layout work, including edits in `scratchpad/taffy`, this README is the
+authoritative component guide after `AGENTS.md`.
+
 ## CSS Grid Work
 
-- Treat the CSS Grid specification as the source of truth. The indexed spec is
-  available through `search-bs` as `css-grid`, and the full spec is available at
+- Treat the CSS Grid specification as the source of truth. The full spec is available at
   `scratchpad/css-grid-spec.html`.
+- For standalone `grid-template-columns` / `grid-template-rows` resolved values, serialize the
+  used track sizes with the explicit line names authored in the track list, but do not inject
+  line names synthesized from named areas or later placement. Spec: https://drafts.csswg.org/css-grid/#resolved-track-list-standalone
 - For explicit-grid and auto-repeat changes, consult CSS Grid section 7.1
   (The Explicit Grid), section 7.2 (Explicit Track Sizing), and section 7.2.3.2
   (Repeat-to-fill: `auto-fill` and `auto-fit` repetitions).
@@ -61,3 +66,6 @@ workspace-patched Taffy crate in `scratchpad/taffy`.
 - When comparing reftest failures, use the smallest reproducible set first:
   isolated single-test reruns, then small paired reruns for regression checking, and
   only then broader directory coverage.
+- Your goal is to get as many unexpected PASS results(for tests that currently expect FAIL), with as little unexpected FAIL as possible.
+- At the end of each task, output a good commit message for the changes as part of your final response.
+- For reftest, you need to also pay attention to the reference test implementation. Usually, the test uses some "new" tech, but the tech used in the ref might also lack some implementation in servo/taffy, which should be taken into account. Ideally, only pay attention to tests where the tech used in the ref is well supported, or add support for it first.

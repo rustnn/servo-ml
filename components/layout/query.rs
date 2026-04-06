@@ -35,8 +35,8 @@ use style::stylesheets::{CssRuleType, Origin, UrlExtraData};
 use style::stylist::RuleInclusion;
 use style::traversal::resolve_style;
 use style::values::computed::transform::Matrix3D;
-use style::values::computed::{Float, Size};
-use style::values::generics::grid::{LineNameList, LineNameListValue, RepeatCount};
+use style::values::computed::{Float, Size, TrackList as ComputedTrackList};
+use style::values::generics::grid::{LineNameList, LineNameListValue, RepeatCount, TrackListValue};
 use style::values::generics::font::LineHeight;
 use style::values::generics::position::AspectRatio;
 use style::values::specified::GenericGridTemplateComponent;
@@ -439,12 +439,80 @@ fn resolve_grid_template(
     style: &ComputedValues,
     longhand_id: LonghandId,
 ) -> Option<String> {
-    fn serialize_line_name_set(line_names: &[style::values::CustomIdent]) -> String {
+    fn serialize_custom_ident_line_name_set(line_names: &[style::values::CustomIdent]) -> String {
         if line_names.is_empty() {
             String::from("[]")
         } else {
             format!("[{}]", line_names.iter().map(ToCss::to_css_string).join(" "))
         }
+    }
+
+    fn serialize_string_line_name_set(line_names: &[String]) -> String {
+        format!("[{}]", line_names.iter().map(String::as_str).join(" "))
+    }
+
+    fn append_custom_ident_names(target: &mut Vec<String>, line_names: &[style::values::CustomIdent]) {
+        target.extend(line_names.iter().map(ToCss::to_css_string));
+    }
+
+    fn standalone_track_list_line_names(track_list: &ComputedTrackList, explicit_track_count: usize) -> Vec<Vec<String>> {
+        let fixed_track_count = track_list
+            .values
+            .iter()
+            .map(|value| match value {
+                TrackListValue::TrackSize(_) => 1,
+                TrackListValue::TrackRepeat(repeat) => match repeat.count {
+                    RepeatCount::Number(count) => (count as usize) * repeat.track_sizes.len(),
+                    RepeatCount::AutoFill | RepeatCount::AutoFit => 0,
+                },
+            })
+            .sum::<usize>();
+        let auto_repeat_track_count = explicit_track_count.saturating_sub(fixed_track_count);
+
+        let mut expanded_line_names = vec![Vec::new()];
+        append_custom_ident_names(&mut expanded_line_names[0], &track_list.line_names[0]);
+
+        for (value_index, value) in track_list.values.iter().enumerate() {
+            match value {
+                TrackListValue::TrackSize(_) => {
+                    expanded_line_names.push(Vec::new());
+                },
+                TrackListValue::TrackRepeat(repeat) => {
+                    let repeated_track_count = repeat.track_sizes.len();
+                    let repetition_count = match repeat.count {
+                        RepeatCount::Number(count) => count as usize,
+                        RepeatCount::AutoFill | RepeatCount::AutoFit => {
+                            if repeated_track_count == 0 {
+                                0
+                            } else {
+                                auto_repeat_track_count / repeated_track_count
+                            }
+                        },
+                    };
+
+                    for _ in 0..repetition_count {
+                        append_custom_ident_names(&mut expanded_line_names.last_mut().unwrap(), &repeat.line_names[0]);
+
+                        for line_names in repeat.line_names.iter().skip(1) {
+                            expanded_line_names.push(Vec::new());
+                            append_custom_ident_names(
+                                &mut expanded_line_names.last_mut().unwrap(),
+                                line_names,
+                            );
+                        }
+                    }
+                },
+            }
+
+            append_custom_ident_names(&mut expanded_line_names.last_mut().unwrap(), &track_list.line_names[value_index + 1]);
+        }
+
+        expanded_line_names.truncate(explicit_track_count + 1);
+        while expanded_line_names.len() < explicit_track_count + 1 {
+            expanded_line_names.push(Vec::new());
+        }
+
+        expanded_line_names
     }
 
     fn serialize_subgrid_track_list(line_names: &LineNameList<i32>, used_track_count: usize) -> String {
@@ -487,7 +555,7 @@ fn resolve_grid_template(
         for value in line_names.line_names.iter() {
             match value {
                 LineNameListValue::LineNames(names) => {
-                    serialized_line_sets.push(serialize_line_name_set(names));
+                    serialized_line_sets.push(serialize_custom_ident_line_name_set(names));
                 },
                 LineNameListValue::Repeat(repeat) => {
                     let repeat_count = match repeat.count {
@@ -497,7 +565,7 @@ fn resolve_grid_template(
 
                     for _ in 0..repeat_count {
                         for names in repeat.line_names.iter() {
-                            serialized_line_sets.push(serialize_line_name_set(names));
+                            serialized_line_sets.push(serialize_custom_ident_line_name_set(names));
                         }
                     }
                 },
@@ -517,8 +585,18 @@ fn resolve_grid_template(
     }
 
     /// <https://drafts.csswg.org/css-grid/#resolved-track-list-standalone>
-    fn serialize_standalone_non_subgrid_track_list(track_sizes: &[Au]) -> Option<String> {
-        match track_sizes.is_empty() {
+    fn serialize_standalone_non_subgrid_track_list(
+        track_info: &SpecificTaffyGridInfo,
+        axis: LonghandId,
+        track_list: Option<&ComputedTrackList>,
+    ) -> Option<String> {
+        let track_info = match axis {
+            LonghandId::GridTemplateRows => &track_info.rows,
+            LonghandId::GridTemplateColumns => &track_info.columns,
+            _ => return None,
+        };
+
+        match track_info.sizes.is_empty() {
             // Standalone non subgrid grids with empty track lists should compute to `none`.
             // As of current standard, this behaviour should only invoked by `none` computed value,
             // therefore we can fallback into computed value resolving.
@@ -528,13 +606,32 @@ fn resolve_grid_template(
             //     without using the repeat() notation.
             // > - Every track size given as a length in pixels, regardless of sizing function.
             // > - Adjacent line names collapsed into a single bracketed set.
-            // TODO: implement line names
-            false => Some(
-                track_sizes
-                    .iter()
-                    .map(|size| size.to_css_string())
-                    .join(" "),
-            ),
+            false => {
+                let explicit_line_names = track_list
+                    .map(|track_list| standalone_track_list_line_names(track_list, track_info.explicit_tracks as usize))
+                    .unwrap_or_else(|| vec![Vec::new(); track_info.explicit_tracks as usize + 1]);
+                let explicit_start = track_info.negative_implicit_tracks as usize;
+                let explicit_end = explicit_start + track_info.explicit_tracks as usize;
+                let total_line_count = track_info.sizes.len() + 1;
+                let mut serialized = Vec::with_capacity(total_line_count.saturating_mul(2));
+
+                for line_index in 0..total_line_count {
+                    if (explicit_start..=explicit_end).contains(&line_index) {
+                        let explicit_line_index = line_index - explicit_start;
+                        if let Some(line_names) = explicit_line_names.get(explicit_line_index) {
+                            if !line_names.is_empty() {
+                                serialized.push(serialize_string_line_name_set(line_names));
+                            }
+                        }
+                    }
+
+                    if let Some(track_size) = track_info.sizes.get(line_index) {
+                        serialized.push(track_size.to_css_string());
+                    }
+                }
+
+                Some(serialized.join(" "))
+            },
         }
     }
 
@@ -551,10 +648,11 @@ fn resolve_grid_template(
         // <https://drafts.csswg.org/css-grid/#resolved-track-list-standalone>
         // > When an element generates a grid container box, the resolved value of its grid-template-rows or
         // > grid-template-columns property in a standalone axis is the used value, serialized with:
-        GenericGridTemplateComponent::None |
-        GenericGridTemplateComponent::TrackList(_) |
-        GenericGridTemplateComponent::Masonry => {
-            serialize_standalone_non_subgrid_track_list(&track_info.sizes)
+        GenericGridTemplateComponent::None | GenericGridTemplateComponent::Masonry => {
+            serialize_standalone_non_subgrid_track_list(grid_info, longhand_id, None)
+        },
+        GenericGridTemplateComponent::TrackList(track_list) => {
+            serialize_standalone_non_subgrid_track_list(grid_info, longhand_id, Some(&**track_list))
         },
 
         // <https://drafts.csswg.org/css-grid/#resolved-track-list-subgrid>

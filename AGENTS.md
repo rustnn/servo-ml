@@ -13,6 +13,7 @@ conventions and deeper guidance.
 - `AGENTS.md` — top-level agent orientation and cross-cutting rules (this file).
 - `components/<component>/README.md` — component-level guidance and the consolidation point for component-wide lessons (for example `components/script/README.md`).
 - `components/<component>/<subdir>/README.md` — subsystem-level guidance.
+- For layout work, including changes under `scratchpad/taffy`, treat `components/layout/README.md` as the authoritative component guide after this file.
 
 **Agent pre-task checklist (MANDATORY)**
 - Step A: Read and add to your working context the README chain *for the task* in this order: `AGENTS.md` → `components/<component>/README.md` → `components/<component>/<subdir>/README.md` .
