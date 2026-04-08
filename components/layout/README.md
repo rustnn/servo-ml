@@ -22,6 +22,9 @@ authoritative component guide after `AGENTS.md`.
   before the auto-repeat clause is expanded.
 - check the plan in `scratchpad/taffy-grid-test-analysis.md`
 - Keep the current subgrid bring-up status in `scratchpad/taffy-subgrid-plan.md`.
+- For row-spanning row-subgrid sizing work, including `grid-row: span N` on the
+  subgrid item and descendant `grid-row-start` placement, keep the current spec
+  mapping and design notes in `scratchpad/taffy-subgrid-plan.md`.
 - For subgrid placement work, treat raw candidate spans and final clamped spans as
   different concepts. Bounds checks need to happen on the raw candidate before the
   placement is clamped back into the explicit subgrid span, otherwise auto-placement
@@ -60,6 +63,11 @@ authoritative component guide after `AGENTS.md`.
 - For visual CSS Grid mismatches, rendering a single test page directly through
   `target/release/servoshell --headless -o ... file:///...` is useful for checking the
   actual geometry before chasing reftest infrastructure details.
+- `./mach run` forwards trailing arguments through to Servo, so the same one-shot
+  workflow also works as `./mach run --release -- --headless -o <output.png> file:///...`.
+  Without `-o` / `--output`, the direct browser process keeps running after load.
+- For focused WPT reruns, prefer `./mach test-wpt --release --processes=1 --log-raw=<file> ...`
+  so the run stays isolated and the raw structured log is preserved for later inspection.
 - Avoid leaving screenshot or ad hoc WPT processes running while rerunning targeted
   tests. Stray background runs can keep the WPT ports bound and contaminate later test
   invocations.

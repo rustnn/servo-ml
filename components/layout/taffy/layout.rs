@@ -4,6 +4,7 @@
 
 use app_units::Au;
 use atomic_refcell::{AtomicRef, AtomicRefCell};
+use servo_arc::Arc;
 use style::logical_geometry::WritingMode;
 use style::properties::ComputedValues;
 use style::values::computed::CSSPixelLength;
@@ -85,10 +86,31 @@ fn with_independent_formatting_context<T>(
     }
 }
 
+fn grid_container_children(item_box: &ArcRefCell<TaffyItemBox>) -> Option<Vec<ArcRefCell<TaffyItemBox>>> {
+    let item = item_box.borrow();
+    match &item.taffy_level_box {
+        TaffyItemBoxInner::InFlowBox(context) => {
+            context.as_taffy_container().map(|container| container.children.clone())
+        },
+        TaffyItemBoxInner::OutOfFlowAbsolutelyPositionedBox(abspos_box) => {
+            let abspos_box = abspos_box.borrow();
+            abspos_box
+                .context
+                .as_taffy_container()
+                .map(|container| container.children.clone())
+        },
+    }
+}
+
 /// Layout parameters and intermediate results about a taffy container,
 /// grouped to avoid passing around many parameters
 struct TaffyContainerContext<'a> {
     source_child_nodes: &'a [ArcRefCell<TaffyItemBox>],
+    root_child_ids: Vec<taffy::NodeId>,
+    direct_child_children: Vec<Vec<taffy::NodeId>>,
+    direct_child_styles: Vec<Arc<ComputedValues>>,
+    direct_child_subgrid_contexts: Vec<Option<taffy::SubgridContext<Atom>>>,
+    descendant_nodes: Vec<DescendantNode>,
     layout_context: &'a LayoutContext<'a>,
     positioning_context: &'a mut PositioningContext,
     content_box_size_override: &'a ContainingBlock<'a>,
@@ -100,61 +122,378 @@ struct TaffyContainerContext<'a> {
     child_specific_layout_infos: Vec<Option<SpecificLayoutInfo>>,
 }
 
-struct ChildIter(std::ops::Range<usize>);
-impl Iterator for ChildIter {
+struct DescendantNode {
+    item_box: ArcRefCell<TaffyItemBox>,
+    style: Arc<ComputedValues>,
+    parent_container_style: Arc<ComputedValues>,
+    child_ids: Vec<taffy::NodeId>,
+    subgrid_context: Option<taffy::SubgridContext<Atom>>,
+}
+
+struct ChildIter<'a>(std::iter::Cloned<std::slice::Iter<'a, taffy::NodeId>>);
+impl Iterator for ChildIter<'_> {
     type Item = taffy::NodeId;
     fn next(&mut self) -> Option<Self::Item> {
-        self.0.next().map(taffy::NodeId::from)
+        self.0.next()
     }
 }
 
-impl taffy::TraversePartialTree for TaffyContainerContext<'_> {
-    type ChildIter<'a>
-        = ChildIter
+impl<'a> TaffyContainerContext<'a> {
+    fn new(
+        source_child_nodes: &'a [ArcRefCell<TaffyItemBox>],
+        layout_context: &'a LayoutContext<'a>,
+        positioning_context: &'a mut PositioningContext,
+        content_box_size_override: &'a ContainingBlock<'a>,
+        style: &'a ComputedValues,
+        current_subgrid_context: Option<&'a taffy::SubgridContext<Atom>>,
+    ) -> Self {
+        let mut direct_child_styles = Vec::with_capacity(source_child_nodes.len());
+        let mut direct_child_subgrid_contexts = Vec::with_capacity(source_child_nodes.len());
+        for child in source_child_nodes {
+            let child = child.borrow();
+            direct_child_styles.push(child.style.clone());
+            direct_child_subgrid_contexts.push(child.subgrid_context.clone());
+        }
+
+        let mut context = Self {
+            source_child_nodes,
+            root_child_ids: (0..source_child_nodes.len()).map(taffy::NodeId::from).collect(),
+            direct_child_children: vec![Vec::new(); source_child_nodes.len()],
+            direct_child_styles,
+            direct_child_subgrid_contexts,
+            descendant_nodes: Vec::new(),
+            layout_context,
+            positioning_context,
+            content_box_size_override,
+            style,
+            current_subgrid_context,
+            specific_layout_info: None,
+            child_specific_layout_infos: vec![None; source_child_nodes.len()],
+        };
+
+        for (index, child) in source_child_nodes.iter().enumerate() {
+            context.direct_child_children[index] = context.register_grid_descendants(child);
+        }
+
+        context
+    }
+
+    fn register_grid_descendants(&mut self, container_node: &ArcRefCell<TaffyItemBox>) -> Vec<taffy::NodeId> {
+        let container_style = container_node.borrow().style.clone();
+        grid_container_children(container_node)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|child| self.register_descendant_node(child, container_style.clone()))
+            .collect()
+    }
+
+    fn register_descendant_node(
+        &mut self,
+        item_box: ArcRefCell<TaffyItemBox>,
+        parent_container_style: Arc<ComputedValues>,
+    ) -> taffy::NodeId {
+        let node_id = taffy::NodeId::from(self.source_child_nodes.len() + self.descendant_nodes.len());
+        let (style, subgrid_context) = {
+            let item = item_box.borrow();
+            (item.style.clone(), item.subgrid_context.clone())
+        };
+        let child_ids = grid_container_children(&item_box)
+            .unwrap_or_default()
+            .into_iter()
+            .map(|child| self.register_descendant_node(child, style.clone()))
+            .collect();
+
+        self.descendant_nodes.push(DescendantNode {
+            item_box,
+            style,
+            parent_container_style,
+            child_ids,
+            subgrid_context,
+        });
+        node_id
+    }
+
+    fn direct_child_index(&self, node_id: taffy::NodeId) -> Option<usize> {
+        if node_id == DUMMY_NODE_ID {
+            return None;
+        }
+
+        let index = usize::from(node_id);
+        (index < self.source_child_nodes.len()).then_some(index)
+    }
+
+    fn descendant_index(&self, node_id: taffy::NodeId) -> Option<usize> {
+        if node_id == DUMMY_NODE_ID {
+            return None;
+        }
+
+        usize::from(node_id).checked_sub(self.source_child_nodes.len())
+    }
+
+    fn item_box(&self, node_id: taffy::NodeId) -> &ArcRefCell<TaffyItemBox> {
+        if let Some(index) = self.direct_child_index(node_id) {
+            &self.source_child_nodes[index]
+        } else {
+            &self.descendant_nodes[self.descendant_index(node_id).unwrap()].item_box
+        }
+    }
+
+    fn child_ids_for_node(&self, node_id: taffy::NodeId) -> &[taffy::NodeId] {
+        if node_id == DUMMY_NODE_ID {
+            &self.root_child_ids
+        } else if let Some(index) = self.direct_child_index(node_id) {
+            &self.direct_child_children[index]
+        } else {
+            &self.descendant_nodes[self.descendant_index(node_id).unwrap()].child_ids
+        }
+    }
+
+    fn node_style(&self, node_id: taffy::NodeId) -> &ComputedValues {
+        if node_id == DUMMY_NODE_ID {
+            self.style
+        } else if let Some(index) = self.direct_child_index(node_id) {
+            self.direct_child_styles[index].as_ref()
+        } else {
+            self.descendant_nodes[self.descendant_index(node_id).unwrap()].style.as_ref()
+        }
+    }
+
+    fn parent_container_style(&self, node_id: taffy::NodeId) -> &ComputedValues {
+        if self.direct_child_index(node_id).is_some() {
+            self.content_box_size_override.style
+        } else {
+            self.descendant_nodes[self.descendant_index(node_id).unwrap()]
+                .parent_container_style
+                .as_ref()
+        }
+    }
+
+    fn subgrid_context(&self, node_id: taffy::NodeId) -> Option<&taffy::SubgridContext<Atom>> {
+        if node_id == DUMMY_NODE_ID {
+            self.current_subgrid_context
+        } else if let Some(index) = self.direct_child_index(node_id) {
+            self.direct_child_subgrid_contexts[index].as_ref()
+        } else {
+            self.descendant_nodes[self.descendant_index(node_id).unwrap()]
+                .subgrid_context
+                .as_ref()
+        }
+    }
+
+    fn set_node_subgrid_context(
+        &mut self,
+        node_id: taffy::NodeId,
+        context: Option<taffy::SubgridContext<Atom>>,
+    ) {
+        self.item_box(node_id).borrow_mut().subgrid_context = context.clone();
+
+        if let Some(index) = self.direct_child_index(node_id) {
+            self.direct_child_subgrid_contexts[index] = context;
+        } else {
+            let descendant_index = self.descendant_index(node_id).unwrap();
+            self.descendant_nodes[descendant_index].subgrid_context = context;
+        }
+    }
+
+    fn set_node_layout(&self, node_id: taffy::NodeId, layout: taffy::Layout) {
+        self.item_box(node_id).borrow_mut().taffy_layout = layout;
+    }
+
+    fn set_direct_child_specific_layout_info(
+        &mut self,
+        node_id: taffy::NodeId,
+        specific_layout_info: Option<SpecificLayoutInfo>,
+    ) {
+        if let Some(index) = self.direct_child_index(node_id) {
+            self.child_specific_layout_infos[index] = specific_layout_info;
+        }
+    }
+}
+
+#[expect(unsafe_code)]
+fn resolve_calc_value_impl(val: *const (), basis: f32) -> f32 {
+    // SAFETY:
+    // - The calc `val` here is the same pointer we return to Taffy in `convert::length_percentage`
+    //   so it is safe to cast the type back to `*const CalcLengthPercentage`
+    // - Taffy guarantees that it never retains style values beyond the scope of it's style
+    //   computation methods, so we can be sure that the pointer we have passed it is still valid.
+    // - The reference we create here has a lifetime that does not escape this function, so it does
+    //   not matter if the pointer is later destroyed.
+    let calc = unsafe { &*(val as *const CalcLengthPercentage) };
+    calc.resolve(CSSPixelLength::new(basis)).px()
+}
+
+fn compute_taffy_child_layout(
+    context: &mut TaffyContainerContext<'_>,
+    node_id: taffy::NodeId,
+    inputs: taffy::LayoutInput,
+) -> taffy::LayoutOutput {
+    let child_subgrid_context = context.subgrid_context(node_id).cloned();
+    let containing_style = context.parent_container_style(node_id);
+    let layout_context = context.layout_context;
+    let mut direct_child_specific_layout_info = None;
+
+    let output = {
+        let mut child = context.item_box(node_id).borrow_mut();
+        let child = &mut *child;
+
+        with_independent_formatting_context(
+            &mut child.taffy_level_box,
+            |independent_context| -> taffy::LayoutOutput {
+            let containing_block = ContainingBlock {
+                size: ContainingBlockSize {
+                    inline: inputs.parent_size.width.map(Au::from_f32_px).unwrap_or_default(),
+                    block: inputs
+                        .parent_size
+                        .height
+                        .map(Au::from_f32_px)
+                        .map_or_else(SizeConstraint::default, SizeConstraint::Definite),
+                },
+                style: containing_style,
+            };
+            let style = independent_context.style();
+
+            let pbm = independent_context
+                .layout_style()
+                .padding_border_margin(&containing_block);
+            let pb_sum = pbm.padding_border_sums.map(|v| v.to_f32_px());
+            let margin_sum = pbm.margin.auto_is(Au::zero).sum().map(|v| v.to_f32_px());
+            let content_box_inset = pb_sum + margin_sum;
+            let content_box_known_dimensions = taffy::Size {
+                width: inputs
+                    .known_dimensions
+                    .width
+                    .map(|width| width - pb_sum.inline),
+                height: inputs
+                    .known_dimensions
+                    .height
+                    .map(|height| height - pb_sum.block),
+            };
+            let preferred_aspect_ratio =
+                independent_context.preferred_aspect_ratio(&pbm.padding_border_sums);
+
+            let tentative_block_size = content_box_known_dimensions
+                .height
+                .map(Au::from_f32_px)
+                .map_or_else(SizeConstraint::default, SizeConstraint::Definite);
+
+            let inline_size = content_box_known_dimensions.width.unwrap_or_else(|| {
+                let constraint_space = ConstraintSpace {
+                    block_size: tentative_block_size,
+                    style,
+                    preferred_aspect_ratio,
+                };
+
+                let result = independent_context.inline_content_sizes_with_subgrid_context(
+                    layout_context,
+                    &constraint_space,
+                    child_subgrid_context.as_ref(),
+                );
+                let adjusted_available_space = inputs
+                    .available_space
+                    .width
+                    .map_definite_value(|width| width - content_box_inset.inline);
+
+                resolve_content_size(adjusted_available_space, result.sizes)
+            });
+
+            if inputs.run_mode == RunMode::ComputeSize && inputs.axis == RequestedAxis::Horizontal {
+                return taffy::LayoutOutput::from_outer_size(taffy::Size {
+                    width: inline_size + pb_sum.inline,
+                    height: 0.0,
+                });
+            }
+
+            let content_box_size_override = ContainingBlock {
+                size: ContainingBlockSize {
+                    inline: Au::from_f32_px(inline_size),
+                    block: tentative_block_size,
+                },
+                style,
+            };
+
+            let lazy_block_size = match content_box_known_dimensions.height {
+                None => LazySize::intrinsic(),
+                Some(height) => Au::from_f32_px(height).into(),
+            };
+
+            child.positioning_context = PositioningContext::default();
+            let layout = independent_context.layout_with_subgrid_context(
+                layout_context,
+                &mut child.positioning_context,
+                &content_box_size_override,
+                &containing_block,
+                preferred_aspect_ratio,
+                &lazy_block_size,
+                child_subgrid_context.as_ref(),
+            );
+
+            child.child_fragments = layout.fragments;
+            direct_child_specific_layout_info = layout.specific_layout_info;
+
+            let block_size = lazy_block_size
+                .resolve(|| layout.content_block_size)
+                .to_f32_px();
+
+            let computed_size = taffy::Size {
+                width: inline_size + pb_sum.inline,
+                height: block_size + pb_sum.block,
+            };
+            let size = inputs.known_dimensions.unwrap_or(computed_size);
+
+            taffy::LayoutOutput {
+                size,
+                first_baselines: taffy::Point {
+                    x: None,
+                    y: layout.baselines.first.map(|au| au.to_f32_px()),
+                },
+                ..taffy::LayoutOutput::DEFAULT
+            }
+            },
+        )
+    };
+
+    context.set_direct_child_specific_layout_info(node_id, direct_child_specific_layout_info);
+    output
+}
+
+impl<'a> taffy::TraversePartialTree for TaffyContainerContext<'a> {
+    type ChildIter<'b>
+        = ChildIter<'b>
     where
-        Self: 'a;
+        Self: 'b;
 
-    fn child_ids(&self, _node_id: taffy::NodeId) -> Self::ChildIter<'_> {
-        ChildIter(0..self.source_child_nodes.len())
+    fn child_ids(&self, node_id: taffy::NodeId) -> Self::ChildIter<'_> {
+        ChildIter(self.child_ids_for_node(node_id).iter().cloned())
     }
 
-    fn child_count(&self, _node_id: taffy::NodeId) -> usize {
-        self.source_child_nodes.len()
+    fn child_count(&self, node_id: taffy::NodeId) -> usize {
+        self.child_ids_for_node(node_id).len()
     }
 
-    fn get_child_id(&self, _node_id: taffy::NodeId, index: usize) -> taffy::NodeId {
-        taffy::NodeId::from(index)
+    fn get_child_id(&self, node_id: taffy::NodeId, index: usize) -> taffy::NodeId {
+        self.child_ids_for_node(node_id)[index]
     }
 }
 
-impl taffy::LayoutPartialTree for TaffyContainerContext<'_> {
+impl<'a> taffy::LayoutPartialTree for TaffyContainerContext<'a> {
     type CustomIdent = Atom;
 
-    type CoreContainerStyle<'a>
-        = TaffyStyloStyle<&'a ComputedValues>
+    type CoreContainerStyle<'b>
+        = TaffyStyloStyle<&'b ComputedValues>
     where
-        Self: 'a;
+        Self: 'b;
 
-    fn get_core_container_style(&self, _node_id: taffy::NodeId) -> Self::CoreContainerStyle<'_> {
-        TaffyStyloStyle::new(self.style, false /* is_replaced */)
+    fn get_core_container_style(&self, node_id: taffy::NodeId) -> Self::CoreContainerStyle<'_> {
+        TaffyStyloStyle::new(self.node_style(node_id), false /* is_replaced */)
     }
 
     fn set_unrounded_layout(&mut self, node_id: taffy::NodeId, layout: &taffy::Layout) {
-        let id = usize::from(node_id);
-        (*self.source_child_nodes[id]).borrow_mut().taffy_layout = *layout;
+        self.set_node_layout(node_id, *layout);
     }
 
-    #[expect(unsafe_code)]
     fn resolve_calc_value(&self, val: *const (), basis: f32) -> f32 {
-        // SAFETY:
-        // - The calc `val` here is the same pointer we return to Taffy in `convert::length_percentage`
-        //   so it is safe to cast the type back to `*const CalcLengthPercentage`
-        // - Taffy guarantees that it never retains style values beyond the scope of it's style
-        //   computation methods, so we can be sure that the pointer we have passed it is still valid.
-        // - The reference we create here has a lifetime that does not escape this function, so it does
-        //   not matter if the pointer is later destroyed.
-        let calc = unsafe { &*(val as *const CalcLengthPercentage) };
-        calc.resolve(CSSPixelLength::new(basis)).px()
+        resolve_calc_value_impl(val, basis)
     }
 
     fn compute_child_layout(
@@ -162,162 +501,34 @@ impl taffy::LayoutPartialTree for TaffyContainerContext<'_> {
         node_id: taffy::NodeId,
         inputs: taffy::LayoutInput,
     ) -> taffy::LayoutOutput {
-        let mut child = (*self.source_child_nodes[usize::from(node_id)]).borrow_mut();
-        let child = &mut *child;
-        let child_subgrid_context = child.subgrid_context.clone();
-
-        with_independent_formatting_context(
-            &mut child.taffy_level_box,
-            |independent_context| -> taffy::LayoutOutput {
-                // TODO: re-evaluate sizing constraint conversions in light of recent layout changes
-                let containing_block = ContainingBlock {
-                    size: ContainingBlockSize {
-                        inline: inputs.parent_size.width.map(Au::from_f32_px).unwrap_or_default(),
-                        block: inputs
-                            .parent_size
-                            .height
-                            .map(Au::from_f32_px)
-                            .map_or_else(SizeConstraint::default, SizeConstraint::Definite),
-                    },
-                    style: self.content_box_size_override.style,
-                };
-                let style = independent_context.style();
-
-                // Adjust known_dimensions from border box to content box
-                let pbm = independent_context
-                    .layout_style()
-                    .padding_border_margin(&containing_block);
-                let pb_sum = pbm.padding_border_sums.map(|v| v.to_f32_px());
-                let margin_sum = pbm.margin.auto_is(Au::zero).sum().map(|v| v.to_f32_px());
-                let content_box_inset = pb_sum + margin_sum;
-                let content_box_known_dimensions = taffy::Size {
-                    width: inputs
-                        .known_dimensions
-                        .width
-                        .map(|width| width - pb_sum.inline),
-                    height: inputs
-                        .known_dimensions
-                        .height
-                        .map(|height| height - pb_sum.block),
-                };
-                let preferred_aspect_ratio =
-                    independent_context.preferred_aspect_ratio(&pbm.padding_border_sums);
-
-                // TODO: pass min- and max- size
-                let tentative_block_size = content_box_known_dimensions
-                    .height
-                    .map(Au::from_f32_px)
-                    .map_or_else(SizeConstraint::default, SizeConstraint::Definite);
-
-                // Compute inline size
-                let inline_size = content_box_known_dimensions.width.unwrap_or_else(|| {
-                    let constraint_space = ConstraintSpace {
-                        block_size: tentative_block_size,
-                        style,
-                        preferred_aspect_ratio,
-                    };
-
-                    // TODO: pass min- and max- size
-                    let result = independent_context.inline_content_sizes_with_subgrid_context(
-                        self.layout_context,
-                        &constraint_space,
-                        child_subgrid_context.as_ref(),
-                    );
-                    let adjusted_available_space = inputs
-                        .available_space
-                        .width
-                        .map_definite_value(|width| width - content_box_inset.inline);
-
-                    resolve_content_size(adjusted_available_space, result.sizes)
-                });
-
-                // Return early if only inline content sizes are requested
-                if inputs.run_mode == RunMode::ComputeSize &&
-                    inputs.axis == RequestedAxis::Horizontal
-                {
-                    return taffy::LayoutOutput::from_outer_size(taffy::Size {
-                        width: inline_size + pb_sum.inline,
-                        // If RequestedAxis is Horizontal then height will be ignored.
-                        height: 0.0,
-                    });
-                }
-
-                let content_box_size_override = ContainingBlock {
-                    size: ContainingBlockSize {
-                        inline: Au::from_f32_px(inline_size),
-                        block: tentative_block_size,
-                    },
-                    style,
-                };
-
-                let lazy_block_size = match content_box_known_dimensions.height {
-                    // FIXME: use the correct min/max sizes.
-                    None => LazySize::intrinsic(),
-                    Some(height) => Au::from_f32_px(height).into(),
-                };
-
-                child.positioning_context = PositioningContext::default();
-                let layout = independent_context.layout_with_subgrid_context(
-                    self.layout_context,
-                    &mut child.positioning_context,
-                    &content_box_size_override,
-                    &containing_block,
-                    preferred_aspect_ratio,
-                    &lazy_block_size,
-                    child_subgrid_context.as_ref(),
-                );
-
-                child.child_fragments = layout.fragments;
-                self.child_specific_layout_infos[usize::from(node_id)] =
-                    layout.specific_layout_info;
-
-                let block_size = lazy_block_size
-                    .resolve(|| layout.content_block_size)
-                    .to_f32_px();
-
-                let computed_size = taffy::Size {
-                    width: inline_size + pb_sum.inline,
-                    height: block_size + pb_sum.block,
-                };
-                let size = inputs.known_dimensions.unwrap_or(computed_size);
-
-                taffy::LayoutOutput {
-                    size,
-                    first_baselines: taffy::Point {
-                        x: None,
-                        y: layout.baselines.first.map(|au| au.to_f32_px()),
-                    },
-                    ..taffy::LayoutOutput::DEFAULT
-                }
-            },
-        )
+        compute_taffy_child_layout(self, node_id, inputs)
     }
 }
 
-impl taffy::LayoutGridContainer for TaffyContainerContext<'_> {
-    type GridContainerStyle<'a>
-        = TaffyStyloStyle<&'a ComputedValues>
-    where
-        Self: 'a;
 
-    type GridItemStyle<'a>
-        = TaffyStyloStyle<AtomicRef<'a, ComputedValues>>
+impl<'a> taffy::LayoutGridContainer for TaffyContainerContext<'a> {
+    type GridContainerStyle<'b>
+        = TaffyStyloStyle<&'b ComputedValues>
     where
-        Self: 'a;
+        Self: 'b;
+
+    type GridItemStyle<'b>
+        = TaffyStyloStyle<AtomicRef<'b, ComputedValues>>
+    where
+        Self: 'b;
 
     fn get_grid_container_style(
         &self,
-        _node_id: taffy::prelude::NodeId,
+        node_id: taffy::prelude::NodeId,
     ) -> Self::GridContainerStyle<'_> {
-        TaffyStyloStyle::new(self.style, false /* is_replaced */)
+        TaffyStyloStyle::new(self.node_style(node_id), false /* is_replaced */)
     }
 
     fn get_grid_child_style(
         &self,
         child_node_id: taffy::prelude::NodeId,
     ) -> Self::GridItemStyle<'_> {
-        let id = usize::from(child_node_id);
-        let child = (*self.source_child_nodes[id]).borrow();
+        let child = self.item_box(child_node_id).borrow();
         // TODO: account for non-replaced elements that are "compressible replaced"
         let is_replaced = child.is_in_flow_replaced();
         let stylo_style = AtomicRef::map(child, |c| &*c.style);
@@ -329,15 +540,14 @@ impl taffy::LayoutGridContainer for TaffyContainerContext<'_> {
         child_node_id: taffy::NodeId,
         context: Option<taffy::SubgridContext<Self::CustomIdent>>,
     ) {
-        let id = usize::from(child_node_id);
-        (*self.source_child_nodes[id]).borrow_mut().subgrid_context = context;
+        self.set_node_subgrid_context(child_node_id, context);
     }
 
     fn get_grid_container_subgrid_context(
         &self,
-        _node_id: taffy::NodeId,
+        node_id: taffy::NodeId,
     ) -> Option<&taffy::SubgridContext<Self::CustomIdent>> {
-        self.current_subgrid_context
+        self.subgrid_context(node_id)
     }
 
     fn set_detailed_grid_info(
@@ -398,16 +608,15 @@ impl TaffyContainer {
             style,
         };
 
-        let mut grid_context = TaffyContainerContext {
+        let mut intrinsic_positioning_context = PositioningContext::default();
+        let mut grid_context = TaffyContainerContext::new(
+            &self.children,
             layout_context,
-            positioning_context: &mut PositioningContext::default(),
-            content_box_size_override: containing_block,
+            &mut intrinsic_positioning_context,
+            containing_block,
             style,
-            current_subgrid_context: subgrid_context,
-            source_child_nodes: &self.children,
-            specific_layout_info: None,
-            child_specific_layout_infos: vec![None; self.children.len()],
-        };
+            subgrid_context,
+        );
 
         let (max_content_output, min_content_output) = match style.clone_display().inside() {
             DisplayInside::Grid => {
@@ -470,16 +679,14 @@ impl TaffyContainer {
         containing_block: &ContainingBlock,
         subgrid_context: Option<&taffy::SubgridContext<Atom>>,
     ) -> CacheableLayoutResult {
-        let mut container_ctx = TaffyContainerContext {
+        let mut container_ctx = TaffyContainerContext::new(
+            &self.children,
             layout_context,
             positioning_context,
             content_box_size_override,
-            style: content_box_size_override.style,
-            current_subgrid_context: subgrid_context,
-            source_child_nodes: &self.children,
-            specific_layout_info: None,
-            child_specific_layout_infos: vec![None; self.children.len()],
-        };
+            content_box_size_override.style,
+            subgrid_context,
+        );
 
         let container_style = &content_box_size_override.style;
         let align_items = container_style.clone_align_items();

@@ -241,6 +241,14 @@ impl IndependentFormattingContext {
     }
 
     #[inline]
+    pub(crate) fn as_taffy_container(&self) -> Option<&TaffyContainer> {
+        match &self.contents {
+            IndependentFormattingContextContents::Grid(container) => Some(container),
+            _ => None,
+        }
+    }
+
+    #[inline]
     pub fn base_fragment_info(&self) -> BaseFragmentInfo {
         self.base.base_fragment_info
     }
