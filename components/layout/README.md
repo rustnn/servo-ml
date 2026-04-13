@@ -29,6 +29,10 @@ authoritative component guide after `AGENTS.md`.
   different concepts. Bounds checks need to happen on the raw candidate before the
   placement is clamped back into the explicit subgrid span, otherwise auto-placement
   can probe the same occupied area indefinitely.
+- When a subgrid overrides `row-gap` or `column-gap` in a subgridded axis, apply the
+  gutter delta during final descendant alignment as well as track sizing. Otherwise a
+  case like `gap: 0` still leaves the inherited parent gutter visibly open between
+  subgrid items. Spec: https://drafts.csswg.org/css-grid-2/#subgrid-margins
 - When a CSS Grid failure is performance-sensitive, first determine whether the issue
   is search-path behavior or final geometry. Placement loops and visual sizing
   mismatches often need different debugging strategies.
