@@ -27,9 +27,8 @@ pub fn dimension(val: &stylo::Size) -> taffy::Dimension {
         stylo::Size::LengthPercentage(val) => length_percentage(&val.0).into(),
         stylo::Size::Auto => taffy::Dimension::AUTO,
 
-        // TODO: implement other values in Taffy
-        stylo::Size::MaxContent => taffy::Dimension::AUTO,
-        stylo::Size::MinContent => taffy::Dimension::AUTO,
+        stylo::Size::MaxContent => taffy::Dimension::max_content(),
+        stylo::Size::MinContent => taffy::Dimension::min_content(),
         stylo::Size::FitContent => taffy::Dimension::AUTO,
         stylo::Size::FitContentFunction(_) => taffy::Dimension::AUTO,
         stylo::Size::Stretch | stylo::Size::WebkitFillAvailable => taffy::Dimension::AUTO,

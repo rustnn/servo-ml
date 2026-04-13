@@ -6,7 +6,7 @@ use std::ops::Deref;
 
 use style::properties::ComputedValues;
 use style::values::CustomIdent;
-use style::values::computed::{BorderSideWidth, GridTemplateAreas, LengthPercentage};
+use style::values::computed::{BorderSideWidth, Contain, GridTemplateAreas, LengthPercentage};
 use style::values::generics::grid::{LineNameList, LineNameListValue, RepeatCount, TrackListValue, TrackRepeat, TrackSize};
 use style::values::specified::BorderStyle;
 use style::values::specified::position::NamedArea;
@@ -28,6 +28,22 @@ impl<T: Deref<Target = ComputedValues>> TaffyStyloStyle<T> {
             style,
             is_compressible_replaced,
         }
+    }
+
+    fn subgrid_is_allowed(&self) -> bool {
+        let box_style = self.style.get_box();
+
+        if box_style.position.is_absolutely_positioned() {
+            return false;
+        }
+
+        if box_style.clone_container_type().is_size_container_type() {
+            return false;
+        }
+
+        !box_style
+            .clone_contain()
+            .intersects(Contain::LAYOUT | Contain::PAINT)
     }
 }
 
@@ -402,6 +418,10 @@ impl<T: Deref<Target = ComputedValues>> taffy::GridContainerStyle for TaffyStylo
     }
 
     fn grid_axis_kind(&self, axis: taffy::AbsoluteAxis) -> taffy::GridAxisKind {
+        if !self.subgrid_is_allowed() {
+            return taffy::GridAxisKind::Standalone;
+        }
+
         match axis {
             taffy::AbsoluteAxis::Horizontal => match &self.style.get_position().grid_template_columns {
                 stylo::GenericGridTemplateComponent::Subgrid(_) => taffy::GridAxisKind::Subgrid,
