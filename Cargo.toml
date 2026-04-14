@@ -397,6 +397,6 @@ egui-winit = { git = "https://github.com/emilk/egui.git", rev = "5d8f393335e0517
 #
 # Or for another Git dependency:
 #
-# [patch."https://github.com/servo/<repository>"]
-# <crate> = { path = "/path/to/local/checkout" }
+[patch."https://github.com/gterzian/rustnn"]
+rustnn = { path = "scratchpad/rustnn" }
 #

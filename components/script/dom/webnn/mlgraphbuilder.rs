@@ -9,8 +9,9 @@ use std::rc::Rc;
 use dom_struct::dom_struct;
 use half::f16;
 use js::rust::HandleObject;
-use rustnn::graph::{DataType, GraphInfo, Operand, OperandDescriptor, OperandKind, Operation};
+use rustnn::graph::{DataType, GraphInfo, Operand, OperandDescriptor, OperandKind};
 use rustnn::operator_options::{self as rustnn_options, OperatorOptions};
+use rustnn::operators::Operation;
 use script_bindings::cformat;
 use script_bindings::codegen::GenericUnionTypes::ArrayBufferViewOrArrayBuffer;
 use script_bindings::record::Record;
@@ -95,14 +96,6 @@ fn numeric_value_for_data_type(value: f64, data_type: &str) -> Value {
     }
 }
 
-fn static_dimensions(dimensions: &[u32]) -> Vec<rustnn_options::MLDimension> {
-    dimensions
-        .iter()
-        .copied()
-        .map(rustnn_options::MLDimension::Static)
-        .collect()
-}
-
 fn label_from_operator_options(options: &MLOperatorOptions) -> Option<String> {
     let label = options.label.clone();
     if label.is_empty() {
@@ -110,6 +103,20 @@ fn label_from_operator_options(options: &MLOperatorOptions) -> Option<String> {
     } else {
         Some(label.to_string())
     }
+}
+
+fn merge_label_into_attributes(mut attributes: Value, label: Option<String>) -> Value {
+    if let Some(label) = label.filter(|value| !value.is_empty()) {
+        if !attributes.is_object() {
+            attributes = Value::Object(Default::default());
+        }
+
+        if let Some(object) = attributes.as_object_mut() {
+            object.insert("label".to_owned(), Value::String(label));
+        }
+    }
+
+    attributes
 }
 
 impl MLGraphBuilder {
@@ -216,16 +223,7 @@ impl MLGraphBuilder {
         attributes: OperatorOptions,
         label: Option<String>,
     ) {
-        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            gi.operations.push(Operation {
-                op_type: op_name.to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes,
-                label,
-            });
-        }
+        self.push_operation(op_name, vec![input_id], vec![output_id], attributes, label);
     }
 
     fn push_binary_operation(
@@ -236,16 +234,58 @@ impl MLGraphBuilder {
         attributes: OperatorOptions,
         label: Option<String>,
     ) {
+        self.push_operation(op_name, input_ids, vec![output_id], attributes, label);
+    }
+
+    fn push_operation_from_value(
+        &self,
+        op_name: &str,
+        input_ids: Vec<u32>,
+        output_ids: Vec<u32>,
+        attributes: Value,
+    ) {
+        let Some(operation) = Operation::from_json_attributes(
+            op_name,
+            &input_ids,
+            &output_ids,
+            &attributes,
+        ) else {
+            debug_assert!(false, "failed to create rustnn operation for {op_name}");
+            return;
+        };
+
         if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            gi.operations.push(Operation {
-                op_type: op_name.to_string(),
-                input_operands: input_ids,
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes,
-                label,
-            });
+            gi.operations.push(operation);
         }
+    }
+
+    fn push_operation_with_attributes(
+        &self,
+        op_name: &str,
+        input_ids: Vec<u32>,
+        output_ids: Vec<u32>,
+        attributes: Value,
+        label: Option<String>,
+    ) {
+        let attributes = merge_label_into_attributes(attributes, label);
+        self.push_operation_from_value(op_name, input_ids, output_ids, attributes);
+    }
+
+    fn push_operation(
+        &self,
+        op_name: &str,
+        input_ids: Vec<u32>,
+        output_ids: Vec<u32>,
+        attributes: OperatorOptions,
+        label: Option<String>,
+    ) {
+        self.push_operation_with_attributes(
+            op_name,
+            input_ids,
+            output_ids,
+            attributes.to_value(),
+            label,
+        );
     }
 
     /// <https://webmachinelearning.github.io/webnn/#mlgraphbuilder-element-wise-logical-op>
@@ -575,6 +615,9 @@ impl MLGraphBuilder {
                 c"updates must have same dataType as input".to_owned(),
             ));
         }
+
+        let axis = u32::try_from(axis).map_err(|_| Error::Type(c"axis out of range".to_owned()))?;
+
         // Step 2: Validate scatter-elements shape constraints and infer output descriptor.
         rustnn::shape_inference::infer_scatter_elements_shape(
             input.descriptor_shape(),
@@ -610,7 +653,7 @@ impl MLGraphBuilder {
             vec![input_id, indices_id, updates_id],
             output_id,
             OperatorOptions::ScatterElements(rustnn_options::MLScatterOptions {
-                axis: axis as u32,
+                axis,
                 ..Default::default()
             }),
             label_from_operator_options(options),
@@ -992,22 +1035,9 @@ impl MLGraphBuilder {
             return Err(Error::Type(c"invalid operand".to_owned()));
         }
         // Step 2: Normalize transpose-convolution options and infer output shape.
-        use rustnn::shape_inference::{
-            Conv2dFilterLayout, Conv2dInputLayout, ConvTranspose2dOptions,
-        };
-        let input_layout = match options.inputLayout {
-            MLInputOperandLayout::Nchw => Conv2dInputLayout::Nchw,
-            MLInputOperandLayout::Nhwc => Conv2dInputLayout::Nhwc,
-        };
         let input_layout_str = match options.inputLayout {
             MLInputOperandLayout::Nchw => "nchw",
             MLInputOperandLayout::Nhwc => "nhwc",
-        };
-        let filter_layout = match options.filterLayout {
-            MLConvTranspose2dFilterOperandLayout::Iohw => Conv2dFilterLayout::Oihw,
-            MLConvTranspose2dFilterOperandLayout::Hwoi => Conv2dFilterLayout::Ihwo,
-            MLConvTranspose2dFilterOperandLayout::Ohwi => Conv2dFilterLayout::Ohwi,
-            MLConvTranspose2dFilterOperandLayout::Oihw => Conv2dFilterLayout::Hwio,
         };
         let filter_layout_str = match options.filterLayout {
             MLConvTranspose2dFilterOperandLayout::Iohw => "iohw",
@@ -1035,15 +1065,17 @@ impl MLGraphBuilder {
             .as_ref()
             .map(|v| v.clone())
             .unwrap_or_else(|| vec![0, 0]);
-        let conv_options = ConvTranspose2dOptions {
+        let conv_options = rustnn_options::MLConvTranspose2dOptions {
+            padding: pads.clone(),
             strides: strides.clone(),
             dilations: dilations.clone(),
-            pads: pads.clone(),
             output_padding: output_padding.clone(),
             output_sizes: options.outputSizes.as_ref().map(|v| v.clone()),
             groups: options.groups,
-            input_layout,
-            filter_layout,
+            input_layout: input_layout_str.to_owned(),
+            filter_layout: filter_layout_str.to_owned(),
+            bias: None,
+            ..Default::default()
         };
         let output_shape = rustnn::shape_inference::infer_conv_transpose2d_shape(
             input.descriptor_shape(),
@@ -1156,19 +1188,16 @@ impl MLGraphBuilder {
             ));
         }
         // Step 4: Record the split operation with all output ids and return DOM outputs.
-        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            gi.operations.push(Operation {
-                op_type: "split".to_string(),
-                input_operands: vec![input_id],
-                output_operand: None,
-                output_operands: output_ids,
-                attributes: OperatorOptions::Split(rustnn_options::MLSplitOptions {
-                    axis,
-                    ..Default::default()
-                }),
-                label: label_from_operator_options(options),
-            });
-        }
+        self.push_operation(
+            "split",
+            vec![input_id],
+            output_ids,
+            OperatorOptions::Split(rustnn_options::MLSplitOptions {
+                axis,
+                ..Default::default()
+            }),
+            label_from_operator_options(options),
+        );
         Ok(outputs)
     }
 
@@ -1267,14 +1296,6 @@ impl MLGraphBuilder {
         );
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
-        // Build operation attributes per the README/spec.
-        let attributes = OperatorOptions::ArgMinMax(rustnn_options::MLArgMinMaxOptions {
-            axis,
-            keep_dimensions: options.keepDimensions,
-            output_data_type: out_dtype_str.to_owned(),
-            ..Default::default()
-        });
-
         // Optional label (MLOperatorOptions.label). Use empty => none.
         let label = {
             let l = options.parent.label.clone();
@@ -1287,16 +1308,17 @@ impl MLGraphBuilder {
 
         // Push an Operation record into the builder's GraphInfo.operations so the
         // backend has the operator + connectivity metadata available at Build().
-        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            gi.operations.push(Operation {
-                op_type: _op_name.to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes,
-                label,
-            });
-        }
+        self.push_operation_with_attributes(
+            _op_name,
+            vec![input_id],
+            vec![output_id],
+            serde_json::json!({
+                "axis": axis,
+                "keepDimensions": options.keepDimensions,
+                "outputDataType": out_dtype_str,
+            }),
+            label,
+        );
 
         // Step 9.2: Let |output| be the result of creating an MLOperand given this and |desc|.
         // (Also return it per Step 10.)
@@ -1749,16 +1771,13 @@ impl MLGraphBuilder {
         // Step 5.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         // Step 5.4: Set |operator|'s [=operator/input=] to |input|.
         // Step 5.5: Set |operator|'s [=operator/output=] to |output|.
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: op_name.to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: empty_operator_attributes(),
-                label,
-            });
-        }
+        self.push_operation(
+            op_name,
+            vec![input_id],
+            vec![output_id],
+            empty_operator_attributes(),
+            label,
+        );
 
         // Step 5.1: Let |output| be the result of copying an MLOperand given |input|.
         let output = copy_an_mloperand(input, None, Some(output_id), can_gc);
@@ -1844,16 +1863,13 @@ impl MLGraphBuilder {
             .map(|s| if s.is_empty() { None } else { Some(s) })
             .flatten();
 
-        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            gi.operations.push(Operation {
-                op_type: op_name.to_string(),
-                input_operands: vec![a_id, b_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: empty_operator_attributes(),
-                label,
-            });
-        }
+        self.push_operation(
+            op_name,
+            vec![a_id, b_id],
+            vec![output_id],
+            empty_operator_attributes(),
+            label,
+        );
 
         let operand = create_an_mloperand(
             self,
@@ -2376,12 +2392,6 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             self.create_rust_operand(out_dtype_str, in_shape.clone(), OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
-        // Build operation attributes and optional label (recording operator metadata).
-        let attributes = OperatorOptions::Cast(rustnn_options::MLCastOptions {
-            to: out_dtype_str.to_owned(),
-            ..Default::default()
-        });
-
         let label = {
             let l = options.label.clone();
             if l.is_empty() {
@@ -2391,16 +2401,15 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             }
         };
 
-        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            gi.operations.push(Operation {
-                op_type: "cast".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes,
-                label,
-            });
-        }
+        self.push_operation_with_attributes(
+            "cast",
+            vec![input_id],
+            vec![output_id],
+            serde_json::json!({
+                "to": out_dtype_str,
+            }),
+            label,
+        );
 
         // Note: the spec's copy-an-mloperand algorithm copies input's descriptor,
         // but Cast changes output dataType. This binding applies an override descriptor
@@ -2486,16 +2495,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
 
         // Step 8.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
-        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            gi.operations.push(Operation {
-                op_type: "clamp".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes,
-                label,
-            });
-        }
+        self.push_operation(
+            "clamp",
+            vec![input_id],
+            vec![output_id],
+            attributes,
+            label,
+        );
 
         // Step 8.1: Let |output| be the result of copying an MLOperand given |input|.
         let operand = copy_an_mloperand(input, None, Some(output_id), can_gc);
@@ -2551,20 +2557,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
 
         // Step 4.3-4.5: Record operator->input/output graph connections.
-        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            let input_id = input
-                .id()
-                .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
-
-            gi.operations.push(Operation {
-                op_type: "triangular".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes,
-                label,
-            });
-        }
+        let input_id = input
+            .id()
+            .ok_or_else(|| Error::Type(c"input operand has no backend id".to_owned()))?;
+        self.push_operation(
+            "triangular",
+            vec![input_id],
+            vec![output_id],
+            attributes,
+            label,
+        );
 
         // Step 5: Return output.
         let operand = copy_an_mloperand(input, None, Some(output_id), can_gc);
@@ -2661,11 +2663,6 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             self.create_rust_operand(out_dtype_str, desc.shape.clone(), OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
-        // Build attributes and optional label
-        let attributes = OperatorOptions::Concat(rustnn_options::MLConcatOptions {
-            axis,
-            ..Default::default()
-        });
         let label = {
             let l = options.label.clone();
             if l.is_empty() {
@@ -2684,16 +2681,15 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             input_ids.push(id);
         }
 
-        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            gi.operations.push(Operation {
-                op_type: "concat".to_string(),
-                input_operands: input_ids,
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes,
-                label,
-            });
-        }
+        self.push_operation_with_attributes(
+            "concat",
+            input_ids,
+            vec![output_id],
+            serde_json::json!({
+                "axis": axis,
+            }),
+            label,
+        );
 
         let operand = create_an_mloperand(
             self,
@@ -2848,25 +2844,15 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         }
 
         // Build rustnn shape-inference options and infer output shape.
-        let rust_input_layout = if input_layout_str == "nchw" {
-            rustnn::shape_inference::Conv2dInputLayout::Nchw
-        } else {
-            rustnn::shape_inference::Conv2dInputLayout::Nhwc
-        };
-        let rust_filter_layout = match filter_layout_str {
-            "oihw" => rustnn::shape_inference::Conv2dFilterLayout::Oihw,
-            "hwio" => rustnn::shape_inference::Conv2dFilterLayout::Hwio,
-            "ohwi" => rustnn::shape_inference::Conv2dFilterLayout::Ohwi,
-            "ihwo" => rustnn::shape_inference::Conv2dFilterLayout::Ihwo,
-            _ => rustnn::shape_inference::Conv2dFilterLayout::Oihw,
-        };
-        let infer_options = rustnn::shape_inference::Conv2dOptions {
+        let infer_options = rustnn_options::MLConv2dOptions {
+            padding: pads.clone(),
             strides: strides.clone(),
             dilations: dilations.clone(),
-            pads: pads.clone(),
             groups,
-            input_layout: rust_input_layout,
-            filter_layout: rust_filter_layout,
+            input_layout: input_layout_str.to_owned(),
+            filter_layout: filter_layout_str.to_owned(),
+            bias: None,
+            ..Default::default()
         };
 
         let output_shape = match rustnn::shape_inference::infer_conv2d_shape(
@@ -2930,16 +2916,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             input_ids.push(b.id().unwrap());
         }
 
-        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            gi.operations.push(Operation {
-                op_type: "conv2d".to_string(),
-                input_operands: input_ids,
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes,
-                label,
-            });
-        }
+        self.push_operation("conv2d", input_ids, vec![output_id], attributes, label);
 
         let operand = create_an_mloperand(
             self,
@@ -3108,39 +3085,36 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
 
         // Push an Operation record into the builder's GraphInfo.operations so the backend has the operator metadata (implements Steps 12.1, 12.4-12.6, 12.7).
-        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            let mut input_operands = vec![
-                match input.id() {
-                    Some(i) => i,
-                    None => return Err(Error::Type(c"[batchNormalization_?_123]".to_owned())),
+        let mut input_operands = vec![
+            match input.id() {
+                Some(i) => i,
+                None => return Err(Error::Type(c"[batchNormalization_?_123]".to_owned())),
+            },
+            match mean.id() {
+                Some(i) => i,
+                None => return Err(Error::Type(c"[batchNormalization_?_123]".to_owned())),
+            },
+            match variance.id() {
+                Some(i) => i,
+                None => {
+                    return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
                 },
-                match mean.id() {
-                    Some(i) => i,
-                    None => return Err(Error::Type(c"[batchNormalization_?_123]".to_owned())),
-                },
-                match variance.id() {
-                    Some(i) => i,
-                    None => {
-                        return Err(Error::Type(c"[batchNormalization_?_123]".to_owned()));
-                    },
-                },
-            ];
-            if let Some(s) = options.scale.as_ref() {
-                input_operands.push(s.id().unwrap());
-            }
-            if let Some(b) = options.bias.as_ref() {
-                input_operands.push(b.id().unwrap());
-            }
-
-            gi.operations.push(Operation {
-                op_type: "batchNormalization".to_string(),
-                input_operands,
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes,
-                label,
-            });
+            },
+        ];
+        if let Some(s) = options.scale.as_ref() {
+            input_operands.push(s.id().unwrap());
         }
+        if let Some(b) = options.bias.as_ref() {
+            input_operands.push(b.id().unwrap());
+        }
+
+        self.push_operation(
+            "batchNormalization",
+            input_operands,
+            vec![output_id],
+            attributes,
+            label,
+        );
 
         // Step 13: Return output.
         let operand = create_an_mloperand(
@@ -3532,16 +3506,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 4.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         // Step 4.4: Set |operator|'s [=operator/input=] to |input|.
         // Step 4.5: Set |operator|'s [=operator/output=] to |output|.
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "tanh".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: empty_operator_attributes(),
-                label,
-            });
-        }
+        self.push_operation(
+            "tanh",
+            vec![input_id],
+            vec![output_id],
+            empty_operator_attributes(),
+            label,
+        );
 
         // Step 4.1: Let |output| be the result of copying an MLOperand given |input|.
         let output = copy_an_mloperand(input, None, Some(output_id), can_gc);
@@ -3713,16 +3684,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Step 5: *Make graph connections:* record the `matmul` operator, its inputs and the output operand in GraphInfo.operations.
-        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            gi.operations.push(Operation {
-                op_type: "matmul".to_string(),
-                input_operands: vec![a_id, b_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: empty_operator_attributes(),
-                label: None,
-            });
-        }
+        self.push_operation(
+            "matmul",
+            vec![a_id, b_id],
+            vec![output_id],
+            empty_operator_attributes(),
+            None,
+        );
 
         let operand = create_an_mloperand(
             self,
@@ -3881,16 +3849,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
 
         // 14.2–14.6: create operator record, set inputs and output (operator metadata persisted in GraphInfo.operations).
-        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            gi.operations.push(Operation {
-                op_type: "gemm".to_string(),
-                input_operands: input_ids,
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes,
-                label,
-            });
-        }
+        self.push_operation("gemm", input_ids, vec![output_id], attributes, label);
 
         // Step 15: Return |output| — create the DOM-level MLOperand for the output and return it.
         let operand = create_an_mloperand(
@@ -3991,12 +3950,6 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         );
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
-        // Step 8.2: Let |operator| be an operator for the "tile" operation, given |options|.
-        let attributes = OperatorOptions::Tile(rustnn_options::MLTileOptions {
-            repetitions,
-            ..Default::default()
-        });
-
         let label = {
             let l = options.label.clone();
             if l.is_empty() {
@@ -4007,16 +3960,15 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         };
 
         // Step 8.4: Set |operator|'s operator/output to |output|.
-        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            gi.operations.push(Operation {
-                op_type: "tile".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes,
-                label,
-            });
-        }
+        self.push_operation_with_attributes(
+            "tile",
+            vec![input_id],
+            vec![output_id],
+            serde_json::json!({
+                "repetitions": repetitions,
+            }),
+            label,
+        );
 
         // Step 8.1: Let |output| be the result of creating an MLOperand given |outputDescriptor|.
         let operand = copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc);
@@ -4069,19 +4021,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         // 1. Set |operator|'s [=operator/input=] to |input|.
         // 1. Set |operator|'s [=operator/output=] to |output|.
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "elu".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: OperatorOptions::Elu(rustnn_options::MLEluOptions {
-                    alpha,
-                    ..Default::default()
-                }),
-                label: label_from_operator_options(&options.parent),
-            });
-        }
+        self.push_operation(
+            "elu",
+            vec![input_id],
+            vec![output_id],
+            OperatorOptions::Elu(rustnn_options::MLEluOptions {
+                alpha,
+                ..Default::default()
+            }),
+            label_from_operator_options(&options.parent),
+        );
 
         // 1. Return |output|.
         Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
@@ -4128,16 +4077,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         // 1. Set |operator|'s [=operator/input=] to |input|.
         // 1. Set |operator|'s [=operator/output=] to |output|.
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "gelu".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: empty_operator_attributes(),
-                label: label_from_operator_options(options),
-            });
-        }
+        self.push_operation(
+            "gelu",
+            vec![input_id],
+            vec![output_id],
+            empty_operator_attributes(),
+            label_from_operator_options(options),
+        );
 
         // 1. Return |output|.
         Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
@@ -4190,20 +4136,17 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         // 1. Set |operator|'s [=operator/input=] to |input|.
         // 1. Set |operator|'s [=operator/output=] to |output|.
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "hardSigmoid".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: OperatorOptions::HardSigmoid(rustnn_options::MLHardSigmoidOptions {
-                    alpha,
-                    beta,
-                    ..Default::default()
-                }),
-                label: label_from_operator_options(&options.parent),
-            });
-        }
+        self.push_operation(
+            "hardSigmoid",
+            vec![input_id],
+            vec![output_id],
+            OperatorOptions::HardSigmoid(rustnn_options::MLHardSigmoidOptions {
+                alpha,
+                beta,
+                ..Default::default()
+            }),
+            label_from_operator_options(&options.parent),
+        );
 
         // 1. Return |output|.
         Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
@@ -4250,18 +4193,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         // 1. Set |operator|'s [=operator/input=] to |input|.
         // 1. Set |operator|'s [=operator/output=] to |output|.
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "hardSwish".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: OperatorOptions::HardSwish(
-                    rustnn_options::MLHardSwishOptions::default(),
-                ),
-                label: label_from_operator_options(&options.parent),
-            });
-        }
+        self.push_operation(
+            "hardSwish",
+            vec![input_id],
+            vec![output_id],
+            empty_operator_attributes(),
+            label_from_operator_options(&options.parent),
+        );
 
         // 1. Return |output|.
         Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
@@ -4311,19 +4249,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         // 1. Set |operator|'s [=operator/input=] to |input|.
         // 1. Set |operator|'s [=operator/output=] to |output|.
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "leakyRelu".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: OperatorOptions::LeakyRelu(rustnn_options::MLLeakyReluOptions {
-                    alpha,
-                    ..Default::default()
-                }),
-                label: label_from_operator_options(&options.parent),
-            });
-        }
+        self.push_operation(
+            "leakyRelu",
+            vec![input_id],
+            vec![output_id],
+            OperatorOptions::LeakyRelu(rustnn_options::MLLeakyReluOptions {
+                alpha,
+                ..Default::default()
+            }),
+            label_from_operator_options(&options.parent),
+        );
 
         // 1. Return |output|.
         Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
@@ -4376,20 +4311,17 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         // 1. Set |operator|'s [=operator/input=] to |input|.
         // 1. Set |operator|'s [=operator/output=] to |output|.
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "linear".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: OperatorOptions::Linear(rustnn_options::MLLinearOptions {
-                    alpha,
-                    beta,
-                    ..Default::default()
-                }),
-                label: label_from_operator_options(&options.parent),
-            });
-        }
+        self.push_operation(
+            "linear",
+            vec![input_id],
+            vec![output_id],
+            OperatorOptions::Linear(rustnn_options::MLLinearOptions {
+                alpha,
+                beta,
+                ..Default::default()
+            }),
+            label_from_operator_options(&options.parent),
+        );
 
         // 1. Return |output|.
         Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
@@ -4438,16 +4370,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 4.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         // Step 4.4: Set |operator|'s [=operator/input=] to |input|.
         // Step 4.5: Set |operator|'s [=operator/output=] to |output|.
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "sigmoid".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: empty_operator_attributes(),
-                label: label_from_operator_options(options),
-            });
-        }
+        self.push_operation(
+            "sigmoid",
+            vec![input_id],
+            vec![output_id],
+            empty_operator_attributes(),
+            label_from_operator_options(options),
+        );
 
         // Step 4.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
         let output = copy_an_mloperand(input, None, Some(output_id), can_gc);
@@ -4497,16 +4426,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 4.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         // Step 4.4: Set |operator|'s [=operator/input=] to |input|.
         // Step 4.5: Set |operator|'s [=operator/output=] to |output|.
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "softplus".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: empty_operator_attributes(),
-                label: label_from_operator_options(options),
-            });
-        }
+        self.push_operation(
+            "softplus",
+            vec![input_id],
+            vec![output_id],
+            empty_operator_attributes(),
+            label_from_operator_options(options),
+        );
 
         // Step 4.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
         let output = copy_an_mloperand(input, None, Some(output_id), can_gc);
@@ -4556,16 +4482,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 4.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         // Step 4.4: Set |operator|'s [=operator/input=] to |input|.
         // Step 4.5: Set |operator|'s [=operator/output=] to |output|.
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "softsign".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: empty_operator_attributes(),
-                label: label_from_operator_options(options),
-            });
-        }
+        self.push_operation(
+            "softsign",
+            vec![input_id],
+            vec![output_id],
+            empty_operator_attributes(),
+            label_from_operator_options(options),
+        );
 
         // Step 4.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
         let output = copy_an_mloperand(input, None, Some(output_id), can_gc);
@@ -4631,19 +4554,16 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // Step 7.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         // Step 7.4: Set |operator|'s [=operator/input=] to |input|.
         // Step 7.5: Set |operator|'s [=operator/output=] to |output|.
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "reverse".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: OperatorOptions::Reverse(rustnn_options::MLReverseOptions {
-                    axes: Some(axes),
-                    ..Default::default()
-                }),
-                label: label_from_operator_options(&options.parent),
-            });
-        }
+        self.push_operation(
+            "reverse",
+            vec![input_id],
+            vec![output_id],
+            OperatorOptions::Reverse(rustnn_options::MLReverseOptions {
+                axes: Some(axes),
+                ..Default::default()
+            }),
+            label_from_operator_options(&options.parent),
+        );
 
         // Step 7.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
         let output = copy_an_mloperand(input, None, Some(output_id), can_gc);
@@ -4865,13 +4785,12 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
         // Step 4: Make graph connections for the "reshape" operator.
-        self.push_unary_operation(
+        self.push_operation_with_attributes(
             "reshape",
-            input_id,
-            output_id,
-            OperatorOptions::Reshape(rustnn_options::MLReshapeOptions {
-                new_shape: static_dimensions(&new_shape),
-                ..Default::default()
+            vec![input_id],
+            vec![output_id],
+            serde_json::json!({
+                "newShape": new_shape,
             }),
             label_from_operator_options(options),
         );
@@ -4918,13 +4837,12 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
         // Step 4: Make graph connections for the "expand" operator.
-        self.push_unary_operation(
+        self.push_operation_with_attributes(
             "expand",
-            input_id,
-            output_id,
-            OperatorOptions::Expand(rustnn_options::MLExpandOptions {
-                new_shape: static_dimensions(&new_shape),
-                ..Default::default()
+            vec![input_id],
+            vec![output_id],
+            serde_json::json!({
+                "newShape": new_shape,
             }),
             label_from_operator_options(options),
         );
@@ -4971,14 +4889,13 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             self.create_rust_operand(out_dtype, output_shape, OperandKind::Output, None);
         let output_id = self.push_operand_to_graph(rust_operand, false);
         // Step 4: Make graph connections for the "slice" operator.
-        self.push_unary_operation(
+        self.push_operation_with_attributes(
             "slice",
-            input_id,
-            output_id,
-            OperatorOptions::Slice(rustnn_options::MLSliceOptions {
-                starts,
-                sizes,
-                ..Default::default()
+            vec![input_id],
+            vec![output_id],
+            serde_json::json!({
+                "starts": starts,
+                "sizes": sizes,
             }),
             label_from_operator_options(options),
         );
@@ -5309,16 +5226,15 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         let value = cast_number_to_data_type(options.value, out_dtype);
         let value = numeric_value_for_data_type(value, out_dtype);
 
-        self.push_unary_operation(
+        self.push_operation_with_attributes(
             "pad",
-            input_id,
-            output_id,
-            OperatorOptions::Pad(rustnn_options::MLPadOptions {
-                mode: mode.to_owned(),
-                value: Some(value),
-                beginning_padding,
-                ending_padding,
-                ..Default::default()
+            vec![input_id],
+            vec![output_id],
+            serde_json::json!({
+                "mode": mode,
+                "value": value,
+                "beginningPadding": beginning_padding,
+                "endingPadding": ending_padding,
             }),
             label_from_operator_options(&options.parent),
         );
@@ -5379,19 +5295,15 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         // 1. Set |operator|'s [=operator/input=] to |input|.
         // 1. Set |operator|'s [=operator/output=] to |output|.
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "softmax".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: OperatorOptions::Softmax(rustnn_options::MLSoftmaxOptions {
-                    axis,
-                    ..Default::default()
-                }),
-                label: label_from_operator_options(&options.parent),
-            });
-        }
+        self.push_operation_with_attributes(
+            "softmax",
+            vec![input_id],
+            vec![output_id],
+            serde_json::json!({
+                "axis": axis,
+            }),
+            label_from_operator_options(&options.parent),
+        );
 
         // 1. Return |output|.
         Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
@@ -5672,23 +5584,17 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
         // 1. Set |operator|'s [=operator/input=] to |input|.
         // 1. Set |operator|'s [=operator/output=] to |output|.
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "cumulativeSum".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: OperatorOptions::CumulativeSum(
-                    rustnn_options::MLCumulativeSumOptions {
-                        axis,
-                        exclusive: options.exclusive,
-                        reversed: options.reversed,
-                        ..Default::default()
-                    },
-                ),
-                label: label_from_operator_options(&options.parent),
-            });
-        }
+        self.push_operation_with_attributes(
+            "cumulativeSum",
+            vec![input_id],
+            vec![output_id],
+            serde_json::json!({
+                "axis": axis,
+                "exclusive": options.exclusive,
+                "reversed": options.reversed,
+            }),
+            label_from_operator_options(&options.parent),
+        );
 
         // 1. Return |output|.
         Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
@@ -5869,30 +5775,23 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             );
         }
 
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "instanceNormalization".to_string(),
-                input_operands,
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: OperatorOptions::InstanceNormalization(
-                    rustnn_options::MLInstanceNormalizationOptions {
-                        scale: options.scale.as_ref().and_then(|operand| operand.id()),
-                        bias: options.bias.as_ref().and_then(|operand| operand.id()),
-                        has_scale: Some(options.scale.is_some()),
-                        has_bias: Some(options.bias.is_some()),
-                        epsilon,
-                        layout: if options.layout == MLInputOperandLayout::Nchw {
-                            "nchw".to_owned()
-                        } else {
-                            "nhwc".to_owned()
-                        },
-                        ..Default::default()
-                    },
-                ),
-                label: label_from_operator_options(&options.parent),
-            });
-        }
+        self.push_operation(
+            "instanceNormalization",
+            input_operands,
+            vec![output_id],
+            OperatorOptions::InstanceNormalization(rustnn_options::MLInstanceNormalizationOptions {
+                scale: options.scale.as_ref().and_then(|operand| operand.id()),
+                bias: options.bias.as_ref().and_then(|operand| operand.id()),
+                epsilon,
+                layout: if options.layout == MLInputOperandLayout::Nchw {
+                    "nchw".to_owned()
+                } else {
+                    "nhwc".to_owned()
+                },
+                ..Default::default()
+            }),
+            label_from_operator_options(&options.parent),
+        );
 
         // Step 10: Return |output|.
         Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
@@ -6022,26 +5921,19 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             );
         }
 
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "layerNormalization".to_string(),
-                input_operands,
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: OperatorOptions::LayerNormalization(
-                    rustnn_options::MLLayerNormalizationOptions {
-                        scale: options.scale.as_ref().and_then(|operand| operand.id()),
-                        bias: options.bias.as_ref().and_then(|operand| operand.id()),
-                        has_scale: Some(options.scale.is_some()),
-                        has_bias: Some(options.bias.is_some()),
-                        axes: Some(axes),
-                        epsilon,
-                        ..Default::default()
-                    },
-                ),
-                label: label_from_operator_options(&options.parent),
-            });
-        }
+        self.push_operation(
+            "layerNormalization",
+            input_operands,
+            vec![output_id],
+            OperatorOptions::LayerNormalization(rustnn_options::MLLayerNormalizationOptions {
+                scale: options.scale.as_ref().and_then(|operand| operand.id()),
+                bias: options.bias.as_ref().and_then(|operand| operand.id()),
+                axes: Some(axes),
+                epsilon,
+                ..Default::default()
+            }),
+            label_from_operator_options(&options.parent),
+        );
 
         // Step 11: Return |output|.
         Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
@@ -6210,22 +6102,19 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             MLInterpolationMode::Nearest_neighbor => "nearest-neighbor",
             MLInterpolationMode::Linear => "linear",
         };
-        if let Some(ref mut graph_info) = self.graph_info.borrow_mut().as_mut() {
-            graph_info.operations.push(Operation {
-                op_type: "resample2d".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes: OperatorOptions::Resample2d(rustnn_options::MLResample2dOptions {
-                    mode: mode.to_owned(),
-                    scales,
-                    sizes: options.sizes.as_ref().cloned(),
-                    axes,
-                    ..Default::default()
-                }),
-                label: label_from_operator_options(&options.parent),
-            });
-        }
+        self.push_operation(
+            "resample2d",
+            vec![input_id],
+            vec![output_id],
+            OperatorOptions::Resample2d(rustnn_options::MLResample2dOptions {
+                mode: mode.to_owned(),
+                scales,
+                sizes: options.sizes.as_ref().cloned(),
+                axes,
+                ..Default::default()
+            }),
+            label_from_operator_options(&options.parent),
+        );
 
         let output = create_an_mloperand(
             self,
@@ -6372,16 +6261,7 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             }
         };
 
-        if let Some(ref mut gi) = self.graph_info.borrow_mut().as_mut() {
-            gi.operations.push(Operation {
-                op_type: "transpose".to_string(),
-                input_operands: vec![input_id],
-                output_operand: Some(output_id),
-                output_operands: Vec::new(),
-                attributes,
-                label,
-            });
-        }
+        self.push_operation("transpose", vec![input_id], vec![output_id], attributes, label);
 
         // Step 5.1: Let |output| be the result of copying an MLOperand given |input|.
         let operand = copy_an_mloperand(input, Some(&desc), Some(output_id), can_gc);
