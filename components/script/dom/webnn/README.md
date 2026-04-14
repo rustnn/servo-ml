@@ -63,6 +63,8 @@ When implmenting methods of GraphBuilder, read how `PyMLGraphBuilder` in scratch
 
 - For `MLGraphBuilder.pad()`, keep the WebIDL and implementation aligned with the current spec shape: `pad(input, beginningPadding, endingPadding, options)` and `MLPadOptions.mode` (`constant`/`edge`/`reflection`). The generated bindings in this tree currently use `typedef unrestricted double MLNumber`; if parser support for bigint unions is added, update this typedef to match the spec typedef.
 
+- Keep `MLGraphBuilder.softmax()` aligned with the current spec surface: `softmax(input, axis, options)` uses a positional `axis` argument, while `MLOpSupportLimits.softmax` remains `MLSingleInputSupportLimits`. Do not model `axis` through a dedicated `MLSoftmaxOptions` dictionary.
+
 - **Backend datatype support:** the CoreML executor now handles `Int32` outputs (output floats from CoreML are truncated to `i32`), and inputs of type `Int32` are promoted to `float32` before dispatch. The script-side read callback reconstructs little-endian `i32` values and returns an `Int32Array`; the conversion matches the backend logic. 
 
 Overview — how WebNN is wired in Servo

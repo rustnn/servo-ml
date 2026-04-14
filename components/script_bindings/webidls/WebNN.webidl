@@ -201,10 +201,6 @@ dictionary MLResample2dOptions : MLOperatorOptions {
   sequence<[EnforceRange] unsigned long> axes;
 };
 
-dictionary MLSoftmaxOptions : MLOperatorOptions {
-  long axis = 1;
-};
-
 dictionary MLCumulativeSumOptions : MLOperatorOptions {
   boolean exclusive = false;
   boolean reversed = false;
@@ -470,6 +466,7 @@ partial interface MLGraphBuilder {
   [Throws] MLOperand hardSwish(MLOperand input, optional MLHardSigmoidOptions options = {});
   [Throws] MLOperand leakyRelu(MLOperand input, optional MLLeakyReluOptions options = {});
   [Throws] MLOperand linear(MLOperand input, optional MLLinearOptions options = {});
+  [Throws] MLOperand relu(MLOperand input, optional MLOperatorOptions options = {});
   [Throws] MLOperand sigmoid(MLOperand input, optional MLOperatorOptions options = {});
   [Throws] MLOperand softplus(MLOperand input, optional MLOperatorOptions options = {});
   [Throws] MLOperand softsign(MLOperand input, optional MLOperatorOptions options = {});
@@ -515,7 +512,9 @@ partial interface MLGraphBuilder {
                          sequence<[EnforceRange] unsigned long> endingPadding,
                          optional MLPadOptions options = {});
 
-  [Throws] MLOperand softmax(MLOperand input, optional MLSoftmaxOptions options = {});
+  [Throws] MLOperand softmax(MLOperand input,
+                            [EnforceRange] unsigned long axis,
+                            optional MLOperatorOptions options = {});
   [Throws] sequence<MLOperand> split(MLOperand input, [EnforceRange] unsigned long splits,
                                      optional MLSplitOptions options = {});
   [Throws] sequence<MLOperand> split(MLOperand input,
@@ -604,6 +603,7 @@ partial dictionary MLOpSupportLimits {
   MLSingleInputSupportLimits reduceSumSquare;
   MLSingleInputSupportLimits resample2d;
   MLSingleInputSupportLimits reshape;
+  MLSingleInputSupportLimits relu;
   MLSingleInputSupportLimits reverse;
   MLScatterSupportLimits scatterElements;
   MLScatterSupportLimits scatterND;
