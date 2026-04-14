@@ -382,6 +382,7 @@ codegen-units = 1
 # TODO: When these are no longer needed remove the exception in deny.toml as well.
 egui = { git = "https://github.com/emilk/egui.git", rev = "5d8f393335e051785b4fd3af9ef92eda5b61177f" }
 egui-winit = { git = "https://github.com/emilk/egui.git", rev = "5d8f393335e051785b4fd3af9ef92eda5b61177f" }
+
 #
 # Or for Stylo:
 #
@@ -399,4 +400,5 @@ egui-winit = { git = "https://github.com/emilk/egui.git", rev = "5d8f393335e0517
 #
 [patch."https://github.com/gterzian/rustnn"]
 rustnn = { path = "scratchpad/rustnn" }
-#
+
+

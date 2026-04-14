@@ -1036,6 +1036,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
 
         let data_types = Some(vec![
             MLOperandDataType::Float32,
+            MLOperandDataType::Float16,
             MLOperandDataType::Int32,
             MLOperandDataType::Uint8,
         ]);
@@ -1214,6 +1215,7 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             reduceSumSquare: Some(single_input_limits()),
             resample2d: Some(single_input_limits()),
             reshape: Some(single_input_limits()),
+            relu: Some(single_input_limits()),
             reverse: Some(single_input_limits()),
             roundEven: Some(single_input_limits()),
             scatterElements: Some(scatter_limits()),
@@ -1253,8 +1255,9 @@ impl MLContextMethods<crate::DomTypeHolder> for MLContext {
             ));
         }
 
-        // Note: spec doesn't mention this, but the backend crashes on empty in- or outputs.
-        if inputs.is_empty() || outputs.is_empty() {
+        // Note: the backend expects at least one output tensor, but constant-only graphs
+        // are allowed to dispatch with an empty input map.
+        if outputs.is_empty() {
             return Err(Error::Type(c"Empty data".to_owned()));
         }
 

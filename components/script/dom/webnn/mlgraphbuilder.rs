@@ -28,7 +28,7 @@ use crate::dom::bindings::codegen::Bindings::WebNNBinding::{
     MLInterpolationMode, MLLayerNormalizationOptions, MLLeakyReluOptions, MLLinearOptions,
     MLOperandDataType, MLOperandDescriptor, MLOperatorOptions, MLPadOptions, MLPaddingMode,
     MLPool2dOptions, MLReduceOptions, MLResample2dOptions, MLReverseOptions, MLRoundingType,
-    MLSoftmaxOptions, MLSplitOptions, MLTransposeOptions, MLTriangularOptions,
+    MLSplitOptions, MLTransposeOptions, MLTriangularOptions,
 };
 use crate::dom::bindings::error::{Error, Fallible};
 use crate::dom::bindings::reflector::{DomGlobal, Reflector, reflect_dom_object};
@@ -1715,6 +1715,7 @@ impl MLGraphBuilder {
                 "hardSwish",
                 "leakyRelu",
                 "linear",
+                "relu",
                 "sigmoid",
                 "softplus",
                 "softsign",
@@ -4327,6 +4328,28 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
     }
 
+    /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-relu>
+    fn Relu(
+        &self,
+        input: &MLOperand,
+        options: &MLOperatorOptions,
+        can_gc: CanGc,
+    ) -> Fallible<DomRoot<MLOperand>> {
+        // Step 1: Let |output| be the result of [=MLGraphBuilder/element-wise-unary-op|creating an element-wise unary operation=] given "relu", |input|, « {{MLOperandDataType/"float32"}}, {{MLOperandDataType/"float16"}}, {{MLOperandDataType/"int64"}}, {{MLOperandDataType/"int32"}}, {{MLOperandDataType/"int8"}} », and |options|.
+        // Step 1.1: If that [=exception/throws=] an error, then re-[=exception/throw=] the error.
+        let allowed_data_types = ["float32", "float16", "int64", "int32", "int8"];
+        let output = self.create_an_element_wise_unary_operation(
+            "relu",
+            input,
+            Some(&allowed_data_types),
+            options,
+            can_gc,
+        )?;
+
+        // Step 2: Return |output|.
+        Ok(output)
+    }
+
     /// <https://webmachinelearning.github.io/webnn/#dom-mlgraphbuilder-sigmoid>
     fn Sigmoid(
         &self,
@@ -5252,33 +5275,33 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
     fn Softmax(
         &self,
         input: &MLOperand,
-        options: &MLSoftmaxOptions,
+        axis: u32,
+        options: &MLOperatorOptions,
         can_gc: CanGc,
     ) -> Fallible<DomRoot<MLOperand>> {
-        // 1. If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
+        // Step 1: If [=this=] [=MLGraphBuilder/can not build=], then [=exception/throw=] an "{{InvalidStateError}}" {{DOMException}}.
         if !self.can_build() {
             return Err(Error::InvalidState(None));
         }
 
-        // 1. If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
+        // Step 2: If [=MLGraphBuilder/validating operand=] with [=this=] and |input| returns false, then [=exception/throw=] a {{TypeError}}.
         if !self.validate_operand_ref(input) {
             return Err(Error::Type(c"invalid operand".to_owned()));
         }
 
-        // 1. If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-softmax)), then [=exception/throw=] a {{TypeError}}.
+        // Step 3: If |input|'s [=MLOperand/dataType=] is not one of its [=/allowed data types=] (according to [this table](#tensor-limits-softmax)), then [=exception/throw=] a {{TypeError}}.
         let input_data_type = input.descriptor_data_type();
         if input_data_type != "float32" && input_data_type != "float16" {
             return Err(Error::Type(c"unsupported input dataType".to_owned()));
         }
 
-        // 1. If |axis| is greater than or equal to |input|'s [=MLOperand/rank=], then [=exception/throw=] a {{TypeError}}.
-        let axis = options.axis;
+        // Step 4: If |axis| is greater than or equal to |input|'s [=MLOperand/rank=], then [=exception/throw=] a {{TypeError}}.
         if (axis as usize) >= input.descriptor_shape().len() {
             return Err(Error::Type(c"axis out of range".to_owned()));
         }
 
-        // 1. *Make graph connections:*
-        // 1. Let |output| be the result of [=copying an MLOperand=] given |input|.
+        // Step 5: *Make graph connections:*
+        // Step 5.1: Let |output| be the result of [=copying an MLOperand=] given |input|.
         let input_shape = input.descriptor_shape();
         let input_id = input
             .id()
@@ -5291,10 +5314,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
         );
         let output_id = self.push_operand_to_graph(rust_operand, false);
 
-        // 1. Let |operator| be an [=operator=] for the "softmax" operation, given |axis| and |options|.
-        // 1. Set |output|.{{MLOperand/[[operator]]}} to |operator|.
-        // 1. Set |operator|'s [=operator/input=] to |input|.
-        // 1. Set |operator|'s [=operator/output=] to |output|.
+        // Step 5.2: Let |operator| be an [=operator=] for the "softmax" operation, given |axis| and |options|.
+        // Step 5.3: Set |output|.{{MLOperand/[[operator]]}} to |operator|.
+        // Step 5.4: Set |operator|'s [=operator/input=] to |input|.
+        // Step 5.5: Set |operator|'s [=operator/output=] to |output|.
         self.push_operation_with_attributes(
             "softmax",
             vec![input_id],
@@ -5302,10 +5325,10 @@ impl MLGraphBuilderMethods<crate::DomTypeHolder> for MLGraphBuilder {
             serde_json::json!({
                 "axis": axis,
             }),
-            label_from_operator_options(&options.parent),
+            label_from_operator_options(options),
         );
 
-        // 1. Return |output|.
+        // Step 6: Return |output|.
         Ok(copy_an_mloperand(input, None, Some(output_id), can_gc))
     }
 
