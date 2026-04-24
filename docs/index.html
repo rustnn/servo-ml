@@ -35,9 +35,23 @@
         padding: 24px;
         box-shadow: 0 12px 30px rgba(16, 42, 67, 0.2);
       }
+      .hero-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .hero-copy {
+        min-width: 0;
+      }
       .hero h1 { margin: 0 0 8px; font-size: 28px; }
       .hero p { margin: 0 0 4px; opacity: 0.95; }
       .hero-meta { margin-top: 4px; font-size: 13px; opacity: 0.85; }
+      .hero-logo {
+        width: 104px;
+        height: auto;
+        flex: 0 0 auto;
+      }
       .cards {
         margin-top: 20px;
         display: grid;
@@ -75,6 +89,15 @@
         color: var(--muted);
         margin-bottom: 12px;
       }
+      @media (max-width: 700px) {
+        .hero-inner {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .hero-logo {
+          width: 88px;
+        }
+      }
       table {
         width: 100%;
         border-collapse: collapse;
@@ -97,9 +120,14 @@
   <body>
     <main class="wrap">
       <section class="hero">
-        <h1>Servo WebNN Conformance</h1>
-        <p>Test Report</p>
-        <div class="hero-meta">Generated: 2026-04-24 07:53:17 UTC</div>
+        <div class="hero-inner">
+          <div class="hero-copy">
+            <h1>Servo-ML WebNN Conformance</h1>
+            <p>Test Report</p>
+            <div class="hero-meta">Generated: 2026-04-24 07:53:17 UTC</div>
+          </div>
+          <img class="hero-logo" src="https://raw.githubusercontent.com/rustnn/rustnn/main/logo/rustnn.svg" alt="RustNN logo">
+        </div>
       </section>
 
       <section class="cards">
