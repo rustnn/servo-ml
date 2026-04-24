@@ -1,0 +1,1211 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Servo-ML WebNN Conformance Report</title>
+    <style>
+      :root {
+        --bg: #f4f7fb;
+        --panel: #ffffff;
+        --text: #102a43;
+        --muted: #627d98;
+        --ok: #1b7f4d;
+        --bad: #c23b23;
+        --line: #d9e2ec;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "Avenir Next", "Segoe UI", sans-serif;
+        color: var(--text);
+        background: radial-gradient(circle at top right, #d9f5ec, transparent 35%),
+                    radial-gradient(circle at 20% 10%, #dbeafe, transparent 45%),
+                    var(--bg);
+      }
+      .wrap {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 24px 16px 40px;
+      }
+      .hero {
+        background: linear-gradient(130deg, #2a6a89, #4a97b0);
+        color: #fff;
+        border-radius: 14px;
+        padding: 24px;
+        box-shadow: 0 12px 30px rgba(16, 42, 67, 0.2);
+      }
+      .hero-inner {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+      }
+      .hero-copy {
+        min-width: 0;
+      }
+      .hero h1 { margin: 0 0 8px; font-size: 28px; }
+      .hero p { margin: 0 0 4px; opacity: 0.95; }
+      .hero-meta { margin-top: 4px; font-size: 13px; opacity: 0.85; }
+      .hero-logo {
+        width: 104px;
+        height: auto;
+        flex: 0 0 auto;
+      }
+      .cards {
+        margin-top: 20px;
+        display: grid;
+        gap: 12px;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+      }
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 16px;
+      }
+      .label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.05em; font-weight: 600; }
+      .value { margin-top: 8px; font-size: 32px; font-weight: 700; }
+      .ok { color: var(--ok); }
+      .bad { color: var(--bad); }
+      .sections {
+        margin-top: 28px;
+        display: grid;
+        gap: 24px;
+      }
+      .section {
+        background: var(--panel);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 20px;
+      }
+      .section h2 {
+        margin: 0 0 16px;
+        font-size: 18px;
+        color: var(--text);
+      }
+      .section-meta {
+        font-size: 13px;
+        color: var(--muted);
+        margin-bottom: 12px;
+      }
+      @media (max-width: 700px) {
+        .hero-inner {
+          align-items: flex-start;
+          flex-direction: column;
+        }
+        .hero-logo {
+          width: 88px;
+        }
+      }
+      table {
+        width: 100%;
+        border-collapse: collapse;
+        font-size: 13px;
+      }
+      th, td {
+        border: 1px solid var(--line);
+        text-align: left;
+        padding: 8px 10px;
+      }
+      th {
+        background: #f8fbff;
+        font-weight: 600;
+      }
+      tr:nth-child(even) {
+        background: #fafbfc;
+      }
+    </style>
+  </head>
+  <body>
+    <main class="wrap">
+      <section class="hero">
+        <div class="hero-inner">
+          <div class="hero-copy">
+            <h1>Servo-ML WebNN Conformance</h1>
+            <p>Test Report</p>
+            <div class="hero-meta">Generated: 2026-04-24 07:53:17 UTC</div>
+          </div>
+          <img class="hero-logo" src="https://raw.githubusercontent.com/rustnn/rustnn/main/logo/rustnn.svg" alt="RustNN logo">
+        </div>
+      </section>
+
+      <section class="cards">
+        <article class="card">
+          <div class="label">Total Tests</div>
+          <div class="value">11244</div>
+        </article>
+        <article class="card">
+          <div class="label">Passed</div>
+          <div class="value ok">4998</div>
+        </article>
+        <article class="card">
+          <div class="label">Pass Rate</div>
+          <div class="value">44.5%</div>
+        </article>
+      </section>
+
+      <section class="sections">
+        <article class="section">
+          <h2>Conformance Tests</h2>
+          <div class="section-meta">
+            Total: 7512 | Passes: 2994 | 
+            Rate: 39.9%
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Test</th>
+                <th>Total</th>
+                <th>Passes</th>
+                <th>Pass Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+    <tr>
+      <td>abs</td>
+      <td>57</td>
+      <td>24</td>
+      <td>42.1%</td>
+    </tr>
+    <tr>
+      <td>arg_min_max</td>
+      <td>108</td>
+      <td>54</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>averagePool2d</td>
+      <td>120</td>
+      <td>27</td>
+      <td>22.5%</td>
+    </tr>
+    <tr>
+      <td>batch_normalization</td>
+      <td>78</td>
+      <td>27</td>
+      <td>34.6%</td>
+    </tr>
+    <tr>
+      <td>batch_normalization_constant</td>
+      <td>12</td>
+      <td>6</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>byob_readtensor</td>
+      <td>12</td>
+      <td>0</td>
+      <td>0.0%</td>
+    </tr>
+    <tr>
+      <td>cast</td>
+      <td>90</td>
+      <td>27</td>
+      <td>30.0%</td>
+    </tr>
+    <tr>
+      <td>ceil</td>
+      <td>48</td>
+      <td>24</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>clamp</td>
+      <td>144</td>
+      <td>54</td>
+      <td>37.5%</td>
+    </tr>
+    <tr>
+      <td>concat</td>
+      <td>141</td>
+      <td>63</td>
+      <td>44.7%</td>
+    </tr>
+    <tr>
+      <td>constant-reshape-optimization</td>
+      <td>9</td>
+      <td>6</td>
+      <td>66.7%</td>
+    </tr>
+    <tr>
+      <td>conv2d</td>
+      <td>126</td>
+      <td>42</td>
+      <td>33.3%</td>
+    </tr>
+    <tr>
+      <td>conv_transpose2d</td>
+      <td>132</td>
+      <td>48</td>
+      <td>36.4%</td>
+    </tr>
+    <tr>
+      <td>cos</td>
+      <td>48</td>
+      <td>24</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>cumulative_sum</td>
+      <td>27</td>
+      <td>15</td>
+      <td>55.6%</td>
+    </tr>
+    <tr>
+      <td>dequantizeLinear</td>
+      <td>45</td>
+      <td>6</td>
+      <td>13.3%</td>
+    </tr>
+    <tr>
+      <td>div</td>
+      <td>66</td>
+      <td>36</td>
+      <td>54.5%</td>
+    </tr>
+    <tr>
+      <td>elu</td>
+      <td>66</td>
+      <td>30</td>
+      <td>45.5%</td>
+    </tr>
+    <tr>
+      <td>equal</td>
+      <td>72</td>
+      <td>36</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>erf</td>
+      <td>48</td>
+      <td>24</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>exp</td>
+      <td>48</td>
+      <td>24</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>expand</td>
+      <td>138</td>
+      <td>57</td>
+      <td>41.3%</td>
+    </tr>
+    <tr>
+      <td>floor</td>
+      <td>48</td>
+      <td>24</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>gather</td>
+      <td>120</td>
+      <td>54</td>
+      <td>45.0%</td>
+    </tr>
+    <tr>
+      <td>gatherElements</td>
+      <td>33</td>
+      <td>15</td>
+      <td>45.5%</td>
+    </tr>
+    <tr>
+      <td>gatherND</td>
+      <td>42</td>
+      <td>6</td>
+      <td>14.3%</td>
+    </tr>
+    <tr>
+      <td>gelu</td>
+      <td>45</td>
+      <td>6</td>
+      <td>13.3%</td>
+    </tr>
+    <tr>
+      <td>gemm</td>
+      <td>144</td>
+      <td>30</td>
+      <td>20.8%</td>
+    </tr>
+    <tr>
+      <td>graph_devices</td>
+      <td>6</td>
+      <td>3</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>greater</td>
+      <td>72</td>
+      <td>33</td>
+      <td>45.8%</td>
+    </tr>
+    <tr>
+      <td>greater_or_equal</td>
+      <td>72</td>
+      <td>36</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>gru</td>
+      <td>78</td>
+      <td>6</td>
+      <td>7.7%</td>
+    </tr>
+    <tr>
+      <td>gru_cell</td>
+      <td>30</td>
+      <td>6</td>
+      <td>20.0%</td>
+    </tr>
+    <tr>
+      <td>hard_sigmoid</td>
+      <td>96</td>
+      <td>48</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>hard_swish</td>
+      <td>48</td>
+      <td>24</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>identity</td>
+      <td>102</td>
+      <td>12</td>
+      <td>11.8%</td>
+    </tr>
+    <tr>
+      <td>inputs-are-not-modified</td>
+      <td>24</td>
+      <td>18</td>
+      <td>75.0%</td>
+    </tr>
+    <tr>
+      <td>inputs-with-special-names</td>
+      <td>30</td>
+      <td>9</td>
+      <td>30.0%</td>
+    </tr>
+    <tr>
+      <td>instance_normalization</td>
+      <td>48</td>
+      <td>15</td>
+      <td>31.2%</td>
+    </tr>
+    <tr>
+      <td>is_infinite</td>
+      <td>51</td>
+      <td>6</td>
+      <td>11.8%</td>
+    </tr>
+    <tr>
+      <td>is_nan</td>
+      <td>42</td>
+      <td>6</td>
+      <td>14.3%</td>
+    </tr>
+    <tr>
+      <td>l2Pool2d</td>
+      <td>90</td>
+      <td>6</td>
+      <td>6.7%</td>
+    </tr>
+    <tr>
+      <td>layer_normalization</td>
+      <td>81</td>
+      <td>24</td>
+      <td>29.6%</td>
+    </tr>
+    <tr>
+      <td>leaky_relu</td>
+      <td>66</td>
+      <td>33</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>lesser</td>
+      <td>72</td>
+      <td>33</td>
+      <td>45.8%</td>
+    </tr>
+    <tr>
+      <td>lesser_or_equal</td>
+      <td>72</td>
+      <td>33</td>
+      <td>45.8%</td>
+    </tr>
+    <tr>
+      <td>linear</td>
+      <td>84</td>
+      <td>42</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>log</td>
+      <td>48</td>
+      <td>24</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>logical_and</td>
+      <td>39</td>
+      <td>30</td>
+      <td>76.9%</td>
+    </tr>
+    <tr>
+      <td>logical_not</td>
+      <td>27</td>
+      <td>24</td>
+      <td>88.9%</td>
+    </tr>
+    <tr>
+      <td>logical_or</td>
+      <td>39</td>
+      <td>30</td>
+      <td>76.9%</td>
+    </tr>
+    <tr>
+      <td>logical_xor</td>
+      <td>39</td>
+      <td>30</td>
+      <td>76.9%</td>
+    </tr>
+    <tr>
+      <td>lstm</td>
+      <td>90</td>
+      <td>6</td>
+      <td>6.7%</td>
+    </tr>
+    <tr>
+      <td>lstm_cell</td>
+      <td>36</td>
+      <td>6</td>
+      <td>16.7%</td>
+    </tr>
+    <tr>
+      <td>matmul</td>
+      <td>72</td>
+      <td>42</td>
+      <td>58.3%</td>
+    </tr>
+    <tr>
+      <td>max</td>
+      <td>66</td>
+      <td>36</td>
+      <td>54.5%</td>
+    </tr>
+    <tr>
+      <td>maxPool2d</td>
+      <td>84</td>
+      <td>27</td>
+      <td>32.1%</td>
+    </tr>
+    <tr>
+      <td>min</td>
+      <td>66</td>
+      <td>36</td>
+      <td>54.5%</td>
+    </tr>
+    <tr>
+      <td>mlNumber</td>
+      <td>12</td>
+      <td>6</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>mul</td>
+      <td>66</td>
+      <td>36</td>
+      <td>54.5%</td>
+    </tr>
+    <tr>
+      <td>neg</td>
+      <td>57</td>
+      <td>24</td>
+      <td>42.1%</td>
+    </tr>
+    <tr>
+      <td>not_equal</td>
+      <td>72</td>
+      <td>33</td>
+      <td>45.8%</td>
+    </tr>
+    <tr>
+      <td>operations-with-special-names</td>
+      <td>18</td>
+      <td>18</td>
+      <td>100.0%</td>
+    </tr>
+    <tr>
+      <td>pad</td>
+      <td>75</td>
+      <td>6</td>
+      <td>8.0%</td>
+    </tr>
+    <tr>
+      <td>parallel-dispatch</td>
+      <td>66</td>
+      <td>36</td>
+      <td>54.5%</td>
+    </tr>
+    <tr>
+      <td>pow</td>
+      <td>60</td>
+      <td>27</td>
+      <td>45.0%</td>
+    </tr>
+    <tr>
+      <td>prelu</td>
+      <td>78</td>
+      <td>9</td>
+      <td>11.5%</td>
+    </tr>
+    <tr>
+      <td>qdq_subgraph</td>
+      <td>228</td>
+      <td>12</td>
+      <td>5.3%</td>
+    </tr>
+    <tr>
+      <td>quantizeLinear</td>
+      <td>48</td>
+      <td>6</td>
+      <td>12.5%</td>
+    </tr>
+    <tr>
+      <td>reciprocal</td>
+      <td>48</td>
+      <td>24</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>reduce_l1</td>
+      <td>138</td>
+      <td>63</td>
+      <td>45.7%</td>
+    </tr>
+    <tr>
+      <td>reduce_l2</td>
+      <td>135</td>
+      <td>63</td>
+      <td>46.7%</td>
+    </tr>
+    <tr>
+      <td>reduce_log_sum</td>
+      <td>123</td>
+      <td>57</td>
+      <td>46.3%</td>
+    </tr>
+    <tr>
+      <td>reduce_log_sum_exp</td>
+      <td>135</td>
+      <td>63</td>
+      <td>46.7%</td>
+    </tr>
+    <tr>
+      <td>reduce_max</td>
+      <td>117</td>
+      <td>54</td>
+      <td>46.2%</td>
+    </tr>
+    <tr>
+      <td>reduce_mean</td>
+      <td>135</td>
+      <td>63</td>
+      <td>46.7%</td>
+    </tr>
+    <tr>
+      <td>reduce_min</td>
+      <td>117</td>
+      <td>54</td>
+      <td>46.2%</td>
+    </tr>
+    <tr>
+      <td>reduce_product</td>
+      <td>117</td>
+      <td>54</td>
+      <td>46.2%</td>
+    </tr>
+    <tr>
+      <td>reduce_sum</td>
+      <td>135</td>
+      <td>63</td>
+      <td>46.7%</td>
+    </tr>
+    <tr>
+      <td>reduce_sum_square</td>
+      <td>138</td>
+      <td>63</td>
+      <td>45.7%</td>
+    </tr>
+    <tr>
+      <td>relu</td>
+      <td>51</td>
+      <td>24</td>
+      <td>47.1%</td>
+    </tr>
+    <tr>
+      <td>resample2d</td>
+      <td>45</td>
+      <td>6</td>
+      <td>13.3%</td>
+    </tr>
+    <tr>
+      <td>reshape</td>
+      <td>198</td>
+      <td>93</td>
+      <td>47.0%</td>
+    </tr>
+    <tr>
+      <td>reverse</td>
+      <td>30</td>
+      <td>18</td>
+      <td>60.0%</td>
+    </tr>
+    <tr>
+      <td>round_even</td>
+      <td>36</td>
+      <td>18</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>scalars</td>
+      <td>48</td>
+      <td>6</td>
+      <td>12.5%</td>
+    </tr>
+    <tr>
+      <td>scatterElements</td>
+      <td>30</td>
+      <td>6</td>
+      <td>20.0%</td>
+    </tr>
+    <tr>
+      <td>scatterND</td>
+      <td>18</td>
+      <td>6</td>
+      <td>33.3%</td>
+    </tr>
+    <tr>
+      <td>shared_arraybuffer_constant</td>
+      <td>15</td>
+      <td>6</td>
+      <td>40.0%</td>
+    </tr>
+    <tr>
+      <td>sigmoid</td>
+      <td>48</td>
+      <td>24</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>sign</td>
+      <td>21</td>
+      <td>18</td>
+      <td>85.7%</td>
+    </tr>
+    <tr>
+      <td>sin</td>
+      <td>48</td>
+      <td>24</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>slice</td>
+      <td>60</td>
+      <td>27</td>
+      <td>45.0%</td>
+    </tr>
+    <tr>
+      <td>softmax</td>
+      <td>33</td>
+      <td>21</td>
+      <td>63.6%</td>
+    </tr>
+    <tr>
+      <td>softplus</td>
+      <td>48</td>
+      <td>24</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>softsign</td>
+      <td>60</td>
+      <td>27</td>
+      <td>45.0%</td>
+    </tr>
+    <tr>
+      <td>split</td>
+      <td>3</td>
+      <td>0</td>
+      <td>0.0%</td>
+    </tr>
+    <tr>
+      <td>sqrt</td>
+      <td>48</td>
+      <td>24</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>sub</td>
+      <td>72</td>
+      <td>36</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>subgraph</td>
+      <td>306</td>
+      <td>174</td>
+      <td>56.9%</td>
+    </tr>
+    <tr>
+      <td>tan</td>
+      <td>48</td>
+      <td>24</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>tanh</td>
+      <td>42</td>
+      <td>24</td>
+      <td>57.1%</td>
+    </tr>
+    <tr>
+      <td>tensor</td>
+      <td>12</td>
+      <td>0</td>
+      <td>0.0%</td>
+    </tr>
+    <tr>
+      <td>tile</td>
+      <td>24</td>
+      <td>12</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>transpose</td>
+      <td>3</td>
+      <td>0</td>
+      <td>0.0%</td>
+    </tr>
+    <tr>
+      <td>triangular</td>
+      <td>102</td>
+      <td>39</td>
+      <td>38.2%</td>
+    </tr>
+    <tr>
+      <td>where</td>
+      <td>108</td>
+      <td>6</td>
+      <td>5.6%</td>
+    </tr>
+            </tbody>
+          </table>
+        </article>
+
+        <article class="section">
+          <h2>Validation Tests</h2>
+          <div class="section-meta">
+            Total: 3732 | Passes: 2004 | 
+            Rate: 53.7%
+          </div>
+          <table>
+            <thead>
+              <tr>
+                <th>Test</th>
+                <th>Total</th>
+                <th>Passes</th>
+                <th>Pass Rate</th>
+              </tr>
+            </thead>
+            <tbody>
+    <tr>
+      <td>argMinMax</td>
+      <td>54</td>
+      <td>30</td>
+      <td>55.6%</td>
+    </tr>
+    <tr>
+      <td>batchNormalization</td>
+      <td>72</td>
+      <td>72</td>
+      <td>100.0%</td>
+    </tr>
+    <tr>
+      <td>build-more-than-once</td>
+      <td>66</td>
+      <td>60</td>
+      <td>90.9%</td>
+    </tr>
+    <tr>
+      <td>cast</td>
+      <td>12</td>
+      <td>9</td>
+      <td>75.0%</td>
+    </tr>
+    <tr>
+      <td>clamp</td>
+      <td>33</td>
+      <td>15</td>
+      <td>45.5%</td>
+    </tr>
+    <tr>
+      <td>concat</td>
+      <td>45</td>
+      <td>24</td>
+      <td>53.3%</td>
+    </tr>
+    <tr>
+      <td>constant-changed-buffer</td>
+      <td>36</td>
+      <td>24</td>
+      <td>66.7%</td>
+    </tr>
+    <tr>
+      <td>constant</td>
+      <td>276</td>
+      <td>126</td>
+      <td>45.7%</td>
+    </tr>
+    <tr>
+      <td>conv2d</td>
+      <td>165</td>
+      <td>60</td>
+      <td>36.4%</td>
+    </tr>
+    <tr>
+      <td>convTranspose2d</td>
+      <td>162</td>
+      <td>48</td>
+      <td>29.6%</td>
+    </tr>
+    <tr>
+      <td>createContext</td>
+      <td>72</td>
+      <td>60</td>
+      <td>83.3%</td>
+    </tr>
+    <tr>
+      <td>cumulativeSum</td>
+      <td>30</td>
+      <td>24</td>
+      <td>80.0%</td>
+    </tr>
+    <tr>
+      <td>dequantizeLinear</td>
+      <td>51</td>
+      <td>27</td>
+      <td>52.9%</td>
+    </tr>
+    <tr>
+      <td>destroyContext</td>
+      <td>78</td>
+      <td>54</td>
+      <td>69.2%</td>
+    </tr>
+    <tr>
+      <td>destroyGraph</td>
+      <td>30</td>
+      <td>24</td>
+      <td>80.0%</td>
+    </tr>
+    <tr>
+      <td>elementwise-binary</td>
+      <td>252</td>
+      <td>147</td>
+      <td>58.3%</td>
+    </tr>
+    <tr>
+      <td>elementwise-logical</td>
+      <td>189</td>
+      <td>135</td>
+      <td>71.4%</td>
+    </tr>
+    <tr>
+      <td>elementwise-unary</td>
+      <td>141</td>
+      <td>51</td>
+      <td>36.2%</td>
+    </tr>
+    <tr>
+      <td>elu</td>
+      <td>24</td>
+      <td>18</td>
+      <td>75.0%</td>
+    </tr>
+    <tr>
+      <td>expand</td>
+      <td>39</td>
+      <td>24</td>
+      <td>61.5%</td>
+    </tr>
+    <tr>
+      <td>gather</td>
+      <td>39</td>
+      <td>24</td>
+      <td>61.5%</td>
+    </tr>
+    <tr>
+      <td>gatherElements</td>
+      <td>33</td>
+      <td>18</td>
+      <td>54.5%</td>
+    </tr>
+    <tr>
+      <td>gatherND</td>
+      <td>30</td>
+      <td>15</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>gelu</td>
+      <td>15</td>
+      <td>9</td>
+      <td>60.0%</td>
+    </tr>
+    <tr>
+      <td>gemm</td>
+      <td>63</td>
+      <td>30</td>
+      <td>47.6%</td>
+    </tr>
+    <tr>
+      <td>gru</td>
+      <td>78</td>
+      <td>24</td>
+      <td>30.8%</td>
+    </tr>
+    <tr>
+      <td>gruCell</td>
+      <td>93</td>
+      <td>24</td>
+      <td>25.8%</td>
+    </tr>
+    <tr>
+      <td>hardSigmoid</td>
+      <td>24</td>
+      <td>18</td>
+      <td>75.0%</td>
+    </tr>
+    <tr>
+      <td>hardSwish</td>
+      <td>15</td>
+      <td>9</td>
+      <td>60.0%</td>
+    </tr>
+    <tr>
+      <td>input</td>
+      <td>66</td>
+      <td>54</td>
+      <td>81.8%</td>
+    </tr>
+    <tr>
+      <td>instanceNormalization</td>
+      <td>60</td>
+      <td>30</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>invalid-rank</td>
+      <td>24</td>
+      <td>18</td>
+      <td>75.0%</td>
+    </tr>
+    <tr>
+      <td>layerNormalization</td>
+      <td>66</td>
+      <td>39</td>
+      <td>59.1%</td>
+    </tr>
+    <tr>
+      <td>leakyRelu</td>
+      <td>24</td>
+      <td>18</td>
+      <td>75.0%</td>
+    </tr>
+    <tr>
+      <td>linear</td>
+      <td>24</td>
+      <td>18</td>
+      <td>75.0%</td>
+    </tr>
+    <tr>
+      <td>lstm</td>
+      <td>78</td>
+      <td>30</td>
+      <td>38.5%</td>
+    </tr>
+    <tr>
+      <td>lstmCell</td>
+      <td>117</td>
+      <td>30</td>
+      <td>25.6%</td>
+    </tr>
+    <tr>
+      <td>matmul</td>
+      <td>48</td>
+      <td>27</td>
+      <td>56.2%</td>
+    </tr>
+    <tr>
+      <td>opSupportLimits</td>
+      <td>18</td>
+      <td>6</td>
+      <td>33.3%</td>
+    </tr>
+    <tr>
+      <td>pad</td>
+      <td>39</td>
+      <td>15</td>
+      <td>38.5%</td>
+    </tr>
+    <tr>
+      <td>pooling-and-reduction-keep-dims</td>
+      <td>30</td>
+      <td>24</td>
+      <td>80.0%</td>
+    </tr>
+    <tr>
+      <td>pooling</td>
+      <td>126</td>
+      <td>69</td>
+      <td>54.8%</td>
+    </tr>
+    <tr>
+      <td>prelu</td>
+      <td>33</td>
+      <td>12</td>
+      <td>36.4%</td>
+    </tr>
+    <tr>
+      <td>quantizeLinear</td>
+      <td>48</td>
+      <td>27</td>
+      <td>56.2%</td>
+    </tr>
+    <tr>
+      <td>reduction</td>
+      <td>186</td>
+      <td>102</td>
+      <td>54.8%</td>
+    </tr>
+    <tr>
+      <td>relu</td>
+      <td>15</td>
+      <td>9</td>
+      <td>60.0%</td>
+    </tr>
+    <tr>
+      <td>resample2d</td>
+      <td>87</td>
+      <td>36</td>
+      <td>41.4%</td>
+    </tr>
+    <tr>
+      <td>reshape</td>
+      <td>36</td>
+      <td>24</td>
+      <td>66.7%</td>
+    </tr>
+    <tr>
+      <td>reverse</td>
+      <td>21</td>
+      <td>15</td>
+      <td>71.4%</td>
+    </tr>
+    <tr>
+      <td>scatterElements</td>
+      <td>48</td>
+      <td>24</td>
+      <td>50.0%</td>
+    </tr>
+    <tr>
+      <td>scatterND</td>
+      <td>33</td>
+      <td>15</td>
+      <td>45.5%</td>
+    </tr>
+    <tr>
+      <td>sigmoid</td>
+      <td>15</td>
+      <td>9</td>
+      <td>60.0%</td>
+    </tr>
+    <tr>
+      <td>slice</td>
+      <td>39</td>
+      <td>15</td>
+      <td>38.5%</td>
+    </tr>
+    <tr>
+      <td>softmax</td>
+      <td>24</td>
+      <td>15</td>
+      <td>62.5%</td>
+    </tr>
+    <tr>
+      <td>softplus</td>
+      <td>15</td>
+      <td>9</td>
+      <td>60.0%</td>
+    </tr>
+    <tr>
+      <td>softsign</td>
+      <td>15</td>
+      <td>9</td>
+      <td>60.0%</td>
+    </tr>
+    <tr>
+      <td>split</td>
+      <td>36</td>
+      <td>15</td>
+      <td>41.7%</td>
+    </tr>
+    <tr>
+      <td>tanh</td>
+      <td>15</td>
+      <td>9</td>
+      <td>60.0%</td>
+    </tr>
+    <tr>
+      <td>tile</td>
+      <td>30</td>
+      <td>21</td>
+      <td>70.0%</td>
+    </tr>
+    <tr>
+      <td>transpose</td>
+      <td>27</td>
+      <td>18</td>
+      <td>66.7%</td>
+    </tr>
+    <tr>
+      <td>triangular</td>
+      <td>12</td>
+      <td>9</td>
+      <td>75.0%</td>
+    </tr>
+    <tr>
+      <td>unprintableNames</td>
+      <td>18</td>
+      <td>6</td>
+      <td>33.3%</td>
+    </tr>
+    <tr>
+      <td>where</td>
+      <td>42</td>
+      <td>24</td>
+      <td>57.1%</td>
+    </tr>
+            </tbody>
+          </table>
+        </article>
+      </section>
+    </main>
+  </body>
+</html>
