@@ -77,8 +77,15 @@
     border-radius: 12px;
     padding: 20px;
     }
+    .section-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
+    }
     .section h2 {
-    margin: 0 0 16px;
+    margin: 0;
     font-size: 18px;
     color: var(--text);
     }
@@ -86,6 +93,26 @@
     font-size: 13px;
     color: var(--muted);
     margin-bottom: 12px;
+    }
+    .section-body {
+    margin-top: 10px;
+    }
+    .toggle-button {
+    border: 1px solid #7aa9c4;
+    border-radius: 10px;
+    background: #eef6fb;
+    color: #174a63;
+    font-size: 12px;
+    font-weight: 600;
+    padding: 8px 12px;
+    cursor: pointer;
+    }
+    .toggle-button:hover {
+    background: #e3f0f8;
+    }
+    .toggle-button:focus-visible {
+    outline: 2px solid #2a6a89;
+    outline-offset: 2px;
     }
     table {
     width: 100%;
@@ -125,7 +152,7 @@
       <div class="hero-copy">
       <h1>Servo-ML WebNN WPT Report</h1>
       <p>Generated from wptreport JSON and compared with latest Chrome master+experimental run.</p>
-      <div class="hero-meta">Generated: 2026-04-27 17:29:31 UTC</div>
+      <div class="hero-meta">Generated: 2026-04-27 17:47:23 UTC</div>
       </div>
       <img class="hero-logo" src="https://raw.githubusercontent.com/rustnn/rustnn/main/logo/rustnn.svg" alt="RustNN logo">
     </div>
@@ -146,58 +173,63 @@
     </article>
     <article class="card">
       <div class="label">Servo Coverage vs Chrome Total</div>
-      <div class="value">74.4%</div>
+      <div class="value">74.1%</div>
     </article>
     </section>
 
     <section class="sections">
-    <article class="section">
-      <h2>Chrome Comparison (master + experimental)</h2>
-      <div class="section-meta">Chrome run 149.0.7811.0 | revision a723f64769 | started 2026-04-27T13:15:03.663Z</div>
-      <div class="comparison-link">
-      Reference: <a href="https://wpt.fyi/results/webnn?label=master&amp;label=experimental&amp;product=chrome">https://wpt.fyi/results/webnn?label=master&amp;label=experimental&amp;product=chrome</a>
-      </div>
-      <table>
-      <thead>
-        <tr>
-        <th>Suite</th>
-        <th>Servo (Pass/Total)</th>
-        <th>Chrome (Pass/Total)</th>
-        <th>Servo Rate</th>
-        <th>Chrome Rate</th>
-        <th>Coverage (Servo Total / Chrome Total)</th>
-        <th>Pass Delta (Servo-Chrome)</th>
-        <th>Total Delta (Servo-Chrome)</th>
-        </tr>
-      </thead>
-      <tbody>
+        <article class="section">
+          <div class="section-header">
+            <h2>Chrome Comparison (master + experimental)</h2>
+            <button class="toggle-button" type="button" data-target="section-chrome-comparison" aria-expanded="false" onclick="toggleSection(this)">Show Full Section</button>
+          </div>
+          <div class="section-meta">Servo total: 5,593 / 11,850 | Chrome total: 15,824 / 15,990 | Coverage: 74.1%</div>
+          <div class="section-body" id="section-chrome-comparison" hidden>
+            <div class="section-meta">Chrome run 149.0.7811.0 | revision 57a1c3cc9e | started 2026-04-27T14:19:11.881Z</div>
+            <div class="comparison-link">
+            Reference: <a href="https://wpt.fyi/results/webnn?label=master&amp;label=experimental&amp;product=chrome">https://wpt.fyi/results/webnn?label=master&amp;label=experimental&amp;product=chrome</a>
+            </div>
+            <table>
+              <thead>
+                <tr>
+                  <th>Suite</th>
+                  <th>Servo (Pass/Total)</th>
+                  <th>Chrome (Pass/Total)</th>
+                  <th>Servo Rate</th>
+                  <th>Chrome Rate</th>
+                  <th>Coverage (Servo Total / Chrome Total)</th>
+                  <th>Pass Delta (Servo-Chrome)</th>
+                  <th>Total Delta (Servo-Chrome)</th>
+                </tr>
+              </thead>
+              <tbody>
     <tr>
       <td>Total</td>
       <td>5,593 / 11,850</td>
-      <td>15,761 / 15,919</td>
+      <td>15,824 / 15,990</td>
       <td>47.2%</td>
       <td>99.0%</td>
-      <td>74.4%</td>
-      <td>-10,168</td>
-      <td>-4,069</td>
+      <td>74.1%</td>
+      <td>-10,231</td>
+      <td>-4,140</td>
     </tr>    <tr>
       <td>Conformance</td>
       <td>2,632 / 7,185</td>
-      <td>9,298 / 9,433</td>
+      <td>9,375 / 9,510</td>
       <td>36.6%</td>
       <td>98.6%</td>
-      <td>76.2%</td>
-      <td>-6,666</td>
-      <td>-2,248</td>
+      <td>75.6%</td>
+      <td>-6,743</td>
+      <td>-2,325</td>
     </tr>    <tr>
       <td>Validation</td>
       <td>1,743 / 3,411</td>
-      <td>3,963 / 3,978</td>
+      <td>3,949 / 3,972</td>
       <td>51.1%</td>
-      <td>99.6%</td>
-      <td>85.7%</td>
-      <td>-2,220</td>
-      <td>-567</td>
+      <td>99.4%</td>
+      <td>85.9%</td>
+      <td>-2,206</td>
+      <td>-561</td>
     </tr>    <tr>
       <td>IDLHarness</td>
       <td>1,218 / 1,254</td>
@@ -208,25 +240,30 @@
       <td>-1,282</td>
       <td>-1,254</td>
     </tr>
-      </tbody>
-      </table>
-    </article>
+              </tbody>
+            </table>
+          </div>
+        </article>
 
         <article class="section">
-          <h2>Conformance Tests</h2>
+          <div class="section-header">
+            <h2>Conformance Tests</h2>
+            <button class="toggle-button" type="button" data-target="section-conformance" aria-expanded="false" onclick="toggleSection(this)">Show Full Section</button>
+          </div>
           <div class="section-meta">Grouped tests: 108 | Runs: 402 | Harness errors: 75 | Subtests: 7,185 | Passes: 2,632 | Rate: 36.6%</div>
-          <table>
-            <thead>
-              <tr>
-                <th>Test</th>
-                <th>Runs</th>
-                <th>Harness Errors</th>
-                <th>Subtests</th>
-                <th>Passes</th>
-                <th>Pass Rate</th>
-              </tr>
-            </thead>
-            <tbody>
+          <div class="section-body" id="section-conformance" hidden>
+            <table>
+              <thead>
+                <tr>
+                  <th>Test</th>
+                  <th>Runs</th>
+                  <th>Harness Errors</th>
+                  <th>Subtests</th>
+                  <th>Passes</th>
+                  <th>Pass Rate</th>
+                </tr>
+              </thead>
+              <tbody>
     <tr>
       <td>abs</td>
       <td>3</td>
@@ -984,25 +1021,30 @@
       <td>3</td>
       <td>2.9%</td>
     </tr>
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
         </article>
 
         <article class="section">
-          <h2>Validation Tests</h2>
+          <div class="section-header">
+            <h2>Validation Tests</h2>
+            <button class="toggle-button" type="button" data-target="section-validation" aria-expanded="false" onclick="toggleSection(this)">Show Full Section</button>
+          </div>
           <div class="section-meta">Grouped tests: 64 | Runs: 331 | Harness errors: 60 | Subtests: 3,411 | Passes: 1,743 | Rate: 51.1%</div>
-          <table>
-            <thead>
-              <tr>
-                <th>Test</th>
-                <th>Runs</th>
-                <th>Harness Errors</th>
-                <th>Subtests</th>
-                <th>Passes</th>
-                <th>Pass Rate</th>
-              </tr>
-            </thead>
-            <tbody>
+          <div class="section-body" id="section-validation" hidden>
+            <table>
+              <thead>
+                <tr>
+                  <th>Test</th>
+                  <th>Runs</th>
+                  <th>Harness Errors</th>
+                  <th>Subtests</th>
+                  <th>Passes</th>
+                  <th>Pass Rate</th>
+                </tr>
+              </thead>
+              <tbody>
     <tr>
       <td>argMinMax</td>
       <td>3</td>
@@ -1452,25 +1494,30 @@
       <td>21</td>
       <td>53.8%</td>
     </tr>
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
         </article>
 
         <article class="section">
-          <h2>IDLHarness Tests</h2>
+          <div class="section-header">
+            <h2>IDLHarness Tests</h2>
+            <button class="toggle-button" type="button" data-target="section-idlharness" aria-expanded="false" onclick="toggleSection(this)">Show Full Section</button>
+          </div>
           <div class="section-meta">Grouped tests: 1 | Runs: 4 | Harness errors: 2 | Subtests: 1,254 | Passes: 1,218 | Rate: 97.1%</div>
-          <table>
-            <thead>
-              <tr>
-                <th>Test</th>
-                <th>Runs</th>
-                <th>Harness Errors</th>
-                <th>Subtests</th>
-                <th>Passes</th>
-                <th>Pass Rate</th>
-              </tr>
-            </thead>
-            <tbody>
+          <div class="section-body" id="section-idlharness" hidden>
+            <table>
+              <thead>
+                <tr>
+                  <th>Test</th>
+                  <th>Runs</th>
+                  <th>Harness Errors</th>
+                  <th>Subtests</th>
+                  <th>Passes</th>
+                  <th>Pass Rate</th>
+                </tr>
+              </thead>
+              <tbody>
     <tr>
       <td>idlharness</td>
       <td>4</td>
@@ -1479,10 +1526,31 @@
       <td>1,218</td>
       <td>97.1%</td>
     </tr>
-            </tbody>
-          </table>
+              </tbody>
+            </table>
+          </div>
         </article>
     </section>
   </main>
+  <script>
+    function toggleSection(button) {
+      const targetId = button.getAttribute("data-target");
+      const target = document.getElementById(targetId);
+      if (!target) {
+        return;
+      }
+
+      const hidden = target.hasAttribute("hidden");
+      if (hidden) {
+        target.removeAttribute("hidden");
+        button.setAttribute("aria-expanded", "true");
+        button.textContent = "Hide Full Section";
+      } else {
+        target.setAttribute("hidden", "");
+        button.setAttribute("aria-expanded", "false");
+        button.textContent = "Show Full Section";
+      }
+    }
+  </script>
   </body>
 </html>
