@@ -84,10 +84,32 @@
     gap: 12px;
     flex-wrap: wrap;
     }
+    .section-toggle {
+    border: 1px solid #d6e4ef;
+    border-radius: 10px;
+    padding: 12px;
+    cursor: pointer;
+    transition: background 120ms ease, border-color 120ms ease;
+    }
+    .section-toggle:hover {
+    background: #f6fbff;
+    border-color: #b5d0e2;
+    }
+    .section-toggle:focus-visible {
+    outline: 2px solid #2a6a89;
+    outline-offset: 2px;
+    }
     .section h2 {
     margin: 0;
     font-size: 18px;
     color: var(--text);
+    }
+    .section-summary {
+    margin-top: 8px;
+    font-size: 15px;
+    line-height: 1.45;
+    color: #355770;
+    font-weight: 600;
     }
     .section-meta {
     font-size: 13px;
@@ -97,22 +119,14 @@
     .section-body {
     margin-top: 10px;
     }
-    .toggle-button {
+    .toggle-hint {
     border: 1px solid #7aa9c4;
-    border-radius: 10px;
+    border-radius: 999px;
     background: #eef6fb;
     color: #174a63;
     font-size: 12px;
     font-weight: 600;
-    padding: 8px 12px;
-    cursor: pointer;
-    }
-    .toggle-button:hover {
-    background: #e3f0f8;
-    }
-    .toggle-button:focus-visible {
-    outline: 2px solid #2a6a89;
-    outline-offset: 2px;
+    padding: 6px 10px;
     }
     table {
     width: 100%;
@@ -152,7 +166,7 @@
       <div class="hero-copy">
       <h1>Servo-ML WebNN WPT Report</h1>
       <p>Generated from wptreport JSON and compared with latest Chrome master+experimental run.</p>
-      <div class="hero-meta">Generated: 2026-04-27 17:47:23 UTC</div>
+      <div class="hero-meta">Generated: 2026-04-27 18:02:56 UTC</div>
       </div>
       <img class="hero-logo" src="https://raw.githubusercontent.com/rustnn/rustnn/main/logo/rustnn.svg" alt="RustNN logo">
     </div>
@@ -173,19 +187,21 @@
     </article>
     <article class="card">
       <div class="label">Servo Coverage vs Chrome Total</div>
-      <div class="value">74.1%</div>
+      <div class="value">74.2%</div>
     </article>
     </section>
 
     <section class="sections">
         <article class="section">
-          <div class="section-header">
-            <h2>Chrome Comparison (master + experimental)</h2>
-            <button class="toggle-button" type="button" data-target="section-chrome-comparison" aria-expanded="false" onclick="toggleSection(this)">Show Full Section</button>
+          <div class="section-toggle" role="button" tabindex="0" data-target="section-chrome-comparison" aria-expanded="false" onclick="toggleSection(this)" onkeydown="toggleSectionKey(event, this)">
+            <div class="section-header">
+              <h2>Chrome Comparison (master + experimental)</h2>
+              <span class="toggle-hint">Show Full Section</span>
+            </div>
+            <div class="section-summary">Servo total: 5,593 / 11,850 | Chrome total: 15,807 / 15,965 | Coverage: 74.2%</div>
           </div>
-          <div class="section-meta">Servo total: 5,593 / 11,850 | Chrome total: 15,824 / 15,990 | Coverage: 74.1%</div>
           <div class="section-body" id="section-chrome-comparison" hidden>
-            <div class="section-meta">Chrome run 149.0.7811.0 | revision 57a1c3cc9e | started 2026-04-27T14:19:11.881Z</div>
+            <div class="section-meta">Chrome run 149.0.7811.0 | revision 0c26179f84 | started 2026-04-27T15:31:01.714Z</div>
             <div class="comparison-link">
             Reference: <a href="https://wpt.fyi/results/webnn?label=master&amp;label=experimental&amp;product=chrome">https://wpt.fyi/results/webnn?label=master&amp;label=experimental&amp;product=chrome</a>
             </div>
@@ -206,30 +222,30 @@
     <tr>
       <td>Total</td>
       <td>5,593 / 11,850</td>
-      <td>15,824 / 15,990</td>
+      <td>15,807 / 15,965</td>
       <td>47.2%</td>
       <td>99.0%</td>
-      <td>74.1%</td>
-      <td>-10,231</td>
-      <td>-4,140</td>
+      <td>74.2%</td>
+      <td>-10,214</td>
+      <td>-4,115</td>
     </tr>    <tr>
       <td>Conformance</td>
       <td>2,632 / 7,185</td>
-      <td>9,375 / 9,510</td>
+      <td>9,343 / 9,478</td>
       <td>36.6%</td>
       <td>98.6%</td>
-      <td>75.6%</td>
-      <td>-6,743</td>
-      <td>-2,325</td>
+      <td>75.8%</td>
+      <td>-6,711</td>
+      <td>-2,293</td>
     </tr>    <tr>
       <td>Validation</td>
       <td>1,743 / 3,411</td>
-      <td>3,949 / 3,972</td>
+      <td>3,964 / 3,979</td>
       <td>51.1%</td>
-      <td>99.4%</td>
-      <td>85.9%</td>
-      <td>-2,206</td>
-      <td>-561</td>
+      <td>99.6%</td>
+      <td>85.7%</td>
+      <td>-2,221</td>
+      <td>-568</td>
     </tr>    <tr>
       <td>IDLHarness</td>
       <td>1,218 / 1,254</td>
@@ -246,11 +262,13 @@
         </article>
 
         <article class="section">
-          <div class="section-header">
-            <h2>Conformance Tests</h2>
-            <button class="toggle-button" type="button" data-target="section-conformance" aria-expanded="false" onclick="toggleSection(this)">Show Full Section</button>
+          <div class="section-toggle" role="button" tabindex="0" data-target="section-conformance" aria-expanded="false" onclick="toggleSection(this)" onkeydown="toggleSectionKey(event, this)">
+            <div class="section-header">
+              <h2>Conformance Tests</h2>
+              <span class="toggle-hint">Show Full Section</span>
+            </div>
+            <div class="section-summary">Grouped tests: 108 | Runs: 402 | Harness errors: 75 | Subtests: 7,185 | Passes: 2,632 | Rate: 36.6%</div>
           </div>
-          <div class="section-meta">Grouped tests: 108 | Runs: 402 | Harness errors: 75 | Subtests: 7,185 | Passes: 2,632 | Rate: 36.6%</div>
           <div class="section-body" id="section-conformance" hidden>
             <table>
               <thead>
@@ -1027,11 +1045,13 @@
         </article>
 
         <article class="section">
-          <div class="section-header">
-            <h2>Validation Tests</h2>
-            <button class="toggle-button" type="button" data-target="section-validation" aria-expanded="false" onclick="toggleSection(this)">Show Full Section</button>
+          <div class="section-toggle" role="button" tabindex="0" data-target="section-validation" aria-expanded="false" onclick="toggleSection(this)" onkeydown="toggleSectionKey(event, this)">
+            <div class="section-header">
+              <h2>Validation Tests</h2>
+              <span class="toggle-hint">Show Full Section</span>
+            </div>
+            <div class="section-summary">Grouped tests: 64 | Runs: 331 | Harness errors: 60 | Subtests: 3,411 | Passes: 1,743 | Rate: 51.1%</div>
           </div>
-          <div class="section-meta">Grouped tests: 64 | Runs: 331 | Harness errors: 60 | Subtests: 3,411 | Passes: 1,743 | Rate: 51.1%</div>
           <div class="section-body" id="section-validation" hidden>
             <table>
               <thead>
@@ -1500,11 +1520,13 @@
         </article>
 
         <article class="section">
-          <div class="section-header">
-            <h2>IDLHarness Tests</h2>
-            <button class="toggle-button" type="button" data-target="section-idlharness" aria-expanded="false" onclick="toggleSection(this)">Show Full Section</button>
+          <div class="section-toggle" role="button" tabindex="0" data-target="section-idlharness" aria-expanded="false" onclick="toggleSection(this)" onkeydown="toggleSectionKey(event, this)">
+            <div class="section-header">
+              <h2>IDLHarness Tests</h2>
+              <span class="toggle-hint">Show Full Section</span>
+            </div>
+            <div class="section-summary">Grouped tests: 1 | Runs: 4 | Harness errors: 2 | Subtests: 1,254 | Passes: 1,218 | Rate: 97.1%</div>
           </div>
-          <div class="section-meta">Grouped tests: 1 | Runs: 4 | Harness errors: 2 | Subtests: 1,254 | Passes: 1,218 | Rate: 97.1%</div>
           <div class="section-body" id="section-idlharness" hidden>
             <table>
               <thead>
@@ -1533,22 +1555,34 @@
     </section>
   </main>
   <script>
-    function toggleSection(button) {
-      const targetId = button.getAttribute("data-target");
+    function toggleSection(toggle) {
+      const targetId = toggle.getAttribute("data-target");
       const target = document.getElementById(targetId);
       if (!target) {
         return;
       }
 
       const hidden = target.hasAttribute("hidden");
+      const hint = toggle.querySelector(".toggle-hint");
       if (hidden) {
         target.removeAttribute("hidden");
-        button.setAttribute("aria-expanded", "true");
-        button.textContent = "Hide Full Section";
+        toggle.setAttribute("aria-expanded", "true");
+        if (hint) {
+          hint.textContent = "Hide Full Section";
+        }
       } else {
         target.setAttribute("hidden", "");
-        button.setAttribute("aria-expanded", "false");
-        button.textContent = "Show Full Section";
+        toggle.setAttribute("aria-expanded", "false");
+        if (hint) {
+          hint.textContent = "Show Full Section";
+        }
+      }
+    }
+
+    function toggleSectionKey(event, toggle) {
+      if (event.key === "Enter" || event.key === " ") {
+        event.preventDefault();
+        toggleSection(toggle);
       }
     }
   </script>
