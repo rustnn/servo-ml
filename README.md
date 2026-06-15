@@ -1,10 +1,6 @@
 # Servo-ML
 
-An AI-friendly fork of [Servo](https://github.com/servo/servo) implementing [W3C Web Machine Learning standards](https://webmachinelearning.github.io/).
-
-The initial focus is on [WebNN](https://webmachinelearning.github.io/webnn/), and [other incubations](https://webmachinelearning.github.io/incubations/). 
-
-All Servo contribution policies apply, except that AI-assisted contributions are welcome.
+A fork of [Servo](https://github.com/servo/servo) implementing (part of) [WebNN](https://webmachinelearning.github.io/webnn/) with AI assistance.
 
 ## Getting started
 
