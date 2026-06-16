@@ -2,6 +2,10 @@
 
 A fork of [Servo](https://github.com/servo/servo) implementing (part of) [WebNN](https://webmachinelearning.github.io/webnn/) with AI assistance.
 
+The state of the implementation can be see in this [wpt test report](https://rustnn.github.io/servo-ml/). 
+
+Currently only the CoreML backend is supported, so it works only on Mac OS.
+
 ## Getting started
 
 For more detailed build instructions, see the Servo Book under [Getting the Code] and [Building Servo].
